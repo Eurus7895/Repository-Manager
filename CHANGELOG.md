@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit inspection with changed-file navigation and per-file patches.
 - Sidebar reference browsing for branches, tags, remotes, and stashes.
 - Workspace alignment cards that compare every repository with the active target branch and surface drift or conflicts.
+- Resizable history/diff and changed-files/diff split panes with persisted panel sizes.
+- Checkbox-based comparison for any two history commits and a dedicated branch comparison workflow.
+- Expandable tag, remote, and stash details in the dashboard sidebar.
 
 ### Changed
 
@@ -36,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redesigned the webview as a desktop Git dashboard with a command bar, repository sidebar, history table, commit summary, changed-file list, and diff viewer.
 - Removed the duplicate Activity Bar `Repositories` and `Quick Actions` views so the editor dashboard is the only UI surface.
 - Reintroduced the compact branch list inside the editor dashboard while keeping the removed Activity Bar tree views out of the extension.
+- Unified commit, merge, release, and branch comparisons around an explicit base-to-target diff range.
 - Reworked the dashboard visual system from the approved design: compact branded header, repository filter, status-aware repository rows, denser history graph, commit inspector, diff styling, and branch workflow modal.
 - Restored the Repository Manager Activity Bar icon as a single dashboard launcher without bringing back the removed repository and quick-action trees.
 - Replaced the extension artwork with the Repository Manager graph icon and added a monochrome Activity Bar variant.
@@ -63,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Base-branch delivery failures by awaiting webview messages and retrying incomplete loads.
 - Inconsistent branch tags and row sizing during filtering and checkout.
 - Webview interaction failures caused by inline handlers and Content Security Policy constraints.
+- Empty changed-file lists and patches for merge commits by comparing against the merge commit's first parent.
 - TypeScript rebuilds accidentally reading generated declaration files from `out/`.
 - Added backend parser, path-boundary, and live Git integration tests.
 

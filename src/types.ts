@@ -156,6 +156,8 @@ export interface ChangedFileInfo {
 
 export interface CommitDetail extends HistoryCommit {
   body: string;
+  comparisonBaseHash: string | null;
+  comparisonMode: 'parent' | 'range' | 'root';
   committedAt: string;
   committerName: string;
   committerEmail: string;
@@ -165,6 +167,7 @@ export interface CommitDetail extends HistoryCommit {
 export interface FileDiff {
   repositoryPath: string;
   commitHash: string;
+  baseCommitHash: string | null;
   path: string;
   patch: string;
   truncated: boolean;
@@ -193,6 +196,6 @@ export interface RepositoryRefs {
 
 export type DashboardRequest =
   | { type: 'getHistory'; payload: HistoryQuery }
-  | { type: 'getCommitDetail'; payload: { repositoryPath: string; commitHash: string } }
-  | { type: 'getFileDiff'; payload: { repositoryPath: string; commitHash: string; path: string } }
+  | { type: 'getCommitDetail'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string } }
+  | { type: 'getFileDiff'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string; path: string } }
   | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } };

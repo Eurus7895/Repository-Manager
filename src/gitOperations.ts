@@ -279,12 +279,12 @@ export class GitOperations {
     return this.historyService.getHistory(query);
   }
 
-  async getCommitDetail(repositoryPath: string, commitHash: string): Promise<CommitDetail> {
-    return this.diffService.getCommitDetail(repositoryPath, commitHash);
+  async getCommitDetail(repositoryPath: string, commitHash: string, baseRevision?: string): Promise<CommitDetail> {
+    return this.diffService.getCommitDetail(repositoryPath, commitHash, baseRevision);
   }
 
-  async getFileDiff(repositoryPath: string, commitHash: string, filePath: string): Promise<FileDiff> {
-    return this.diffService.getFileDiff(repositoryPath, commitHash, filePath);
+  async getFileDiff(repositoryPath: string, commitHash: string, filePath: string, baseRevision?: string): Promise<FileDiff> {
+    return this.diffService.getFileDiff(repositoryPath, commitHash, filePath, baseRevision);
   }
 
   async getRepositoryRefs(repositoryPath: string): Promise<RepositoryRefs> {

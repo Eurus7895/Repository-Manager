@@ -113,12 +113,15 @@ export async function handleGetCommitDetail(ctx: MessageHandlerContext, payload:
   const request = requireRecord(payload);
   const repositoryPath = requireString(request, 'repositoryPath');
   const commitHash = requireString(request, 'commitHash');
+  const baseRevision = typeof request.baseRevision === 'string' && request.baseRevision.length > 0
+    ? request.baseRevision
+    : undefined;
 
   try {
-    const detail = await ctx.gitOps.getCommitDetail(repositoryPath, commitHash);
+    const detail = await ctx.gitOps.getCommitDetail(repositoryPath, commitHash, baseRevision);
     await sendToWebview(ctx, {
       type: 'commitDetailLoaded',
-      payload: { repositoryPath, detail }
+      payload: { repositoryPath, detail, baseRevision, targetRevision: commitHash }
     });
   } catch (error) {
     await sendDashboardError(ctx, 'getCommitDetail', repositoryPath, error);
@@ -130,9 +133,12 @@ export async function handleGetFileDiff(ctx: MessageHandlerContext, payload: unk
   const repositoryPath = requireString(request, 'repositoryPath');
   const commitHash = requireString(request, 'commitHash');
   const filePath = requireString(request, 'path');
+  const baseRevision = typeof request.baseRevision === 'string' && request.baseRevision.length > 0
+    ? request.baseRevision
+    : undefined;
 
   try {
-    const diff = await ctx.gitOps.getFileDiff(repositoryPath, commitHash, filePath);
+    const diff = await ctx.gitOps.getFileDiff(repositoryPath, commitHash, filePath, baseRevision);
     await sendToWebview(ctx, { type: 'fileDiffLoaded', payload: diff });
   } catch (error) {
     await sendDashboardError(ctx, 'getFileDiff', repositoryPath, error);

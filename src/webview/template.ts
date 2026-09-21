@@ -206,6 +206,31 @@ function renderModals(repositories: RepositoryInfo[]): string {
         </div>
       </div>
     </div>
+
+    <!-- Compare Branches Modal -->
+    <div class="modal-overlay" id="branchCompareModal">
+      <div class="modal branch-compare-modal">
+        <div class="modal-header">
+          <div class="modal-heading"><span class="modal-title">Compare branches</span><span>Show the changes required to move from the base branch to the target branch.</span></div>
+          <button class="modal-close" data-action="closeModal" data-modal="branchCompareModal">&times;</button>
+        </div>
+        <div class="modal-body branch-compare-fields">
+          <div class="form-group">
+            <label class="form-label" for="compareBaseBranch">Base branch</label>
+            <select class="form-select" id="compareBaseBranch"><option value="">Loading branches...</option></select>
+          </div>
+          <span class="compare-direction" aria-hidden="true">→</span>
+          <div class="form-group">
+            <label class="form-label" for="compareTargetBranch">Target branch</label>
+            <select class="form-select" id="compareTargetBranch"><option value="">Loading branches...</option></select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" data-action="closeModal" data-modal="branchCompareModal">Cancel</button>
+          <button class="btn btn-primary" data-action="compareBranches">Compare branches</button>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -272,11 +297,13 @@ function renderDashboardSidebar(repositories: RepositoryInfo[]): string {
         <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
         <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
       </section>
-      <div class="sidebar-ref-storage" aria-hidden="true"><div id="dashboardTags"></div><div id="dashboardRemotes"></div><div id="dashboardStashes"></div></div>
       <footer class="sidebar-reference-summary">
-        <div><span>Tags</span><span id="tagRefCount">—</span></div>
-        <div><span>Remotes</span><span id="remoteRefCount">—</span></div>
-        <div><span>Stashes</span><span id="stashRefCount">—</span></div>
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="tags"><span>Tags</span><span id="tagRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardTags" data-reference-panel="tags" hidden></div>
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="remotes"><span>Remotes</span><span id="remoteRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardRemotes" data-reference-panel="remotes" hidden></div>
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="stashes"><span>Stashes</span><span id="stashRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardStashes" data-reference-panel="stashes" hidden></div>
       </footer>
     </aside>
   `;
@@ -316,6 +343,8 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox"> Include remotes</label>
+            <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
+            <div class="commit-compare-status" id="commitCompareStatus" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
           <section class="history-region">
@@ -323,6 +352,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
             <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
           </section>
+          <div class="dashboard-splitter dashboard-splitter-horizontal" id="historyDiffSplitter" role="separator" aria-label="Resize history and diff panels" aria-orientation="horizontal" tabindex="0"></div>
           <section class="commit-detail-region">
             <div class="commit-summary" id="dashboardCommitSummary">
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
@@ -332,6 +362,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
                 <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>
                 <div class="changed-files-list" id="dashboardChangedFiles"></div>
               </div>
+              <div class="dashboard-splitter dashboard-splitter-vertical" id="filesDiffSplitter" role="separator" aria-label="Resize changed files and diff panels" aria-orientation="vertical" tabindex="0"></div>
               <div class="diff-panel">
                 <div class="panel-title"><span id="diffFileName">Diff</span><span id="diffTruncated"></span></div>
                 <pre class="diff-viewer" id="dashboardDiff"><span class="diff-placeholder">Select a changed file to load its patch.</span></pre>

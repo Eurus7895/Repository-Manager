@@ -61,6 +61,32 @@ async function testRepositoryIntegration(): Promise<void> {
   const detail = await diffService.getCommitDetail('.', page.commits[0].hash);
   assert.equal(detail.hash, page.commits[0].hash);
   assert.ok(Array.isArray(detail.files));
+  assert.equal(detail.comparisonBaseHash, page.commits[0].parentHashes[0] || null);
+  assert.equal(detail.comparisonMode, page.commits[0].parentHashes.length > 0 ? 'parent' : 'root');
+
+  if (page.commits.length > 1) {
+    const rangeDetail = await diffService.getCommitDetail('.', page.commits[0].hash, page.commits[1].hash);
+    assert.equal(rangeDetail.comparisonBaseHash, page.commits[1].hash);
+    assert.equal(rangeDetail.comparisonMode, 'range');
+    if (rangeDetail.files.length > 0) {
+      const fileDiff = await diffService.getFileDiff(
+        '.', page.commits[0].hash, rangeDetail.files[0].path, page.commits[1].hash
+      );
+      assert.equal(fileDiff.baseCommitHash, page.commits[1].hash);
+      assert.equal(fileDiff.commitHash, page.commits[0].hash);
+    }
+  }
+
+  const mergeHashes = (await git.execGit(['rev-list', '--merges', '--max-count=10', 'HEAD']))
+    .split('\n')
+    .filter(Boolean);
+  if (mergeHashes.length > 0) {
+    const mergeDetails = await Promise.all(mergeHashes.map(hash => diffService.getCommitDetail('.', hash)));
+    assert.ok(mergeDetails.some(mergeDetail => mergeDetail.files.length > 0));
+    for (const mergeDetail of mergeDetails) {
+      assert.equal(mergeDetail.comparisonBaseHash, mergeDetail.parentHashes[0] || null);
+    }
+  }
 
   const refs = await referenceService.getRepositoryRefs('.');
   assert.equal(refs.repositoryPath, '.');

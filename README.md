@@ -12,10 +12,13 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
 - Browse the active repository's commit graph with branch, tag, remote, and stash context.
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
+- Resize the history, changed-files, and diff panes to suit the current review task.
+- Compare any two commits from the history or compare two local/remote branches.
 - Filter history by branch, include remote refs, or search by author, hash, message, and ref.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
 - Browse and switch the active repository's branches directly from the dashboard sidebar.
+- Expand tags, remotes, and stashes to inspect hashes, timestamps, subjects, and remote URLs; tags and stashes can open their history directly.
 - Switch between workspace folders in multi-root VS Code workspaces.
 
 ### Coordinated branch workflows
@@ -33,6 +36,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Open GitHub's pull-request creation flow.
 - Restore a linked repository to the commit recorded by the parent repository.
 - Mark rebase activity to reduce accidental synchronization during an active rebase.
+- Inspect merge and release commits against their first parent, including their changed files and per-file patches.
 
 ### Linked-repository synchronization
 

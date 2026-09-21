@@ -16,6 +16,14 @@
   let historySearchTimer = null;
   let historyRequestId = 0;
   let selectedDashboardFile = null;
+  let comparisonBaseHash = null;
+  let activeComparisonTarget = null;
+  let commitCompareSelection = Array.isArray(previousState.commitCompareSelection)
+    ? previousState.commitCompareSelection.slice(0, 2)
+    : [];
+  let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
+  let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
+  let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
 
   // Save state helper
   function saveState() {
@@ -24,7 +32,10 @@
       rebasingRepositories: Array.from(rebasingRepositories),
       repositoryData,
       activeDashboardRepository,
-      selectedDashboardCommit
+      selectedDashboardCommit,
+      commitCompareSelection,
+      historyPanelHeight,
+      filesPanelWidth
     });
   }
 
@@ -55,7 +66,10 @@
     selectHistoryCommit: (el) => {
       const commitHash = el.dataset.commit;
       if (!commitHash) return;
+      clearCommitComparison();
       selectedDashboardCommit = commitHash;
+      activeComparisonTarget = commitHash;
+      comparisonBaseHash = null;
       document.querySelectorAll('.history-row').forEach(row => {
         row.classList.toggle('active', row.dataset.commit === commitHash);
       });
@@ -81,9 +95,58 @@
       postMessage('getFileDiff', {
         repositoryPath: activeDashboardRepository,
         commitHash: selectedDashboardCommit,
+        baseRevision: comparisonBaseHash || undefined,
         path: filePath
       });
     },
+
+    toggleReferenceSection: (el) => {
+      const section = el.dataset.section;
+      if (!section) return;
+      const panel = document.querySelector(`[data-reference-panel="${section}"]`);
+      if (!panel) return;
+      const willOpen = panel.hidden;
+      document.querySelectorAll('[data-reference-panel]').forEach(item => { item.hidden = true; });
+      document.querySelectorAll('.reference-summary-row').forEach(item => item.classList.remove('expanded'));
+      panel.hidden = !willOpen;
+      el.classList.toggle('expanded', willOpen);
+    },
+
+    selectReference: (el) => {
+      const revision = el.dataset.revision;
+      if (!revision) return;
+      const branchFilter = document.getElementById('dashboardBranchFilter');
+      if (branchFilter) {
+        if (!Array.from(branchFilter.options).some(option => option.value === revision)) {
+          branchFilter.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(revision)}">${escapeHtml(revision)}</option>`);
+        }
+        branchFilter.value = revision;
+      }
+      requestDashboardHistory(0, false);
+    },
+
+    openBranchCompareModal: () => {
+      const modal = document.getElementById('branchCompareModal');
+      const base = document.getElementById('compareBaseBranch');
+      const target = document.getElementById('compareTargetBranch');
+      populateBranchCompareSelects(base, target);
+      if (modal) modal.classList.add('active');
+    },
+
+    compareBranches: () => {
+      const base = document.getElementById('compareBaseBranch');
+      const target = document.getElementById('compareTargetBranch');
+      if (!base || !target || !base.value || !target.value || base.value === target.value) {
+        alert('Select two different branches to compare.');
+        return;
+      }
+      const modal = document.getElementById('branchCompareModal');
+      if (modal) modal.classList.remove('active');
+      commitCompareSelection = [];
+      loadComparison(base.value, target.value, 'branches');
+    },
+
+    clearCommitComparison: () => clearCommitComparison(),
 
     checkoutDashboardBranch: (el) => {
       const branch = el.dataset.branch;
@@ -391,6 +454,91 @@
     return repositoryData.find(repository => repository.path === path);
   }
 
+  function shortRevision(revision) {
+    if (!revision) return '';
+    return revision.length >= 12 && /^[0-9a-f]+$/i.test(revision) ? revision.slice(0, 8) : revision;
+  }
+
+  function updateCommitCompareUI() {
+    document.querySelectorAll('.history-compare-checkbox').forEach(checkbox => {
+      checkbox.checked = commitCompareSelection.includes(checkbox.dataset.commit);
+    });
+    document.querySelectorAll('.history-row').forEach(row => {
+      row.classList.toggle('compare-base', commitCompareSelection[0] === row.dataset.commit);
+      row.classList.toggle('compare-target', commitCompareSelection[1] === row.dataset.commit);
+    });
+    const status = document.getElementById('commitCompareStatus');
+    if (!status) return;
+    if (commitCompareSelection.length === 0) {
+      status.hidden = true;
+      status.innerHTML = '';
+      return;
+    }
+    status.hidden = false;
+    status.innerHTML = commitCompareSelection.length === 1
+      ? `Base ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select target <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
+      : `${escapeHtml(shortRevision(commitCompareSelection[0]))} → ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+  }
+
+  function clearCommitComparison() {
+    commitCompareSelection = [];
+    updateCommitCompareUI();
+    saveState();
+  }
+
+  function toggleCommitComparison(commitHash, checked) {
+    if (!commitHash) return;
+    if (checked) {
+      if (!commitCompareSelection.includes(commitHash)) {
+        commitCompareSelection.push(commitHash);
+      }
+      if (commitCompareSelection.length > 2) commitCompareSelection.shift();
+    } else {
+      commitCompareSelection = commitCompareSelection.filter(hash => hash !== commitHash);
+    }
+    updateCommitCompareUI();
+    saveState();
+    if (commitCompareSelection.length === 2) {
+      loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
+    }
+  }
+
+  function loadComparison(baseRevision, targetRevision, source) {
+    selectedDashboardCommit = targetRevision;
+    activeComparisonTarget = targetRevision;
+    comparisonBaseHash = baseRevision;
+    document.querySelectorAll('.history-row').forEach(row => {
+      row.classList.toggle('active', row.dataset.commit === targetRevision);
+    });
+    showCommitDetailLoading();
+    const status = document.getElementById('commitCompareStatus');
+    if (status) {
+      status.hidden = false;
+      status.innerHTML = `${source === 'branches' ? 'Branches' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+    }
+    saveState();
+    postMessage('getCommitDetail', {
+      repositoryPath: activeDashboardRepository,
+      commitHash: targetRevision,
+      baseRevision
+    });
+  }
+
+  function populateBranchCompareSelects(baseSelect, targetSelect) {
+    if (!baseSelect || !targetSelect) return;
+    const branches = repositoryRefs.branches || [];
+    const options = branches.map(branch => {
+      const revision = branch.isRemote ? `origin/${branch.name}` : branch.name;
+      return `<option value="${escapeHtml(revision)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`;
+    }).join('');
+    baseSelect.innerHTML = options || '<option value="">No branches available</option>';
+    targetSelect.innerHTML = options || '<option value="">No branches available</option>';
+    const current = branches.find(branch => branch.isCurrent);
+    const alternative = branches.find(branch => !branch.isCurrent && !branch.isRemote) || branches.find(branch => !branch.isCurrent);
+    if (current) baseSelect.value = current.name;
+    if (alternative) targetSelect.value = alternative.isRemote ? `origin/${alternative.name}` : alternative.name;
+  }
+
   function activateDashboardRepository(repositoryPath) {
     const repository = getRepository(repositoryPath);
     if (!repository) return;
@@ -399,6 +547,11 @@
     selectedDashboardCommit = null;
     selectedDashboardFile = null;
     historyNextOffset = null;
+    commitCompareSelection = [];
+    comparisonBaseHash = null;
+    activeComparisonTarget = null;
+    repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
+    updateCommitCompareUI();
     document.querySelectorAll('.dashboard-repository-item').forEach(item => {
       item.classList.toggle('active', item.dataset.repository === repositoryPath);
     });
@@ -473,13 +626,15 @@
     const rows = (payload.commits || []).map(commit => {
       const refs = (commit.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
       const mergeClass = commit.parentHashes && commit.parentHashes.length > 1 ? ' merge-node' : '';
-      return `<button class="history-row" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
+      const compareChecked = commitCompareSelection.includes(commit.hash) ? ' checked' : '';
+      return `<div class="history-row" role="button" tabindex="0" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
+        <input class="history-compare-checkbox" type="checkbox" data-action="toggleCommitComparison" data-commit="${escapeHtml(commit.hash)}" aria-label="Select ${escapeHtml(commit.shortHash)} for comparison"${compareChecked}>
         <span class="history-graph ${graphColor(commit.hash)}${mergeClass}"><i></i></span>
         <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<span class="history-subject">${escapeHtml(commit.subject)}</span></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
         <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>
         <code class="history-hash">${escapeHtml(commit.shortHash)}</code>
-      </button>`;
+      </div>`;
     }).join('');
 
     const append = payload.offset > 0;
@@ -490,6 +645,7 @@
     }
     historyNextOffset = payload.nextOffset;
     if (loadMore) loadMore.hidden = historyNextOffset === null;
+    updateCommitCompareUI();
 
     if (!append && payload.commits && payload.commits.length > 0) {
       const preferred = payload.commits.find(commit => commit.hash === selectedDashboardCommit) || payload.commits[0];
@@ -504,6 +660,7 @@
     const tags = payload.tags || [];
     const remotes = payload.remotes || [];
     const stashes = payload.stashes || [];
+    repositoryRefs = { branches, tags, remotes, stashes };
     const branchList = document.getElementById('dashboardBranches');
     const tagList = document.getElementById('dashboardTags');
     const remoteList = document.getElementById('dashboardRemotes');
@@ -523,19 +680,20 @@
       branchList.innerHTML = branches.map(branch => `<button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="checkoutDashboardBranch" data-branch="${escapeHtml(branch.name)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
-      tagList.innerHTML = tags.slice(0, 12).map(tag => `<div class="sidebar-ref-item"><span>◇</span><span>${escapeHtml(tag.name)}</span></div>`).join('');
+      tagList.innerHTML = tags.map(tag => `<button class="reference-detail-item" type="button" data-action="selectReference" data-revision="${escapeHtml(tag.name)}"><span>◇</span><span class="reference-detail-copy"><strong>${escapeHtml(tag.name)}</strong><small>${escapeHtml(shortRevision(tag.targetHash))}${tag.createdAt ? ` · ${escapeHtml(formatHistoryDate(tag.createdAt))}` : ''}</small></span></button>`).join('') || '<span class="sidebar-placeholder">No tags</span>';
     }
     if (remoteList) {
-      remoteList.innerHTML = remotes.map(remote => `<div class="sidebar-ref-item" title="${escapeHtml(remote.fetchUrl)}"><span>☁</span><span>${escapeHtml(remote.name)}</span></div>`).join('');
+      remoteList.innerHTML = remotes.map(remote => `<div class="reference-detail-item" title="Fetch: ${escapeHtml(remote.fetchUrl)}&#10;Push: ${escapeHtml(remote.pushUrl)}"><span>☁</span><span class="reference-detail-copy"><strong>${escapeHtml(remote.name)}</strong><small>fetch · ${escapeHtml(remote.fetchUrl || 'not configured')}</small><small>push · ${escapeHtml(remote.pushUrl || 'not configured')}</small></span></div>`).join('') || '<span class="sidebar-placeholder">No remotes</span>';
     }
     if (stashList) {
-      stashList.innerHTML = stashes.slice(0, 8).map(stash => `<div class="sidebar-ref-item" title="${escapeHtml(stash.subject)}"><span>▱</span><span>${escapeHtml(stash.ref)}</span></div>`).join('');
+      stashList.innerHTML = stashes.map(stash => `<button class="reference-detail-item" type="button" data-action="selectReference" data-revision="${escapeHtml(stash.ref)}"><span>▱</span><span class="reference-detail-copy"><strong>${escapeHtml(stash.ref)} · ${escapeHtml(stash.subject)}</strong><small>${escapeHtml(formatHistoryDate(stash.createdAt))}</small></span></button>`).join('') || '<span class="sidebar-placeholder">No stashes</span>';
     }
     if (branchFilter) {
       const currentValue = branchFilter.value;
       branchFilter.innerHTML = '<option value="">HEAD</option>' + branches.map(branch => `<option value="${escapeHtml(branch.name)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`).join('');
       if (Array.from(branchFilter.options).some(option => option.value === currentValue)) branchFilter.value = currentValue;
     }
+    populateBranchCompareSelects(document.getElementById('compareBaseBranch'), document.getElementById('compareTargetBranch'));
   }
 
   function renderWorkspaceAlignment() {
@@ -598,14 +756,21 @@
   function renderCommitDetail(payload) {
     if (!payload || payload.repositoryPath !== activeDashboardRepository || !payload.detail) return;
     const detail = payload.detail;
-    if (detail.hash !== selectedDashboardCommit) return;
+    const expectedTarget = activeComparisonTarget || selectedDashboardCommit;
+    if (payload.targetRevision !== expectedTarget && detail.hash !== expectedTarget) return;
+    selectedDashboardCommit = detail.hash;
+    activeComparisonTarget = detail.hash;
+    comparisonBaseHash = detail.comparisonBaseHash || null;
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
     if (summary) {
       const refs = (detail.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
       const initials = (detail.authorName || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part.charAt(0)).join('').toUpperCase();
-      summary.innerHTML = `<div class="commit-avatar">${escapeHtml(initials)}</div><div class="commit-summary-copy"><strong>${escapeHtml(detail.subject)}</strong><span>${escapeHtml(detail.authorName)} · ${escapeHtml(formatHistoryDate(detail.authoredAt))} · ${escapeHtml(detail.shortHash)}</span>${detail.body && detail.body !== detail.subject ? `<p>${escapeHtml(detail.body)}</p>` : ''}</div><code>${escapeHtml(detail.shortHash)}</code><div class="commit-summary-refs">${refs}</div>`;
+      const comparisonText = detail.comparisonBaseHash
+        ? `${detail.comparisonMode === 'parent' ? 'Parent' : 'Compare'} ${escapeHtml(shortRevision(detail.comparisonBaseHash))} → ${escapeHtml(detail.shortHash)}`
+        : `Root commit → ${escapeHtml(detail.shortHash)}`;
+      summary.innerHTML = `<div class="commit-avatar">${escapeHtml(initials)}</div><div class="commit-summary-copy"><strong>${escapeHtml(detail.subject)}</strong><span>${escapeHtml(detail.authorName)} · ${escapeHtml(formatHistoryDate(detail.authoredAt))} · ${comparisonText}</span>${detail.body && detail.body !== detail.subject ? `<p>${escapeHtml(detail.body)}</p>` : ''}</div><code>${escapeHtml(detail.shortHash)}</code><div class="commit-summary-refs">${refs}</div>`;
     }
     if (count) count.textContent = String((detail.files || []).length);
     if (files) {
@@ -666,6 +831,12 @@
   document.body.addEventListener('click', function (e) {
     let el = e.target;
 
+    if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleCommitComparison') {
+      e.stopPropagation();
+      toggleCommitComparison(el.dataset.commit, el.checked);
+      return;
+    }
+
     // Special handling for checkboxes - don't prevent default, just track state
     if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleSelection') {
       const path = el.dataset.repository;
@@ -708,6 +879,14 @@
         if (e.target.closest('.row-actions') || e.target.closest('.row-checkbox')) return;
         actions.toggleBranches({ dataset: { repository: card.dataset.path } });
       }
+    }
+  });
+
+  document.body.addEventListener('keydown', function (event) {
+    const row = event.target.closest && event.target.closest('.history-row');
+    if (row && event.target === row && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      actions.selectHistoryCommit(row);
     }
   });
 
@@ -1323,7 +1502,91 @@
     });
   }
 
+  function clampPanelSize(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function applyHistoryPanelHeight(height) {
+    const main = document.querySelector('.dashboard-main');
+    const alignment = document.getElementById('workspaceAlignment');
+    const controls = document.querySelector('.history-controls');
+    if (!main || !alignment || !controls) return;
+    const max = main.clientHeight - alignment.offsetHeight - controls.offsetHeight - 6 - 120;
+    historyPanelHeight = clampPanelSize(height, 120, Math.max(120, max));
+    main.style.gridTemplateRows = `${alignment.offsetHeight}px ${controls.offsetHeight}px ${historyPanelHeight}px 6px minmax(120px, 1fr)`;
+  }
+
+  function applyFilesPanelWidth(width) {
+    const content = document.querySelector('.commit-content');
+    if (!content) return;
+    const max = content.clientWidth - 6 - 220;
+    filesPanelWidth = clampPanelSize(width, 170, Math.max(170, max));
+    content.style.gridTemplateColumns = `${filesPanelWidth}px 6px minmax(220px, 1fr)`;
+  }
+
+  function setupDashboardSplitters() {
+    const historySplitter = document.getElementById('historyDiffSplitter');
+    const filesSplitter = document.getElementById('filesDiffSplitter');
+    const historyRegion = document.querySelector('.history-region');
+    const commitContent = document.querySelector('.commit-content');
+
+    if (historyPanelHeight > 0) applyHistoryPanelHeight(historyPanelHeight);
+    if (filesPanelWidth > 0) applyFilesPanelWidth(filesPanelWidth);
+
+    if (historySplitter && historyRegion) {
+      historySplitter.addEventListener('pointerdown', function (event) {
+        event.preventDefault();
+        historySplitter.classList.add('dragging');
+        historySplitter.setPointerCapture(event.pointerId);
+      });
+      historySplitter.addEventListener('pointermove', function (event) {
+        if (!historySplitter.hasPointerCapture(event.pointerId)) return;
+        applyHistoryPanelHeight(event.clientY - historyRegion.getBoundingClientRect().top);
+      });
+      historySplitter.addEventListener('pointerup', function (event) {
+        if (historySplitter.hasPointerCapture(event.pointerId)) historySplitter.releasePointerCapture(event.pointerId);
+        historySplitter.classList.remove('dragging');
+        saveState();
+      });
+      historySplitter.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        applyHistoryPanelHeight((historyPanelHeight || historyRegion.offsetHeight) + (event.key === 'ArrowDown' ? 24 : -24));
+        saveState();
+      });
+    }
+
+    if (filesSplitter && commitContent) {
+      filesSplitter.addEventListener('pointerdown', function (event) {
+        event.preventDefault();
+        filesSplitter.classList.add('dragging');
+        filesSplitter.setPointerCapture(event.pointerId);
+      });
+      filesSplitter.addEventListener('pointermove', function (event) {
+        if (!filesSplitter.hasPointerCapture(event.pointerId)) return;
+        applyFilesPanelWidth(event.clientX - commitContent.getBoundingClientRect().left);
+      });
+      filesSplitter.addEventListener('pointerup', function (event) {
+        if (filesSplitter.hasPointerCapture(event.pointerId)) filesSplitter.releasePointerCapture(event.pointerId);
+        filesSplitter.classList.remove('dragging');
+        saveState();
+      });
+      filesSplitter.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        applyFilesPanelWidth((filesPanelWidth || 300) + (event.key === 'ArrowRight' ? 24 : -24));
+        saveState();
+      });
+    }
+
+    window.addEventListener('resize', function () {
+      if (historyPanelHeight > 0) applyHistoryPanelHeight(historyPanelHeight);
+      if (filesPanelWidth > 0) applyFilesPanelWidth(filesPanelWidth);
+    });
+  }
+
   // Initialize UI on load
+  setupDashboardSplitters();
   updateSelectionUI();
   updateRebaseUI();
   closeAllBranchPanels();
