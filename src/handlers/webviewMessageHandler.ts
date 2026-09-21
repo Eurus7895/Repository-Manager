@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitOperations } from '../gitOperations';
 import { PRManager } from '../prManager';
+import { HistoryQuery } from '../types';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -48,6 +49,99 @@ async function sendToWebview(ctx: MessageHandlerContext, message: { type: string
     }
   } catch (error) {
     console.error(`[RepositoryManager] Failed to send message '${message.type}' to webview:`, error);
+  }
+}
+
+function requireRecord(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid dashboard request payload');
+  }
+  return payload as Record<string, unknown>;
+}
+
+function requireString(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing or invalid '${field}'`);
+  }
+  return value;
+}
+
+async function sendDashboardError(
+  ctx: MessageHandlerContext,
+  request: string,
+  repositoryPath: string,
+  error: unknown
+): Promise<void> {
+  await sendToWebview(ctx, {
+    type: 'dashboardError',
+    payload: {
+      request,
+      repositoryPath,
+      message: error instanceof Error ? error.message : 'Unknown dashboard backend error'
+    }
+  });
+}
+
+export async function handleGetHistory(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const query: HistoryQuery = {
+    repositoryPath,
+    limit: typeof request.limit === 'number' ? request.limit : undefined,
+    offset: typeof request.offset === 'number' ? request.offset : undefined,
+    search: typeof request.search === 'string' ? request.search : undefined,
+    branch: typeof request.branch === 'string' ? request.branch : undefined,
+    includeRemotes: request.includeRemotes === true
+  };
+
+  try {
+    const history = await ctx.gitOps.getHistory(query);
+    await sendToWebview(ctx, { type: 'historyLoaded', payload: history });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getHistory', repositoryPath, error);
+  }
+}
+
+export async function handleGetCommitDetail(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const commitHash = requireString(request, 'commitHash');
+
+  try {
+    const detail = await ctx.gitOps.getCommitDetail(repositoryPath, commitHash);
+    await sendToWebview(ctx, {
+      type: 'commitDetailLoaded',
+      payload: { repositoryPath, detail }
+    });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getCommitDetail', repositoryPath, error);
+  }
+}
+
+export async function handleGetFileDiff(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const commitHash = requireString(request, 'commitHash');
+  const filePath = requireString(request, 'path');
+
+  try {
+    const diff = await ctx.gitOps.getFileDiff(repositoryPath, commitHash, filePath);
+    await sendToWebview(ctx, { type: 'fileDiffLoaded', payload: diff });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getFileDiff', repositoryPath, error);
+  }
+}
+
+export async function handleGetRepositoryRefs(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+
+  try {
+    const refs = await ctx.gitOps.getRepositoryRefs(repositoryPath);
+    await sendToWebview(ctx, { type: 'repositoryRefsLoaded', payload: refs });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getRepositoryRefs', repositoryPath, error);
   }
 }
 
@@ -467,6 +561,10 @@ export async function handleSetRebaseStatus(
  * Message handler map for quick lookup
  */
 export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payload?: unknown) => Promise<void>> = {
+  'getHistory': (ctx, payload) => handleGetHistory(ctx, payload),
+  'getCommitDetail': (ctx, payload) => handleGetCommitDetail(ctx, payload),
+  'getFileDiff': (ctx, payload) => handleGetFileDiff(ctx, payload),
+  'getRepositoryRefs': (ctx, payload) => handleGetRepositoryRefs(ctx, payload),
   'initSubmodules': (ctx) => handleInitSubmodules(ctx),
   'updateSubmodules': (ctx) => handleUpdateSubmodules(ctx),
   'createBranch': (ctx, payload) => handleCreateBranch(ctx, payload as { submodules: string[]; branchName: string; baseBranch: string }),

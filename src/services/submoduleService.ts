@@ -153,7 +153,7 @@ export class SubmoduleService {
    * Get detailed information about a specific submodule
    */
   async getSubmoduleInfo(name: string, submodulePath: string): Promise<SubmoduleInfo> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     // Get URL
     let url = '';
@@ -276,7 +276,7 @@ export class SubmoduleService {
    * Get git status for a submodule
    */
   async getStatus(submodulePath: string): Promise<GitStatus> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
     const status: GitStatus = {
       staged: [],
       unstaged: [],
@@ -328,7 +328,7 @@ export class SubmoduleService {
    * Sync submodule to a specific commit or branch
    */
   async syncSubmodule(submodulePath: string, target: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       await this.gitCmd.execGit(['fetch', '--all'], fullPath);
@@ -394,7 +394,7 @@ export class SubmoduleService {
    * Get the current HEAD commit of a submodule
    */
   async getCurrentCommit(submodulePath: string): Promise<string> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       return await this.gitCmd.execGit(['rev-parse', 'HEAD'], fullPath);
@@ -438,7 +438,7 @@ export class SubmoduleService {
    * This stages the submodule pointer change
    */
   async recordSubmoduleCommit(submodulePath: string, commit?: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       // If a specific commit is provided, checkout that commit first

@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Kept submodule terminology only for Git operations that specifically initialize, update, or stage submodule pointers.
 - Restored branch delete actions after an optimistic checkout changes the current branch.
 - Split the extension into command, handler, service, and webview modules for easier maintenance.
+- Added dedicated read services for paginated history, commit details, file diffs, branches, tags, remotes, and stashes.
+- Added typed dashboard request/response contracts so the redesigned UI can lazy-load repository data.
+- Replaced shell-based Git execution with argument-safe process execution and workspace path validation.
 - Renamed the extension package and publisher identifiers to `repository-manager`.
 - Renamed commands and settings from `submoduleManager.*` to `repositoryManager.*`.
 - Renamed the Activity Bar container and contributed view IDs to the Repository Manager namespace.
@@ -51,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inconsistent branch tags and row sizing during filtering and checkout.
 - Webview interaction failures caused by inline handlers and Content Security Policy constraints.
 - TypeScript rebuilds accidentally reading generated declaration files from `out/`.
+- Added backend parser, path-boundary, and live Git integration tests.
 
 ## [1.0.2] - 2026-02-24
 

@@ -12,7 +12,10 @@ import {
   GitCommandService,
   BranchService,
   SubmoduleService,
-  CommitService
+  CommitService,
+  HistoryService,
+  DiffService,
+  ReferenceService
 } from './services';
 
 import {
@@ -21,7 +24,12 @@ import {
   GitStatus,
   CommitInfo,
   RemoteInfo,
-  CommandResult
+  CommandResult,
+  CommitDetail,
+  FileDiff,
+  HistoryPage,
+  HistoryQuery,
+  RepositoryRefs
 } from './types';
 
 export class GitOperations {
@@ -29,12 +37,18 @@ export class GitOperations {
   private branchService: BranchService;
   private submoduleService: SubmoduleService;
   private commitService: CommitService;
+  private historyService: HistoryService;
+  private diffService: DiffService;
+  private referenceService: ReferenceService;
 
   constructor(workspaceRoot: string) {
     this.gitCmd = new GitCommandService(workspaceRoot);
     this.branchService = new BranchService(this.gitCmd);
     this.submoduleService = new SubmoduleService(this.gitCmd);
     this.commitService = new CommitService(this.gitCmd);
+    this.historyService = new HistoryService(this.gitCmd);
+    this.diffService = new DiffService(this.gitCmd);
+    this.referenceService = new ReferenceService(this.gitCmd, this.branchService, this.commitService);
   }
 
   // ==================== Git Command Methods ====================
@@ -257,5 +271,23 @@ export class GitOperations {
    */
   parseGitHubUrl(url: string): { owner: string; repo: string } | null {
     return this.commitService.parseGitHubUrl(url);
+  }
+
+  // ==================== Dashboard Read Methods ====================
+
+  async getHistory(query: HistoryQuery): Promise<HistoryPage> {
+    return this.historyService.getHistory(query);
+  }
+
+  async getCommitDetail(repositoryPath: string, commitHash: string): Promise<CommitDetail> {
+    return this.diffService.getCommitDetail(repositoryPath, commitHash);
+  }
+
+  async getFileDiff(repositoryPath: string, commitHash: string, filePath: string): Promise<FileDiff> {
+    return this.diffService.getFileDiff(repositoryPath, commitHash, filePath);
+  }
+
+  async getRepositoryRefs(repositoryPath: string): Promise<RepositoryRefs> {
+    return this.referenceService.getRepositoryRefs(repositoryPath);
   }
 }

@@ -3,7 +3,6 @@
  * Handles commit-related operations
  */
 
-import * as path from 'path';
 import { GitCommandService } from './gitCommandService';
 import { CommitInfo, RemoteInfo, CommandResult } from '../types';
 
@@ -14,7 +13,7 @@ export class CommitService {
    * Get recent commits for a submodule
    */
   async getRecentCommits(submodulePath: string, count: number = 10): Promise<CommitInfo[]> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
     const commits: CommitInfo[] = [];
 
     try {
@@ -45,7 +44,7 @@ export class CommitService {
    * Checkout a specific commit in a submodule
    */
   async checkoutCommit(submodulePath: string, commit: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       await this.gitCmd.execGit(['fetch', '--all'], fullPath);
@@ -61,7 +60,7 @@ export class CommitService {
    * Get remote information for a submodule
    */
   async getRemotes(submodulePath: string): Promise<RemoteInfo[]> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
     const remotes: RemoteInfo[] = [];
 
     try {
