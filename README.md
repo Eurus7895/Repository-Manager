@@ -10,14 +10,14 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 - See the parent repository and linked repositories in one dashboard.
 - Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
-- Browse the active repository's commit graph with branch, tag, remote, and stash context.
+- Browse the active repository's topology-aware commit graph with distinct branch and merge lanes plus tag, remote, and stash context.
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
 - Resize the history, changed-files, and diff panes to suit the current review task.
-- Compare any two commits from the history or compare two local/remote branches.
+- Select up to two circular graph nodes to compare distant commits; local and remote branches can also be compared directly.
 - Filter history by branch, include remote refs, or search by author, hash, message, and ref.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
-- Browse and switch the active repository's branches directly from the dashboard sidebar.
+- Filter history from the dashboard branch list or selector; both controls stay synchronized and highlight the selected branch.
 - Expand tags, remotes, and stashes to inspect hashes, timestamps, subjects, and remote URLs; tags and stashes can open their history directly.
 - Switch between workspace folders in multi-root VS Code workspaces.
 

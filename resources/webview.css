@@ -1043,6 +1043,27 @@ select {
   line-height: 20px;
 }
 
+.dashboard-command > svg,
+.dashboard-icon-command > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dashboard-icon-command > svg { width: 17px; height: 17px; }
+
+.command-separator {
+  width: 1px;
+  height: 24px;
+  margin: 0 6px;
+  background: #2e333d;
+}
+
 .dashboard-command small {
   color: var(--text-secondary);
   font-size: 10px;
@@ -1809,6 +1830,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   height: 36px;
   min-width: 0;
   padding: 0 12px;
@@ -1964,9 +1986,7 @@ body {
 
 .sidebar-ref-storage { display: none; }
 
-.branches-section {
-  min-height: 0;
-}
+.branches-section { min-height: 0; }
 
 .branches-section .sidebar-ref-list {
   max-height: min(260px, 31vh);
@@ -1981,14 +2001,14 @@ body {
   font-family: var(--vscode-editor-font-family), Consolas, monospace;
 }
 
-.branches-section .sidebar-ref-item.current {
+.branches-section .sidebar-ref-item.selected {
   color: #f0c07a;
-  background: rgba(229, 165, 71, .10);
+  background: rgba(229, 165, 71, .12);
+  box-shadow: inset 2px 0 0 var(--warning);
 }
 
-.branches-section .sidebar-ref-item.current small {
-  color: #f0c07a;
-}
+.branches-section .sidebar-ref-item.current small,
+.branches-section .sidebar-ref-item.selected small { color: #f0c07a; }
 
 .sidebar-reference-summary {
   display: grid;
@@ -2270,22 +2290,6 @@ button.reference-detail-item:hover { background: #222730; }
 
 .history-row { position: relative; }
 
-.history-compare-checkbox {
-  position: absolute;
-  z-index: 3;
-  left: 48px;
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
-  opacity: 0;
-  cursor: pointer;
-}
-
-.history-row:hover .history-compare-checkbox,
-.history-compare-checkbox:checked,
-.history-compare-checkbox:focus { opacity: 1; }
-
 .history-row.compare-base { box-shadow: inset 2px 0 0 var(--info); }
 .history-row.compare-target { box-shadow: inset 2px 0 0 var(--accent); }
 
@@ -2313,34 +2317,54 @@ button.reference-detail-item:hover { background: #222730; }
 }
 
 .history-graph {
+  position: relative;
+  align-self: stretch;
+  display: block;
   width: 76px;
-  color: var(--warning);
 }
 
-.history-graph::before {
-  left: 16px;
-  width: 2px;
-}
-
-.history-graph i {
-  position: absolute;
-  left: 11px;
-  width: 11px;
-  height: 11px;
-  background: var(--bg-primary);
-}
-
-.history-row.active .history-graph i { background: var(--warning); }
-.history-graph.graph-blue { color: var(--info); }
-.history-graph.graph-green { color: var(--accent); }
-.history-graph.graph-orange { color: var(--warning); }
-.history-graph.graph-purple { color: #a48bf0; }
+.history-graph svg { display: block; width: 76px; height: 32px; overflow: visible; }
+.history-graph::before { content: none; }
+.graph-edge { fill: none; stroke-width: 2; stroke-linecap: round; }
+.graph-lane-0 { stroke: var(--warning); }
+.graph-lane-1 { stroke: var(--accent); }
+.graph-lane-2 { stroke: #a48bf0; }
+.graph-lane-3 { stroke: var(--info); }
+.graph-lane-4 { stroke: var(--error); }
+.graph-node { fill: var(--bg-primary); stroke-width: 2; }
+.graph-node-core.graph-lane-0 { fill: var(--warning); }
+.graph-node-core.graph-lane-1 { fill: var(--accent); }
+.graph-node-core.graph-lane-2 { fill: #a48bf0; }
+.graph-node-core.graph-lane-3 { fill: var(--info); }
+.graph-node-core.graph-lane-4 { fill: var(--error); }
+.history-row.active .graph-node { fill: rgba(229, 165, 71, .12); stroke-width: 2.5; }
+.history-row.compare-base { background: rgba(139, 167, 240, .06); }
+.history-row.compare-target { background: rgba(60, 199, 166, .06); }
 .history-message { gap: 8px; }
 .history-subject { color: #e4e7ec; }
 .history-author { color: var(--text-secondary); }
 .history-date,
 .history-hash { color: var(--text-muted); }
 .history-hash { font-size: 11px; }
+
+.graph-node-button {
+  position: absolute;
+  z-index: 3;
+  top: 9px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  outline: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.graph-node-button:hover,
+.graph-node-button:focus-visible { box-shadow: 0 0 0 3px rgba(229, 165, 71, .28); }
+.history-row.compare-base .graph-node-button { box-shadow: 0 0 0 3px rgba(139, 167, 240, .42); }
+.history-row.compare-target .graph-node-button { box-shadow: 0 0 0 3px rgba(60, 199, 166, .45); }
 
 .history-ref {
   max-width: 170px;

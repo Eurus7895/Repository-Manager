@@ -21,6 +21,7 @@
   let commitCompareSelection = Array.isArray(previousState.commitCompareSelection)
     ? previousState.commitCompareSelection.slice(0, 2)
     : [];
+  let loadedHistoryCommits = [];
   let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
@@ -125,6 +126,15 @@
       requestDashboardHistory(0, false);
     },
 
+    selectDashboardBranch: (el) => {
+      const revision = el.dataset.revision;
+      if (revision == null) return;
+      const branchFilter = document.getElementById('dashboardBranchFilter');
+      if (branchFilter) branchFilter.value = revision;
+      updateSelectedBranchUI(revision);
+      requestDashboardHistory(0, false);
+    },
+
     openBranchCompareModal: () => {
       const modal = document.getElementById('branchCompareModal');
       const base = document.getElementById('compareBaseBranch');
@@ -147,6 +157,8 @@
     },
 
     clearCommitComparison: () => clearCommitComparison(),
+
+    toggleCommitCompareNode: (el) => toggleCommitCompareNode(el.dataset.commit),
 
     checkoutDashboardBranch: (el) => {
       const branch = el.dataset.branch;
@@ -460,9 +472,6 @@
   }
 
   function updateCommitCompareUI() {
-    document.querySelectorAll('.history-compare-checkbox').forEach(checkbox => {
-      checkbox.checked = commitCompareSelection.includes(checkbox.dataset.commit);
-    });
     document.querySelectorAll('.history-row').forEach(row => {
       row.classList.toggle('compare-base', commitCompareSelection[0] === row.dataset.commit);
       row.classList.toggle('compare-target', commitCompareSelection[1] === row.dataset.commit);
@@ -476,7 +485,7 @@
     }
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
-      ? `Base ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select target <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
+      ? `Base ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
       : `${escapeHtml(shortRevision(commitCompareSelection[0]))} → ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
   }
 
@@ -486,15 +495,13 @@
     saveState();
   }
 
-  function toggleCommitComparison(commitHash, checked) {
+  function toggleCommitCompareNode(commitHash) {
     if (!commitHash) return;
-    if (checked) {
-      if (!commitCompareSelection.includes(commitHash)) {
-        commitCompareSelection.push(commitHash);
-      }
-      if (commitCompareSelection.length > 2) commitCompareSelection.shift();
-    } else {
+    if (commitCompareSelection.includes(commitHash)) {
       commitCompareSelection = commitCompareSelection.filter(hash => hash !== commitHash);
+    } else {
+      if (commitCompareSelection.length === 2) commitCompareSelection.shift();
+      commitCompareSelection.push(commitHash);
     }
     updateCommitCompareUI();
     saveState();
@@ -547,6 +554,7 @@
     selectedDashboardCommit = null;
     selectedDashboardFile = null;
     historyNextOffset = null;
+    loadedHistoryCommits = [];
     commitCompareSelection = [];
     comparisonBaseHash = null;
     activeComparisonTarget = null;
@@ -585,6 +593,7 @@
     const branch = document.getElementById('dashboardBranchFilter');
     const includeRemotes = document.getElementById('dashboardIncludeRemotes');
     const history = document.getElementById('dashboardHistory');
+    if (!append) loadedHistoryCommits = [];
     if (!append && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
     if (!append) historyRequestId += 1;
     postMessage('getHistory', {
@@ -611,10 +620,78 @@
     }).format(date);
   }
 
-  function graphColor(hash) {
-    const colors = ['graph-blue', 'graph-green', 'graph-orange', 'graph-purple'];
-    const index = parseInt((hash || '0').slice(0, 2), 16) % colors.length;
-    return colors[index];
+  function graphLaneX(lane) {
+    return 10 + (Math.min(lane, 4) * 14);
+  }
+
+  function buildGraphLayouts(commits) {
+    const lanes = [];
+    return commits.map(commit => {
+      let lane = lanes.indexOf(commit.hash);
+      const startsHere = lane < 0;
+      if (lane < 0) {
+        lane = lanes.findIndex(value => !value);
+        if (lane < 0) lane = lanes.length;
+        lanes[lane] = commit.hash;
+      }
+
+      const before = lanes.slice();
+      const parents = commit.parentHashes || [];
+      const parentLanes = [];
+      if (parents.length === 0) {
+        lanes[lane] = null;
+      } else {
+        const existingFirstParentLane = lanes.findIndex((value, index) => index !== lane && value === parents[0]);
+        if (existingFirstParentLane >= 0) {
+          lanes[lane] = null;
+          parentLanes.push(existingFirstParentLane);
+        } else {
+          lanes[lane] = parents[0];
+          parentLanes.push(lane);
+        }
+
+        parents.slice(1).forEach(parentHash => {
+          let parentLane = lanes.indexOf(parentHash);
+          if (parentLane < 0) {
+            parentLane = lanes.findIndex(value => !value);
+            if (parentLane < 0) parentLane = lanes.length;
+            lanes[parentLane] = parentHash;
+          }
+          parentLanes.push(parentLane);
+        });
+      }
+
+      while (lanes.length && !lanes[lanes.length - 1]) lanes.pop();
+      return { lane, before, after: lanes.slice(), parentLanes, isMerge: parents.length > 1, startsHere };
+    });
+  }
+
+  function renderGraphCell(commit, layout) {
+    const currentX = graphLaneX(layout.lane);
+    const paths = [];
+    const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
+    for (let lane = 0; lane < continuingLaneCount; lane += 1) {
+      if (lane === layout.lane) continue;
+      if (layout.before[lane] && layout.after[lane] && layout.before[lane] === layout.after[lane]) {
+        const x = graphLaneX(lane);
+        paths.push(`<path class="graph-edge graph-lane-${lane % 5}" d="M ${x} 0 V 32"/>`);
+      }
+    }
+
+    if (!layout.startsHere) {
+      paths.push(`<path class="graph-edge graph-lane-${layout.lane % 5}" d="M ${currentX} 0 V 16"/>`);
+    }
+    layout.parentLanes.forEach((parentLane, index) => {
+      const parentX = graphLaneX(parentLane);
+      const colorLane = index === 0 ? layout.lane : parentLane;
+      paths.push(`<path class="graph-edge graph-lane-${colorLane % 5}" d="M ${currentX} 16 C ${currentX} 25, ${parentX} 23, ${parentX} 32"/>`);
+    });
+
+    const decorated = (commit.refs || []).length > 0 || layout.isMerge;
+    const node = decorated
+      ? `<circle class="graph-node graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="2.3"/>`
+      : `<circle class="graph-node-core graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="4"/>`;
+    return `<span class="history-graph"><svg viewBox="0 0 76 32" aria-hidden="true">${paths.join('')}${node}</svg><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 7}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select ${escapeHtml(commit.shortHash)} for comparison"></button></span>`;
   }
 
   function renderHistoryPage(payload) {
@@ -623,13 +700,17 @@
     const loadMore = document.getElementById('loadMoreHistory');
     if (!history) return;
 
-    const rows = (payload.commits || []).map(commit => {
+    if (payload.offset > 0) {
+      const knownHashes = new Set(loadedHistoryCommits.map(commit => commit.hash));
+      loadedHistoryCommits = loadedHistoryCommits.concat((payload.commits || []).filter(commit => !knownHashes.has(commit.hash)));
+    } else {
+      loadedHistoryCommits = payload.commits || [];
+    }
+    const graphLayouts = buildGraphLayouts(loadedHistoryCommits);
+    const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = (commit.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
-      const mergeClass = commit.parentHashes && commit.parentHashes.length > 1 ? ' merge-node' : '';
-      const compareChecked = commitCompareSelection.includes(commit.hash) ? ' checked' : '';
       return `<div class="history-row" role="button" tabindex="0" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
-        <input class="history-compare-checkbox" type="checkbox" data-action="toggleCommitComparison" data-commit="${escapeHtml(commit.hash)}" aria-label="Select ${escapeHtml(commit.shortHash)} for comparison"${compareChecked}>
-        <span class="history-graph ${graphColor(commit.hash)}${mergeClass}"><i></i></span>
+        ${renderGraphCell(commit, graphLayouts[index])}
         <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<span class="history-subject">${escapeHtml(commit.subject)}</span></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
         <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>
@@ -638,11 +719,7 @@
     }).join('');
 
     const append = payload.offset > 0;
-    if (append) {
-      history.insertAdjacentHTML('beforeend', rows);
-    } else {
-      history.innerHTML = rows || '<div class="dashboard-empty">No commits match this view.</div>';
-    }
+    history.innerHTML = rows || '<div class="dashboard-empty">No commits match this view.</div>';
     historyNextOffset = payload.nextOffset;
     if (loadMore) loadMore.hidden = historyNextOffset === null;
     updateCommitCompareUI();
@@ -677,7 +754,10 @@
     if (stashCount) stashCount.textContent = stashes.length;
 
     if (branchList) {
-      branchList.innerHTML = branches.map(branch => `<button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="checkoutDashboardBranch" data-branch="${escapeHtml(branch.name)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`).join('') || '<span class="sidebar-placeholder">No branches</span>';
+      branchList.innerHTML = branches.map(branch => {
+        const revision = branch.isRemote ? `origin/${branch.name}` : branch.name;
+        return `<button class="sidebar-ref-item" type="button" data-action="selectDashboardBranch" data-revision="${escapeHtml(revision)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`;
+      }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
       tagList.innerHTML = tags.map(tag => `<button class="reference-detail-item" type="button" data-action="selectReference" data-revision="${escapeHtml(tag.name)}"><span>◇</span><span class="reference-detail-copy"><strong>${escapeHtml(tag.name)}</strong><small>${escapeHtml(shortRevision(tag.targetHash))}${tag.createdAt ? ` · ${escapeHtml(formatHistoryDate(tag.createdAt))}` : ''}</small></span></button>`).join('') || '<span class="sidebar-placeholder">No tags</span>';
@@ -690,10 +770,22 @@
     }
     if (branchFilter) {
       const currentValue = branchFilter.value;
-      branchFilter.innerHTML = '<option value="">HEAD</option>' + branches.map(branch => `<option value="${escapeHtml(branch.name)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`).join('');
+      branchFilter.innerHTML = '<option value="">HEAD</option>' + branches.map(branch => {
+        const revision = branch.isRemote ? `origin/${branch.name}` : branch.name;
+        return `<option value="${escapeHtml(revision)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`;
+      }).join('');
       if (Array.from(branchFilter.options).some(option => option.value === currentValue)) branchFilter.value = currentValue;
+      updateSelectedBranchUI(branchFilter.value);
     }
     populateBranchCompareSelects(document.getElementById('compareBaseBranch'), document.getElementById('compareTargetBranch'));
+  }
+
+  function updateSelectedBranchUI(revision) {
+    const currentBranch = (repositoryRefs.branches || []).find(branch => branch.isCurrent);
+    const selectedRevision = revision || (currentBranch ? currentBranch.name : '');
+    document.querySelectorAll('#dashboardBranches .sidebar-ref-item').forEach(item => {
+      item.classList.toggle('selected', item.dataset.revision === selectedRevision);
+    });
   }
 
   function renderWorkspaceAlignment() {
@@ -830,12 +922,6 @@
   // Event delegation - handle all clicks
   document.body.addEventListener('click', function (e) {
     let el = e.target;
-
-    if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleCommitComparison') {
-      e.stopPropagation();
-      toggleCommitComparison(el.dataset.commit, el.checked);
-      return;
-    }
 
     // Special handling for checkboxes - don't prevent default, just track state
     if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleSelection') {
@@ -1491,6 +1577,7 @@
   const dashboardBranchFilter = document.getElementById('dashboardBranchFilter');
   if (dashboardBranchFilter) {
     dashboardBranchFilter.addEventListener('change', function () {
+      updateSelectedBranchUI(dashboardBranchFilter.value);
       requestDashboardHistory(0, false);
     });
   }

@@ -84,6 +84,7 @@ export class HistoryService {
     const args = [
       'log',
       `--max-count=${requestedCount}`,
+      '--topo-order',
       '--date=iso-strict',
       '--decorate=full',
       `--format=${HISTORY_FORMAT}`
