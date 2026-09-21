@@ -14,6 +14,8 @@
   let selectedDashboardCommit = previousState.selectedDashboardCommit || null;
   let historyNextOffset = null;
   let historySearchTimer = null;
+  let historyRequestId = 0;
+  let selectedDashboardFile = null;
 
   // Save state helper
   function saveState() {
@@ -68,6 +70,7 @@
     selectChangedFile: (el) => {
       const filePath = el.dataset.path;
       if (!filePath || !selectedDashboardCommit) return;
+      selectedDashboardFile = filePath;
       document.querySelectorAll('.changed-file-item').forEach(item => {
         item.classList.toggle('active', item.dataset.path === filePath);
       });
@@ -394,6 +397,7 @@
 
     activeDashboardRepository = repositoryPath;
     selectedDashboardCommit = null;
+    selectedDashboardFile = null;
     historyNextOffset = null;
     document.querySelectorAll('.dashboard-repository-item').forEach(item => {
       item.classList.toggle('active', item.dataset.repository === repositoryPath);
@@ -418,6 +422,7 @@
     const includeRemotes = document.getElementById('dashboardIncludeRemotes');
     const history = document.getElementById('dashboardHistory');
     if (!append && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    if (!append) historyRequestId += 1;
     postMessage('getHistory', {
       repositoryPath: activeDashboardRepository,
       limit: 100,
@@ -425,7 +430,8 @@
       search: search ? search.value.trim() : '',
       branch: branch && branch.value ? branch.value : undefined,
       includeRemotes: Boolean(includeRemotes && includeRemotes.checked),
-      append: Boolean(append)
+      append: Boolean(append),
+      requestId: historyRequestId
     });
   }
 
@@ -444,7 +450,7 @@
   }
 
   function renderHistoryPage(payload) {
-    if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
+    if (!payload || payload.repositoryPath !== activeDashboardRepository || payload.requestId !== historyRequestId) return;
     const history = document.getElementById('dashboardHistory');
     const loadMore = document.getElementById('loadMoreHistory');
     if (!history) return;
@@ -489,10 +495,14 @@
     const stashList = document.getElementById('dashboardStashes');
     const branchFilter = document.getElementById('dashboardBranchFilter');
 
-    document.getElementById('branchRefCount').textContent = branches.length;
-    document.getElementById('tagRefCount').textContent = tags.length;
-    document.getElementById('remoteRefCount').textContent = remotes.length;
-    document.getElementById('stashRefCount').textContent = stashes.length;
+    const branchCount = document.getElementById('branchRefCount');
+    const tagCount = document.getElementById('tagRefCount');
+    const remoteCount = document.getElementById('remoteRefCount');
+    const stashCount = document.getElementById('stashRefCount');
+    if (branchCount) branchCount.textContent = branches.length;
+    if (tagCount) tagCount.textContent = tags.length;
+    if (remoteCount) remoteCount.textContent = remotes.length;
+    if (stashCount) stashCount.textContent = stashes.length;
 
     if (branchList) {
       branchList.innerHTML = branches.map(branch => `<button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="checkoutDashboardBranch" data-branch="${escapeHtml(branch.name)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`).join('') || '<span class="sidebar-placeholder">No branches</span>';
@@ -514,6 +524,7 @@
   }
 
   function clearCommitDetail() {
+    selectedDashboardFile = null;
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const diff = document.getElementById('dashboardDiff');
@@ -558,7 +569,7 @@
   }
 
   function renderFileDiff(payload) {
-    if (!payload || payload.repositoryPath !== activeDashboardRepository || payload.commitHash !== selectedDashboardCommit) return;
+    if (!payload || payload.repositoryPath !== activeDashboardRepository || payload.commitHash !== selectedDashboardCommit || payload.path !== selectedDashboardFile) return;
     const diff = document.getElementById('dashboardDiff');
     const truncated = document.getElementById('diffTruncated');
     if (!diff) return;

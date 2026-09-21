@@ -5,13 +5,12 @@
 
 import * as vscode from 'vscode';
 import { GitOperations } from './gitOperations';
-import { RepositoryTreeProvider, ActionsTreeProvider } from './repositoryTreeProvider';
+import { RepositoryTreeProvider } from './repositoryTreeProvider';
 import { PRManager } from './prManager';
 import { registerBasicCommands, CommandContext } from './commands/submoduleCommands';
 import { registerCreateBranchCommand } from './commands/createBranchCommand';
 
 let repositoryTreeProvider: RepositoryTreeProvider;
-let actionsTreeProvider: ActionsTreeProvider;
 let gitOps: GitOperations;
 let prManager: PRManager;
 
@@ -29,21 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
   gitOps = new GitOperations(workspaceRoot);
   prManager = new PRManager(workspaceRoot);
 
-  // Initialize tree providers
+  // Keep the provider as a command refresh dependency. The dashboard is the
+  // only UI surface, so duplicate Activity Bar views are not registered.
   repositoryTreeProvider = new RepositoryTreeProvider(workspaceRoot);
-  actionsTreeProvider = new ActionsTreeProvider();
-
-  // Register tree views
-  const repositoryTreeView = vscode.window.createTreeView('repositoryList', {
-    treeDataProvider: repositoryTreeProvider,
-    showCollapseAll: true
-  });
-
-  const actionsTreeView = vscode.window.createTreeView('repositoryActions', {
-    treeDataProvider: actionsTreeProvider
-  });
-
-  context.subscriptions.push(repositoryTreeView, actionsTreeView);
 
   // Create command context
   const commandContext: CommandContext = {

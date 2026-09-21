@@ -75,7 +75,6 @@ Press `F5` in VS Code to launch an Extension Development Host.
 
 - Command Palette: **Repository Manager: Open Repository Manager**
 - Keyboard: `Ctrl+Shift+G M` (`Cmd+Shift+G M` on macOS)
-- Activity Bar: select the Repository Manager icon
 
 ### Create a branch across repositories
 

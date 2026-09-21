@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unknown branch types can use any supported prefix.
 - Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
 - Redesigned the webview as a desktop Git dashboard with a command bar, repository sidebar, history table, commit summary, changed-file list, and diff viewer.
+- Removed the duplicate Activity Bar `Repositories` and `Quick Actions` views so the editor dashboard is the only UI surface.
+- Simplified the dashboard sidebar by removing its `Workspace` navigation and `Branches` sections; branch selection remains in the history filter and branch workflow.
 - Updated the dashboard to treat the parent and linked repositories as one repository collection, including repository-wide statistics, search, selection, and branch workflows.
 - Kept submodule terminology only for Git operations that specifically initialize, update, or stage submodule pointers.
 - Restored branch delete actions after an optimistic checkout changes the current branch.

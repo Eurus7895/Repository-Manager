@@ -97,7 +97,13 @@ export async function handleGetHistory(ctx: MessageHandlerContext, payload: unkn
 
   try {
     const history = await ctx.gitOps.getHistory(query);
-    await sendToWebview(ctx, { type: 'historyLoaded', payload: history });
+    await sendToWebview(ctx, {
+      type: 'historyLoaded',
+      payload: {
+        ...history,
+        requestId: typeof request.requestId === 'number' ? request.requestId : 0
+      }
+    });
   } catch (error) {
     await sendDashboardError(ctx, 'getHistory', repositoryPath, error);
   }

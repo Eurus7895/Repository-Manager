@@ -997,7 +997,7 @@ select {
 
 .dashboard-shell {
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr);
   width: 100%;
   height: 100vh;
   background: var(--bg-primary);
@@ -1008,7 +1008,7 @@ select {
   grid-template-columns: minmax(270px, 1fr) minmax(220px, 2fr) minmax(160px, 1fr);
   align-items: stretch;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--vscode-titleBar-activeBackground, var(--bg-secondary));
 }
@@ -1029,7 +1029,7 @@ select {
   align-items: center;
   justify-content: center;
   min-width: 52px;
-  height: 48px;
+  height: 54px;
   padding: 3px 8px;
   border: 0;
   border-radius: 6px;
@@ -1059,7 +1059,7 @@ select {
   flex-direction: column;
   align-items: center;
   min-width: 0;
-  padding: 6px 14px;
+  padding: 7px 18px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--vscode-input-background);
@@ -1081,7 +1081,7 @@ select {
 
 .dashboard-body {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: clamp(248px, 21vw, 310px) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -1092,6 +1092,11 @@ select {
   border-right: 1px solid var(--border);
   background: var(--vscode-sideBar-background, var(--bg-secondary));
   scrollbar-width: thin;
+}
+
+.dashboard-sidebar > .sidebar-section:first-of-type {
+  padding-top: 12px;
+  border-top: 0;
 }
 
 .sidebar-brand {
@@ -1368,7 +1373,7 @@ select {
 
 .history-row {
   width: 100%;
-  min-height: 29px;
+  min-height: 27px;
   padding: 0 9px 0 2px;
   border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
@@ -1467,7 +1472,9 @@ select {
 }
 
 .history-ref.ref-tag { color: var(--vscode-charts-purple, #b180d7); }
-.history-ref.ref-remote { color: var(--vscode-charts-blue, #3794ff); }
+.history-ref.ref-remote,
+.history-ref.ref-remote-branch { color: var(--vscode-charts-blue, #3794ff); }
+.history-ref.ref-local-branch { color: var(--vscode-charts-green, #73c991); }
 .history-ref.ref-head { color: var(--vscode-charts-orange, #d18616); }
 
 .load-more-button {

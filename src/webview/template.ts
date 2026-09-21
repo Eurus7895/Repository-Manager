@@ -225,14 +225,7 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
 function renderDashboardSidebar(repositories: RepositoryInfo[], workspaceFolders: WorkspaceFolderInfo[]): string {
   return `
     <aside class="dashboard-sidebar">
-      <div class="sidebar-brand"><span class="brand-mark">RM</span><strong>Repository Manager</strong></div>
       ${renderWorkspaceFolderSelector(workspaceFolders)}
-      <nav class="dashboard-navigation">
-        <div class="sidebar-section-title">Workspace</div>
-        <button class="sidebar-nav-item active" type="button"><span>◷</span>History</button>
-        <button class="sidebar-nav-item" type="button" data-action="refresh"><span>↻</span>Refresh workspace</button>
-        <button class="sidebar-nav-item" type="button" data-action="openCreateBranchModal"><span>⑂</span>Branch workflow</button>
-      </nav>
       <section class="sidebar-section repositories-section">
         <div class="sidebar-section-title"><span>Repositories</span><span>${repositories.length}</span></div>
         <div class="dashboard-repository-list" id="dashboardRepositoryList">
@@ -244,10 +237,6 @@ function renderDashboardSidebar(repositories: RepositoryInfo[], workspaceFolders
             </button>
           `).join('')}
         </div>
-      </section>
-      <section class="sidebar-section refs-section">
-        <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
-        <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Select a repository</span></div>
       </section>
       <section class="sidebar-section compact-ref-section">
         <div class="sidebar-section-title"><span>Tags</span><span id="tagRefCount">—</span></div>
