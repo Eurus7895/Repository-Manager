@@ -133,6 +133,7 @@ export interface HistoryQuery {
 
 export interface HistoryPage {
   repositoryPath: string;
+  offset: number;
   commits: HistoryCommit[];
   nextOffset: number | null;
 }

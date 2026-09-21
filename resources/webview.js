@@ -10,13 +10,19 @@
   let selectedRepositories = new Set(previousState.selectedRepositories || previousState.selectedSubmodules || []);
   let rebasingRepositories = new Set(previousState.rebasingRepositories || previousState.rebasingSubmodules || []);
   let repositoryData = previousState.repositoryData || previousState.submoduleData || (window.__initialRepositories || []);
+  let activeDashboardRepository = previousState.activeDashboardRepository || (repositoryData[0] && repositoryData[0].path) || '.';
+  let selectedDashboardCommit = previousState.selectedDashboardCommit || null;
+  let historyNextOffset = null;
+  let historySearchTimer = null;
 
   // Save state helper
   function saveState() {
     vscode.setState({
       selectedRepositories: Array.from(selectedRepositories),
       rebasingRepositories: Array.from(rebasingRepositories),
-      repositoryData
+      repositoryData,
+      activeDashboardRepository,
+      selectedDashboardCommit
     });
   }
 
@@ -29,6 +35,57 @@
     refresh: () => postMessage('refresh'),
     initAll: () => postMessage('initSubmodules'),
     updateAll: () => postMessage('updateSubmodules'),
+
+    selectDashboardRepository: (el) => {
+      const repository = el.dataset.repository;
+      if (repository) activateDashboardRepository(repository);
+    },
+
+    pullActiveRepository: () => postMessage('pullChanges', { submodule: activeDashboardRepository }),
+    pushActiveRepository: () => postMessage('pushChanges', { submodule: activeDashboardRepository }),
+    fetchActiveRepository: () => postMessage('fetchUpdates', { submodule: activeDashboardRepository }),
+    openActiveRepository: () => postMessage('openSubmodule', { submodule: activeDashboardRepository }),
+
+    loadMoreHistory: () => {
+      if (historyNextOffset !== null) requestDashboardHistory(historyNextOffset, true);
+    },
+
+    selectHistoryCommit: (el) => {
+      const commitHash = el.dataset.commit;
+      if (!commitHash) return;
+      selectedDashboardCommit = commitHash;
+      document.querySelectorAll('.history-row').forEach(row => {
+        row.classList.toggle('active', row.dataset.commit === commitHash);
+      });
+      saveState();
+      showCommitDetailLoading();
+      postMessage('getCommitDetail', {
+        repositoryPath: activeDashboardRepository,
+        commitHash
+      });
+    },
+
+    selectChangedFile: (el) => {
+      const filePath = el.dataset.path;
+      if (!filePath || !selectedDashboardCommit) return;
+      document.querySelectorAll('.changed-file-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.path === filePath);
+      });
+      const fileName = document.getElementById('diffFileName');
+      const diff = document.getElementById('dashboardDiff');
+      if (fileName) fileName.textContent = filePath;
+      if (diff) diff.innerHTML = '<span class="diff-placeholder">Loading patch…</span>';
+      postMessage('getFileDiff', {
+        repositoryPath: activeDashboardRepository,
+        commitHash: selectedDashboardCommit,
+        path: filePath
+      });
+    },
+
+    checkoutDashboardBranch: (el) => {
+      const branch = el.dataset.branch;
+      if (branch) postMessage('checkoutBranch', { submodule: activeDashboardRepository, branch });
+    },
 
     selectAll: () => {
       document.querySelectorAll('.repository-card').forEach(row => {
@@ -318,6 +375,220 @@
     }
   };
 
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function getRepository(path) {
+    return repositoryData.find(repository => repository.path === path);
+  }
+
+  function activateDashboardRepository(repositoryPath) {
+    const repository = getRepository(repositoryPath);
+    if (!repository) return;
+
+    activeDashboardRepository = repositoryPath;
+    selectedDashboardCommit = null;
+    historyNextOffset = null;
+    document.querySelectorAll('.dashboard-repository-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.repository === repositoryPath);
+    });
+
+    const context = document.getElementById('dashboardCommandContext');
+    if (context) {
+      context.innerHTML = `<strong>${escapeHtml(repository.name)}</strong><small>${escapeHtml(repository.path === '.' ? 'workspace root' : repository.path)}</small>`;
+    }
+
+    const history = document.getElementById('dashboardHistory');
+    if (history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    clearCommitDetail();
+    saveState();
+    requestDashboardHistory(0, false);
+    postMessage('getRepositoryRefs', { repositoryPath });
+  }
+
+  function requestDashboardHistory(offset, append) {
+    const search = document.getElementById('dashboardSearch');
+    const branch = document.getElementById('dashboardBranchFilter');
+    const includeRemotes = document.getElementById('dashboardIncludeRemotes');
+    const history = document.getElementById('dashboardHistory');
+    if (!append && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    postMessage('getHistory', {
+      repositoryPath: activeDashboardRepository,
+      limit: 100,
+      offset: offset || 0,
+      search: search ? search.value.trim() : '',
+      branch: branch && branch.value ? branch.value : undefined,
+      includeRemotes: Boolean(includeRemotes && includeRemotes.checked),
+      append: Boolean(append)
+    });
+  }
+
+  function formatHistoryDate(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value || '';
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    }).format(date);
+  }
+
+  function graphColor(hash) {
+    const colors = ['graph-blue', 'graph-green', 'graph-orange', 'graph-purple'];
+    const index = parseInt((hash || '0').slice(0, 2), 16) % colors.length;
+    return colors[index];
+  }
+
+  function renderHistoryPage(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
+    const history = document.getElementById('dashboardHistory');
+    const loadMore = document.getElementById('loadMoreHistory');
+    if (!history) return;
+
+    const rows = (payload.commits || []).map(commit => {
+      const refs = (commit.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
+      const mergeClass = commit.parentHashes && commit.parentHashes.length > 1 ? ' merge-node' : '';
+      return `<button class="history-row" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
+        <span class="history-graph ${graphColor(commit.hash)}${mergeClass}"><i></i></span>
+        <span class="history-message"><span class="history-subject">${escapeHtml(commit.subject)}</span>${refs ? `<span class="history-refs">${refs}</span>` : ''}</span>
+        <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
+        <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>
+        <code class="history-hash">${escapeHtml(commit.shortHash)}</code>
+      </button>`;
+    }).join('');
+
+    const append = payload.offset > 0;
+    if (append) {
+      history.insertAdjacentHTML('beforeend', rows);
+    } else {
+      history.innerHTML = rows || '<div class="dashboard-empty">No commits match this view.</div>';
+    }
+    historyNextOffset = payload.nextOffset;
+    if (loadMore) loadMore.hidden = historyNextOffset === null;
+
+    if (!append && payload.commits && payload.commits.length > 0) {
+      const preferred = payload.commits.find(commit => commit.hash === selectedDashboardCommit) || payload.commits[0];
+      const row = Array.from(document.querySelectorAll('.history-row')).find(item => item.dataset.commit === preferred.hash);
+      if (row) actions.selectHistoryCommit(row);
+    }
+  }
+
+  function renderRepositoryRefs(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
+    const branches = payload.branches || [];
+    const tags = payload.tags || [];
+    const remotes = payload.remotes || [];
+    const stashes = payload.stashes || [];
+    const branchList = document.getElementById('dashboardBranches');
+    const tagList = document.getElementById('dashboardTags');
+    const remoteList = document.getElementById('dashboardRemotes');
+    const stashList = document.getElementById('dashboardStashes');
+    const branchFilter = document.getElementById('dashboardBranchFilter');
+
+    document.getElementById('branchRefCount').textContent = branches.length;
+    document.getElementById('tagRefCount').textContent = tags.length;
+    document.getElementById('remoteRefCount').textContent = remotes.length;
+    document.getElementById('stashRefCount').textContent = stashes.length;
+
+    if (branchList) {
+      branchList.innerHTML = branches.map(branch => `<button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="checkoutDashboardBranch" data-branch="${escapeHtml(branch.name)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`).join('') || '<span class="sidebar-placeholder">No branches</span>';
+    }
+    if (tagList) {
+      tagList.innerHTML = tags.slice(0, 12).map(tag => `<div class="sidebar-ref-item"><span>◇</span><span>${escapeHtml(tag.name)}</span></div>`).join('');
+    }
+    if (remoteList) {
+      remoteList.innerHTML = remotes.map(remote => `<div class="sidebar-ref-item" title="${escapeHtml(remote.fetchUrl)}"><span>☁</span><span>${escapeHtml(remote.name)}</span></div>`).join('');
+    }
+    if (stashList) {
+      stashList.innerHTML = stashes.slice(0, 8).map(stash => `<div class="sidebar-ref-item" title="${escapeHtml(stash.subject)}"><span>▱</span><span>${escapeHtml(stash.ref)}</span></div>`).join('');
+    }
+    if (branchFilter) {
+      const currentValue = branchFilter.value;
+      branchFilter.innerHTML = '<option value="">HEAD</option>' + branches.map(branch => `<option value="${escapeHtml(branch.name)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`).join('');
+      if (Array.from(branchFilter.options).some(option => option.value === currentValue)) branchFilter.value = currentValue;
+    }
+  }
+
+  function clearCommitDetail() {
+    const summary = document.getElementById('dashboardCommitSummary');
+    const files = document.getElementById('dashboardChangedFiles');
+    const diff = document.getElementById('dashboardDiff');
+    if (summary) summary.innerHTML = '<div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>';
+    if (files) files.innerHTML = '';
+    if (diff) diff.innerHTML = '<span class="diff-placeholder">Select a changed file to load its patch.</span>';
+    const count = document.getElementById('changedFileCount');
+    if (count) count.textContent = '0';
+  }
+
+  function showCommitDetailLoading() {
+    const summary = document.getElementById('dashboardCommitSummary');
+    const files = document.getElementById('dashboardChangedFiles');
+    const diff = document.getElementById('dashboardDiff');
+    if (summary) summary.innerHTML = '<div class="dashboard-loading">Loading commit detail…</div>';
+    if (files) files.innerHTML = '';
+    if (diff) diff.innerHTML = '<span class="diff-placeholder">Select a changed file to load its patch.</span>';
+  }
+
+  function changedFileGlyph(status) {
+    const glyphs = { added: '+', modified: '●', deleted: '−', renamed: '→', copied: '⊕', 'type-changed': 'T', unmerged: '!', unknown: '?' };
+    return glyphs[status] || '?';
+  }
+
+  function renderCommitDetail(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository || !payload.detail) return;
+    const detail = payload.detail;
+    if (detail.hash !== selectedDashboardCommit) return;
+    const summary = document.getElementById('dashboardCommitSummary');
+    const files = document.getElementById('dashboardChangedFiles');
+    const count = document.getElementById('changedFileCount');
+    if (summary) {
+      const refs = (detail.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
+      summary.innerHTML = `<div class="commit-avatar">${escapeHtml((detail.authorName || '?').charAt(0).toUpperCase())}</div><div class="commit-summary-copy"><strong>${escapeHtml(detail.subject)}</strong><span>${escapeHtml(detail.authorName)} &lt;${escapeHtml(detail.authorEmail)}&gt; · ${escapeHtml(formatHistoryDate(detail.authoredAt))}</span>${detail.body && detail.body !== detail.subject ? `<p>${escapeHtml(detail.body)}</p>` : ''}</div><code>${escapeHtml(detail.shortHash)}</code><div class="commit-summary-refs">${refs}</div>`;
+    }
+    if (count) count.textContent = String((detail.files || []).length);
+    if (files) {
+      files.innerHTML = (detail.files || []).map(file => `<button class="changed-file-item status-${escapeHtml(file.status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(file.path)}"><span class="file-status-glyph">${changedFileGlyph(file.status)}</span><span class="file-path"><strong>${escapeHtml(file.path.split('/').pop())}</strong><small>${escapeHtml(file.oldPath ? `${file.oldPath} → ${file.path}` : file.path)}</small></span><span>›</span></button>`).join('') || '<div class="dashboard-empty">No changed files.</div>';
+      const firstFile = files.querySelector('.changed-file-item');
+      if (firstFile) actions.selectChangedFile(firstFile);
+    }
+  }
+
+  function renderFileDiff(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository || payload.commitHash !== selectedDashboardCommit) return;
+    const diff = document.getElementById('dashboardDiff');
+    const truncated = document.getElementById('diffTruncated');
+    if (!diff) return;
+    const lines = String(payload.patch || '').split('\n');
+    diff.innerHTML = lines.map(line => {
+      let className = 'diff-context';
+      if (line.startsWith('+') && !line.startsWith('+++')) className = 'diff-addition';
+      else if (line.startsWith('-') && !line.startsWith('---')) className = 'diff-deletion';
+      else if (line.startsWith('@@')) className = 'diff-hunk';
+      else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) className = 'diff-meta';
+      return `<span class="${className}">${escapeHtml(line) || ' '}</span>`;
+    }).join('');
+    if (truncated) truncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
+  }
+
+  function renderDashboardError(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
+    const history = document.getElementById('dashboardHistory');
+    if (payload.request === 'getHistory' && history) {
+      history.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`;
+      return;
+    }
+    const target = payload.request === 'getCommitDetail'
+      ? document.getElementById('dashboardCommitSummary')
+      : payload.request === 'getFileDiff'
+        ? document.getElementById('dashboardDiff')
+        : null;
+    if (target) target.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`;
+  }
+
   // Ripple effect for buttons
   document.body.addEventListener('mousedown', function (e) {
     const btn = e.target.closest('.btn');
@@ -562,6 +833,26 @@
           updateRepositoryRows(repositoryData);
           break;
         }
+
+        case 'historyLoaded':
+          renderHistoryPage(message.payload);
+          break;
+
+        case 'repositoryRefsLoaded':
+          renderRepositoryRefs(message.payload);
+          break;
+
+        case 'commitDetailLoaded':
+          renderCommitDetail(message.payload);
+          break;
+
+        case 'fileDiffLoaded':
+          renderFileDiff(message.payload);
+          break;
+
+        case 'dashboardError':
+          renderDashboardError(message.payload);
+          break;
 
         case 'rebaseStatusUpdated': {
           updateRebaseUI();
@@ -909,8 +1200,35 @@
     });
   }
 
+  const dashboardSearch = document.getElementById('dashboardSearch');
+  if (dashboardSearch) {
+    dashboardSearch.addEventListener('input', function () {
+      if (historySearchTimer) clearTimeout(historySearchTimer);
+      historySearchTimer = setTimeout(function () {
+        requestDashboardHistory(0, false);
+      }, 250);
+    });
+  }
+
+  const dashboardBranchFilter = document.getElementById('dashboardBranchFilter');
+  if (dashboardBranchFilter) {
+    dashboardBranchFilter.addEventListener('change', function () {
+      requestDashboardHistory(0, false);
+    });
+  }
+
+  const dashboardIncludeRemotes = document.getElementById('dashboardIncludeRemotes');
+  if (dashboardIncludeRemotes) {
+    dashboardIncludeRemotes.addEventListener('change', function () {
+      requestDashboardHistory(0, false);
+    });
+  }
+
   // Initialize UI on load
   updateSelectionUI();
   updateRebaseUI();
   closeAllBranchPanels();
+  if (repositoryData.length > 0) {
+    activateDashboardRepository(activeDashboardRepository);
+  }
 })();

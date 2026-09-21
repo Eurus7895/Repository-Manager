@@ -352,6 +352,18 @@ export async function handlePushChanges(
 }
 
 /**
+ * Handler for fetching remote refs without modifying the working tree.
+ */
+export async function handleFetchUpdates(
+  ctx: MessageHandlerContext,
+  payload: { submodule: string }
+): Promise<void> {
+  const result = await ctx.gitOps.fetchUpdates(payload.submodule);
+  showResult(result.success, result.message);
+  await ctx.refresh();
+}
+
+/**
  * Handler for syncing versions
  */
 export async function handleSyncVersions(
@@ -574,6 +586,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'checkoutBranch': (ctx, payload) => handleCheckoutBranch(ctx, payload as { submodule: string; branch: string }),
   'pullChanges': (ctx, payload) => handlePullChanges(ctx, payload as { submodule: string }),
   'pushChanges': (ctx, payload) => handlePushChanges(ctx, payload as { submodule: string }),
+  'fetchUpdates': (ctx, payload) => handleFetchUpdates(ctx, payload as { submodule: string }),
   'syncVersions': (ctx, payload) => handleSyncVersions(ctx, payload as { submodules: string[] }),
   'createPR': (ctx, payload) => handleCreatePR(ctx, payload as { submodule: string }),
   'openSubmodule': (ctx, payload) => handleOpenSubmodule(ctx, payload as { submodule: string }),

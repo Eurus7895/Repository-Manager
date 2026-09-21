@@ -54,6 +54,7 @@ async function testRepositoryIntegration(): Promise<void> {
   const referenceService = new ReferenceService(git, branchService, commitService);
 
   const page = await historyService.getHistory({ repositoryPath: '.', limit: 2 });
+  assert.equal(page.offset, 0);
   assert.ok(page.commits.length > 0);
   assert.ok(page.commits.length <= 2);
 

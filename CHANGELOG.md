@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Checkout, pull, push, branch deletion, and pull-request actions from the repository view.
 - Commit checkout and comparison with the commit recorded by the parent repository.
 - Rebase-state tracking to reduce accidental synchronization during rebase work.
+- Repository history with paginated commit loading, branch filtering, remote inclusion, and search.
+- Commit inspection with changed-file navigation and per-file patches.
+- Sidebar reference browsing for branches, tags, remotes, and stashes.
 
 ### Changed
 
@@ -29,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `task` can create `task/` branches.
   - Unknown branch types can use any supported prefix.
 - Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
+- Redesigned the webview as a desktop Git dashboard with a command bar, repository sidebar, history table, commit summary, changed-file list, and diff viewer.
 - Updated the dashboard to treat the parent and linked repositories as one repository collection, including repository-wide statistics, search, selection, and branch workflows.
 - Kept submodule terminology only for Git operations that specifically initialize, update, or stage submodule pointers.
 - Restored branch delete actions after an optimistic checkout changes the current branch.

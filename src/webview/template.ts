@@ -23,133 +23,6 @@ export interface WorkspaceFolderInfo {
 }
 
 /**
- * Get status icon for repository status
- */
-function getStatusIcon(status: string): string {
-  const icons: Record<string, string> = {
-    'clean': '✓',
-    'modified': '●',
-    'uninitialized': '○',
-    'detached': '◎',
-    'conflict': '⚠',
-    'unknown': '?'
-  };
-  return icons[status] || '?';
-}
-
-/**
- * Get status tooltip for repository status
- */
-function getStatusTooltip(status: string): string {
-  const tooltips: Record<string, string> = {
-    'clean': 'Clean: On a branch with no uncommitted changes',
-    'modified': 'Modified: Has uncommitted changes in this repository',
-    'uninitialized': 'Uninitialized: This linked repository has not been cloned yet. Run Init Submodules to initialize it.',
-    'detached': 'Detached HEAD: Checked out to a specific commit, not on any branch. This is normal when synced to the parent repo\'s recorded commit.',
-    'conflict': 'Conflict: Merge conflict detected',
-    'unknown': 'Unknown: Could not determine status'
-  };
-  return tooltips[status] || 'Unknown status';
-}
-
-/**
- * Render a single repository row
- */
-export function renderRepositoryRow(repository: RepositoryInfo, index: number): string {
-  const statusClass = `status-${repository.status}`;
-  const statusIcon = getStatusIcon(repository.status);
-  const statusTooltip = getStatusTooltip(repository.status);
-  const branchDisplay = repository.currentBranch || '(detached)';
-  const branchTooltip = repository.currentBranch
-    ? `Currently on branch: ${repository.currentBranch}`
-    : `Detached HEAD: Not on any branch, checked out to commit ${repository.currentCommit}`;
-
-  const isParent = repository.isParentRepo === true;
-  const cardClass = isParent ? 'repository-card parent-repo' : 'repository-card';
-  const parentBadge = isParent ? '<span class="parent-badge">PARENT</span>' : '';
-  const pathDisplay = isParent ? '(root)' : repository.path;
-
-  return `
-    <div class="${cardClass}" data-name="${repository.name}" data-path="${repository.path}" style="animation-delay: ${index * 0.02}s">
-      <div class="repository-row">
-        <input type="checkbox" class="row-checkbox" data-action="toggleSelection" data-repository="${repository.path}">
-        <span class="row-name" title="${repository.name}">${repository.name}${parentBadge}</span>
-        <span class="row-path" title="${repository.path}">${pathDisplay}</span>
-        <span class="row-branch branch" title="${branchTooltip}">${branchDisplay}</span>
-        <span class="row-commit commit">${repository.currentCommit || 'N/A'}</span>
-        <span class="row-status ${statusClass}" title="${statusTooltip}">${statusIcon} ${repository.status.toUpperCase()}</span>
-        <div class="row-sync">
-          ${repository.ahead > 0 ? `<span class="ahead">↑${repository.ahead}</span>` : ''}
-          ${repository.behind > 0 ? `<span class="behind">↓${repository.behind}</span>` : ''}
-        </div>
-        <span class="rebase-badge rebase-indicator" style="display: none;">REBASING</span>
-        <div class="row-actions">
-          ${!isParent ? `<button class="btn btn-sm" data-action="openCommitModal" data-repository="${repository.path}" title="Checkout specific commit">⎔</button>` : ''}
-          <button class="btn btn-sm" data-action="pullChanges" data-repository="${repository.path}" title="Pull changes">↓</button>
-          <button class="btn btn-sm" data-action="pushChanges" data-repository="${repository.path}" title="Push changes">↑</button>
-          <button class="btn btn-sm" data-action="openRepository" data-repository="${repository.path}" title="Open in explorer">📂</button>
-          ${repository.hasChanges && !isParent ? `<button class="btn btn-sm" data-action="stageSubmodule" data-repository="${repository.path}" title="Stage submodule pointer">+</button>` : ''}
-        </div>
-      </div>
-      <div class="branches-panel" id="branches-${repository.path.replace(/[/.]/g, '-')}" style="display: none;">
-        <div class="branches-loading">Loading branches...</div>
-      </div>
-    </div>
-  `;
-}
-
-/**
- * Render the stats section
- */
-function renderStats(repositories: RepositoryInfo[]): string {
-
-  return `
-    <div class="stats">
-      <div class="stat-card" title="Total number of repositories in this workspace">
-        <div class="stat-label">Total Repositories</div>
-        <div class="stat-value">${repositories.length}</div>
-        <div class="stat-desc">Parent and linked repositories</div>
-      </div>
-      <div class="stat-card" title="Repositories on a branch with no uncommitted changes">
-        <div class="stat-label">Clean</div>
-        <div class="stat-value success">${repositories.filter(s => s.status === 'clean').length}</div>
-        <div class="stat-desc">On branch, no changes</div>
-      </div>
-      <div class="stat-card" title="Repositories with uncommitted changes (staged or unstaged files)">
-        <div class="stat-label">Modified</div>
-        <div class="stat-value warning">${repositories.filter(s => s.status === 'modified').length}</div>
-        <div class="stat-desc">Has uncommitted changes</div>
-      </div>
-      <div class="stat-card" title="Repositories that are detached, uninitialized, or have conflicts">
-        <div class="stat-label">Needs Attention</div>
-        <div class="stat-value error">${repositories.filter(s => ['uninitialized', 'conflict', 'detached'].includes(s.status)).length}</div>
-        <div class="stat-desc">Detached, uninitialized, or conflict</div>
-      </div>
-    </div>
-  `;
-}
-
-/**
- * Render the repository list or empty state
- */
-function renderRepositoryList(repositories: RepositoryInfo[]): string {
-  if (repositories.length > 0) {
-    return `
-      <div class="repository-list" id="repositoryList">
-        ${repositories.map((repository, index) => renderRepositoryRow(repository, index)).join('')}
-      </div>
-    `;
-  }
-  return `
-    <div class="empty-state">
-      <h2>No Repositories Available</h2>
-      <p>Repository data could not be loaded for this workspace.</p>
-      <button class="btn btn-primary" data-action="refresh">Refresh Repositories</button>
-    </div>
-  `;
-}
-
-/**
  * Render the modals
  */
 function renderModals(repositories: RepositoryInfo[]): string {
@@ -349,6 +222,104 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
   `;
 }
 
+function renderDashboardSidebar(repositories: RepositoryInfo[], workspaceFolders: WorkspaceFolderInfo[]): string {
+  return `
+    <aside class="dashboard-sidebar">
+      <div class="sidebar-brand"><span class="brand-mark">RM</span><strong>Repository Manager</strong></div>
+      ${renderWorkspaceFolderSelector(workspaceFolders)}
+      <nav class="dashboard-navigation">
+        <div class="sidebar-section-title">Workspace</div>
+        <button class="sidebar-nav-item active" type="button"><span>◷</span>History</button>
+        <button class="sidebar-nav-item" type="button" data-action="refresh"><span>↻</span>Refresh workspace</button>
+        <button class="sidebar-nav-item" type="button" data-action="openCreateBranchModal"><span>⑂</span>Branch workflow</button>
+      </nav>
+      <section class="sidebar-section repositories-section">
+        <div class="sidebar-section-title"><span>Repositories</span><span>${repositories.length}</span></div>
+        <div class="dashboard-repository-list" id="dashboardRepositoryList">
+          ${repositories.map((repository, index) => `
+            <button class="dashboard-repository-item${index === 0 ? ' active' : ''}" type="button" data-action="selectDashboardRepository" data-repository="${repository.path}">
+              <span class="repository-status-dot status-${repository.status}"></span>
+              <span class="repository-item-copy"><strong>${repository.name}</strong><small>${repository.currentBranch || '(detached)'}</small></span>
+              ${repository.isParentRepo ? '<span class="sidebar-badge">PARENT</span>' : ''}
+            </button>
+          `).join('')}
+        </div>
+      </section>
+      <section class="sidebar-section refs-section">
+        <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Select a repository</span></div>
+      </section>
+      <section class="sidebar-section compact-ref-section">
+        <div class="sidebar-section-title"><span>Tags</span><span id="tagRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardTags"></div>
+      </section>
+      <section class="sidebar-section compact-ref-section">
+        <div class="sidebar-section-title"><span>Remotes</span><span id="remoteRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardRemotes"></div>
+      </section>
+      <section class="sidebar-section compact-ref-section">
+        <div class="sidebar-section-title"><span>Stashes</span><span id="stashRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardStashes"></div>
+      </section>
+    </aside>
+  `;
+}
+
+function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: WorkspaceFolderInfo[]): string {
+  const activeRepository = repositories[0];
+  return `
+    <div class="dashboard-shell">
+      <header class="dashboard-command-bar">
+        <div class="command-cluster">
+          <button class="dashboard-command" data-action="refresh"><span>↻</span><small>Refresh</small></button>
+          <button class="dashboard-command" data-action="pullActiveRepository"><span>↓</span><small>Pull</small></button>
+          <button class="dashboard-command" data-action="pushActiveRepository"><span>↑</span><small>Push</small></button>
+          <button class="dashboard-command" data-action="fetchActiveRepository"><span>⇣</span><small>Fetch</small></button>
+          <button class="dashboard-command" data-action="openCreateBranchModal"><span>⑂</span><small>Branch</small></button>
+        </div>
+        <div class="command-context" id="dashboardCommandContext">
+          <strong>${activeRepository?.name || 'No repository'}</strong>
+          <small>${activeRepository?.path === '.' ? 'workspace root' : activeRepository?.path || ''}</small>
+        </div>
+        <div class="command-cluster command-cluster-right">
+          <button class="dashboard-command" data-action="openActiveRepository"><span>↗</span><small>Explorer</small></button>
+          <button class="dashboard-command" data-action="syncAll"><span>⇄</span><small>Sync</small></button>
+        </div>
+      </header>
+      <div class="dashboard-body">
+        ${renderDashboardSidebar(repositories, workspaceFolders)}
+        <main class="dashboard-main">
+          <div class="history-controls">
+            <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
+            <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox"> Include remotes</label>
+            <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
+          </div>
+          <section class="history-region">
+            <div class="history-table-header"><span class="graph-column"></span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
+            <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
+            <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
+          </section>
+          <section class="commit-detail-region">
+            <div class="commit-summary" id="dashboardCommitSummary">
+              <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
+            </div>
+            <div class="commit-content">
+              <div class="changed-files-panel">
+                <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>
+                <div class="changed-files-list" id="dashboardChangedFiles"></div>
+              </div>
+              <div class="diff-panel">
+                <div class="panel-title"><span id="diffFileName">Diff</span><span id="diffTruncated"></span></div>
+                <pre class="diff-viewer" id="dashboardDiff"><span class="diff-placeholder">Select a changed file to load its patch.</span></pre>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  `;
+}
+
 /**
  * Generate the full HTML for the webview
  */
@@ -365,32 +336,7 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
   <link rel="stylesheet" href="${resourceUris.styleUri}">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Repository Manager</h1>
-      <div class="header-actions">
-        <button class="btn" data-action="refresh">↻ Refresh</button>
-        <button class="btn btn-primary" data-action="openCreateBranchModal">+ Create Branch</button>
-      </div>
-    </header>
-
-    ${renderWorkspaceFolderSelector(workspaceFolders)}
-
-    ${renderStats(repositories)}
-
-    <div class="toolbar">
-      <div class="search-box">
-        <input type="text" id="searchInput" placeholder="Search repositories...">
-      </div>
-      <button class="btn" data-action="selectAll">☑ Select All</button>
-      <button class="btn" data-action="deselectAll">☐ Deselect All</button>
-      <button class="btn" data-action="initAll" title="Initialize configured Git submodules">↓ Init Submodules</button>
-      <button class="btn" data-action="updateAll" title="Update configured Git submodules">⟳ Update Submodules</button>
-      <button class="btn" data-action="syncAll">⟲ Sync Versions</button>
-    </div>
-
-    ${renderRepositoryList(repositories)}
-  </div>
+  ${renderDashboard(repositories, workspaceFolders)}
 
   <div class="selection-bar" id="selectionBar">
     <span class="selection-count"><span id="selectedCount">0</span> selected</span>

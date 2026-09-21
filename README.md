@@ -9,6 +9,9 @@ Its primary focus is repository and branch workflow management: inspect reposito
 ### Unified repository overview
 
 - See the parent repository and linked repositories in one dashboard.
+- Browse the active repository's commit graph with branch, tag, remote, and stash context.
+- Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
+- Filter history by branch, include remote refs, or search by author, hash, message, and ref.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
 - Switch between workspace folders in multi-root VS Code workspaces.
@@ -23,7 +26,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 ### Everyday Git operations
 
-- Checkout, pull, and push without leaving the dashboard.
+- Checkout, fetch, pull, and push without leaving the dashboard.
 - Open a repository in Explorer.
 - Open GitHub's pull-request creation flow.
 - Restore a linked repository to the commit recorded by the parent repository.

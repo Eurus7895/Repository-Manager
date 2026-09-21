@@ -121,6 +121,7 @@ export class HistoryService {
     const hasMore = commits.length > limit;
     return {
       repositoryPath: query.repositoryPath,
+      offset,
       commits: commits.slice(0, limit),
       nextOffset: hasMore ? offset + limit : null
     };
