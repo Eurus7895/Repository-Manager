@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository history with paginated commit loading, branch filtering, remote inclusion, and search.
 - Commit inspection with changed-file navigation and per-file patches.
 - Sidebar reference browsing for branches, tags, remotes, and stashes.
+- Workspace alignment cards that compare every repository with the active target branch and surface drift or conflicts.
 
 ### Changed
 
@@ -34,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
 - Redesigned the webview as a desktop Git dashboard with a command bar, repository sidebar, history table, commit summary, changed-file list, and diff viewer.
 - Removed the duplicate Activity Bar `Repositories` and `Quick Actions` views so the editor dashboard is the only UI surface.
-- Simplified the dashboard sidebar by removing its `Workspace` navigation and `Branches` sections; branch selection remains in the history filter and branch workflow.
+- Reintroduced the compact branch list inside the editor dashboard while keeping the removed Activity Bar tree views out of the extension.
 - Reworked the dashboard visual system from the approved design: compact branded header, repository filter, status-aware repository rows, denser history graph, commit inspector, diff styling, and branch workflow modal.
 - Restored the Repository Manager Activity Bar icon as a single dashboard launcher without bringing back the removed repository and quick-action trees.
 - Replaced the extension artwork with the Repository Manager graph icon and added a monochrome Activity Bar variant.

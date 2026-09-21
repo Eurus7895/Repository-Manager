@@ -225,7 +225,7 @@ function getNonce(): string {
  * Render workspace folder selector (only shown if multiple folders exist)
  */
 function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
-  if (folders.length <= 1) {
+  if (folders.length === 0) {
     return '';
   }
 
@@ -268,6 +268,10 @@ function renderDashboardSidebar(repositories: RepositoryInfo[]): string {
           `).join('')}
         </div>
       </section>
+      <section class="sidebar-section branches-section">
+        <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
+      </section>
       <div class="sidebar-ref-storage" aria-hidden="true"><div id="dashboardTags"></div><div id="dashboardRemotes"></div><div id="dashboardStashes"></div></div>
       <footer class="sidebar-reference-summary">
         <div><span>Tags</span><span id="tagRefCount">—</span></div>
@@ -304,6 +308,11 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
       <div class="dashboard-body">
         ${renderDashboardSidebar(repositories)}
         <main class="dashboard-main">
+          <section class="workspace-alignment" id="workspaceAlignment">
+            <div class="alignment-heading"><span>Workspace alignment</span><strong id="workspaceAlignmentSummary">Checking repositories…</strong></div>
+            <div class="alignment-cards" id="workspaceAlignmentCards"></div>
+            <button class="alignment-action" id="workspaceAlignmentAction" type="button" data-action="openCreateBranchModal" hidden>Align repositories</button>
+          </section>
           <div class="history-controls">
             <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox"> Include remotes</label>

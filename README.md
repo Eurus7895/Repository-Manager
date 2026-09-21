@@ -9,11 +9,13 @@ Its primary focus is repository and branch workflow management: inspect reposito
 ### Unified repository overview
 
 - See the parent repository and linked repositories in one dashboard.
+- Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
 - Browse the active repository's commit graph with branch, tag, remote, and stash context.
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
 - Filter history by branch, include remote refs, or search by author, hash, message, and ref.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
+- Browse and switch the active repository's branches directly from the dashboard sidebar.
 - Switch between workspace folders in multi-root VS Code workspaces.
 
 ### Coordinated branch workflows

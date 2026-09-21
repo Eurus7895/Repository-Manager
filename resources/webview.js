@@ -421,6 +421,7 @@
     const history = document.getElementById('dashboardHistory');
     if (history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
     clearCommitDetail();
+    renderWorkspaceAlignment();
     saveState();
     requestDashboardHistory(0, false);
     postMessage('getRepositoryRefs', { repositoryPath });
@@ -535,6 +536,37 @@
       branchFilter.innerHTML = '<option value="">HEAD</option>' + branches.map(branch => `<option value="${escapeHtml(branch.name)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`).join('');
       if (Array.from(branchFilter.options).some(option => option.value === currentValue)) branchFilter.value = currentValue;
     }
+  }
+
+  function renderWorkspaceAlignment() {
+    const active = getRepository(activeDashboardRepository);
+    const summary = document.getElementById('workspaceAlignmentSummary');
+    const cards = document.getElementById('workspaceAlignmentCards');
+    const action = document.getElementById('workspaceAlignmentAction');
+    if (!active || !summary || !cards || !action) return;
+
+    const targetBranch = active.currentBranch || '';
+    const aligned = repositoryData.filter(repository => targetBranch && repository.currentBranch === targetBranch);
+    const needsAlignment = repositoryData.filter(repository => !targetBranch || repository.currentBranch !== targetBranch);
+    summary.textContent = targetBranch
+      ? `${aligned.length} of ${repositoryData.length} on target branch`
+      : 'Active repository is detached';
+
+    cards.innerHTML = repositoryData.map(repository => {
+      const isConflict = repository.status === 'conflict';
+      const isDetached = !repository.currentBranch || repository.status === 'detached';
+      const isAligned = Boolean(targetBranch) && repository.currentBranch === targetBranch;
+      const tone = isConflict ? 'error' : isAligned ? 'good' : 'warning';
+      let detail = 'on target';
+      if (isConflict) detail = `on ${repository.currentBranch || 'detached'} · conflict`;
+      else if (isDetached) detail = `pointer drift · ${repository.currentCommit || 'detached'}`;
+      else if (!isAligned) detail = `on ${repository.currentBranch}`;
+      else if (repository.hasChanges) detail = 'on target · uncommitted changes';
+      return `<button class="alignment-card alignment-${tone}" type="button" data-action="selectDashboardRepository" data-repository="${escapeHtml(repository.path)}"><strong><i></i>${escapeHtml(repository.name)}</strong><span>${escapeHtml(detail)}</span></button>`;
+    }).join('');
+
+    action.hidden = needsAlignment.length === 0;
+    action.textContent = `Align ${needsAlignment.length} ${needsAlignment.length === 1 ? 'repo' : 'repos'}`;
   }
 
   function clearCommitDetail() {
@@ -992,6 +1024,7 @@
         }
       }
     });
+    renderWorkspaceAlignment();
   }
 
   function getStatusIcon(status) {
