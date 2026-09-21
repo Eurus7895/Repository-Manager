@@ -71,8 +71,12 @@ export class BranchService {
 
       // Sort: current first, then alphabetically
       branches.sort((a, b) => {
-        if (a.isCurrent) return -1;
-        if (b.isCurrent) return 1;
+        if (a.isCurrent) {
+          return -1;
+        }
+        if (b.isCurrent) {
+          return 1;
+        }
         return a.name.localeCompare(b.name);
       });
 

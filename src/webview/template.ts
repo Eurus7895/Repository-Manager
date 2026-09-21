@@ -333,7 +333,6 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
   }
 
   const currentFolder = folders.find(f => f.isCurrent);
-  const currentName = currentFolder ? currentFolder.name : 'Unknown';
 
   return `
     <div class="workspace-folder-bar">

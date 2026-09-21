@@ -2,6 +2,8 @@
  * Pull Request Manager for GitHub integration
  */
 
+/* eslint-disable @typescript-eslint/naming-convention -- GitHub payload and HTTP header names are external contracts. */
+
 import * as vscode from 'vscode';
 import * as https from 'https';
 import { GitOperations } from './gitOperations';
@@ -53,7 +55,7 @@ export class PRManager {
         method: method,
         headers: {
           'Authorization': `token ${token}`,
-          'User-Agent': 'VSCode-Submodule-Manager',
+          'User-Agent': 'VSCode-Repository-Manager',
           'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json'
         }

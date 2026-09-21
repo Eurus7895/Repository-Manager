@@ -1,9 +1,62 @@
 # Changelog
 
-All notable changes to the Submodule Manager extension will be documented in this file.
+All notable changes to Repository Manager will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.1.0] - 2026-09-21
+
+### Added
+
+- Parent repository support in the dashboard and coordinated branch workflows.
+- Parent repository selection for branch creation and deletion quick actions.
+- One-click **Sync Versions** action for all linked repositories.
+- Multi-root workspace selection and repository refresh when switching folders.
+- Searchable branch lists with local and remote indicators.
+- Branch filtering by repository name, path, and branch name.
+- Checkout, pull, push, branch deletion, and pull-request actions from the repository view.
+- Commit checkout and comparison with the commit recorded by the parent repository.
+- Rebase-state tracking to reduce accidental synchronization during rebase work.
+
+### Changed
+
+- Repositioned the extension as **Repository Manager**, with repository and branch workflow management as its primary purpose.
+- Reduced submodule-specific terminology in the main product description and documentation. Git submodules remain the supported linked-repository mechanism.
+- Extended branch hierarchy rules:
+  - `dev` can create `feature/` and `release/` branches.
+  - `feature` can create `feature/` and `task/` branches.
+  - `task` can create `task/` branches.
+  - Unknown branch types can use any supported prefix.
+- Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
+- Restored branch delete actions after an optimistic checkout changes the current branch.
+- Split the extension into command, handler, service, and webview modules for easier maintenance.
+- Retained `submoduleManager.*` command and setting identifiers for backward compatibility.
+
+### Fixed
+
+- Branch lists not updating after asynchronous loading.
+- Base-branch delivery failures by awaiting webview messages and retrying incomplete loads.
+- Inconsistent branch tags and row sizing during filtering and checkout.
+- Webview interaction failures caused by inline handlers and Content Security Policy constraints.
+- TypeScript rebuilds accidentally reading generated declaration files from `out/`.
+
+## [1.0.2] - 2026-02-24
+
+### Added
+
+- Branch-name filtering in the repository search field.
+
+### Changed
+
+- Reworked repository rows with a consistent CSS grid layout.
+- Kept branch tags focused on local and remote state while using highlighting for the current branch.
+- Excluded the generated `out/` directory from TypeScript compilation inputs.
+
+### Fixed
+
+- Repository cards changing size while branch filters were active.
+- Merge-conflict remnants in the webview stylesheet.
 
 ## [1.0.1] - 2025-01-29
 

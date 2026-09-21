@@ -1,5 +1,5 @@
 /**
- * Submodule Manager Extension
+ * Repository Manager Extension
  * Main entry point for the VS Code extension
  */
 

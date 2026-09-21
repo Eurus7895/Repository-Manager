@@ -1,8 +1,8 @@
 {
   "name": "submodule-manager",
   "displayName": "Repository Manager",
-  "description": "A modern VS Code extension for managing Git submodules - create branches, sync versions, and manage PRs across multiple submodules",
-  "version": "1.0.2",
+  "description": "Coordinate branches and Git workflows across a parent repository and its linked repositories from one VS Code dashboard",
+  "version": "1.1.0",
   "publisher": "submodule-manager",
   "engines": {
     "vscode": "^1.74.0"
@@ -13,8 +13,11 @@
   ],
   "keywords": [
     "git",
+    "repository",
+    "multi-repository",
+    "workflow",
+    "branch-management",
     "submodule",
-    "submodules",
     "branch",
     "sync",
     "pull request"
@@ -34,7 +37,7 @@
       },
       {
         "command": "submoduleManager.refresh",
-        "title": "Refresh Submodules",
+        "title": "Refresh Repositories",
         "category": "Repository Manager",
         "icon": "$(refresh)"
       },
@@ -50,7 +53,7 @@
       },
       {
         "command": "submoduleManager.createBranch",
-        "title": "Create Branch Across Submodules",
+        "title": "Create Branch Across Repositories",
         "category": "Repository Manager",
         "icon": "$(git-branch)"
       },
@@ -62,7 +65,7 @@
       },
       {
         "command": "submoduleManager.openSubmodule",
-        "title": "Open Submodule in Explorer",
+        "title": "Open Repository in Explorer",
         "category": "Repository Manager"
       },
       {
@@ -104,7 +107,7 @@
       },
       {
         "command": "submoduleManager.deleteBranchAcrossSubmodules",
-        "title": "Delete Branch Across Submodules",
+        "title": "Delete Branch Across Repositories",
         "category": "Repository Manager",
         "icon": "$(trash)"
       }
@@ -122,7 +125,7 @@
       "submodule-manager": [
         {
           "id": "submoduleList",
-          "name": "Submodules",
+          "name": "Repositories",
           "icon": "$(source-control)",
           "contextualTitle": "Repository Manager"
         },
@@ -137,7 +140,7 @@
     "viewsWelcome": [
       {
         "view": "submoduleList",
-        "contents": "No submodules found in this workspace.\n[Initialize Submodules](command:submoduleManager.initSubmodules)\n[Open Repository Manager](command:submoduleManager.openPanel)"
+        "contents": "No linked repositories found in this workspace.\n[Initialize Git Submodules](command:submoduleManager.initSubmodules)\n[Open Repository Manager](command:submoduleManager.openPanel)"
       }
     ],
     "menus": {
