@@ -405,7 +405,17 @@
 
     const context = document.getElementById('dashboardCommandContext');
     if (context) {
-      context.innerHTML = `<strong>${escapeHtml(repository.name)}</strong><small>${escapeHtml(repository.path === '.' ? 'workspace root' : repository.path)}</small>`;
+      context.innerHTML = `<span class="context-path">${escapeHtml(repository.path === '.' ? repository.name : repository.path)}</span><span class="context-branch">⑂ ${escapeHtml(repository.currentBranch || '(detached)')}</span>`;
+    }
+    const behindCount = document.getElementById('dashboardBehindCount');
+    const aheadCount = document.getElementById('dashboardAheadCount');
+    if (behindCount) {
+      behindCount.textContent = repository.behind > 0 ? String(repository.behind) : '';
+      behindCount.hidden = repository.behind <= 0;
+    }
+    if (aheadCount) {
+      aheadCount.textContent = repository.ahead > 0 ? String(repository.ahead) : '';
+      aheadCount.hidden = repository.ahead <= 0;
     }
 
     const history = document.getElementById('dashboardHistory');
@@ -438,8 +448,12 @@
   function formatHistoryDate(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value || '';
+    const ageMs = Date.now() - date.getTime();
+    if (ageMs >= 0 && ageMs < 60 * 60 * 1000) return `${Math.max(1, Math.floor(ageMs / 60000))} min ago`;
+    if (ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) return `${Math.floor(ageMs / 3600000)} h ago`;
+    if (ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(ageMs / 86400000)} d ago`;
     return new Intl.DateTimeFormat(undefined, {
-      month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      month: 'short', day: '2-digit', year: 'numeric'
     }).format(date);
   }
 
@@ -460,7 +474,7 @@
       const mergeClass = commit.parentHashes && commit.parentHashes.length > 1 ? ' merge-node' : '';
       return `<button class="history-row" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
         <span class="history-graph ${graphColor(commit.hash)}${mergeClass}"><i></i></span>
-        <span class="history-message"><span class="history-subject">${escapeHtml(commit.subject)}</span>${refs ? `<span class="history-refs">${refs}</span>` : ''}</span>
+        <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<span class="history-subject">${escapeHtml(commit.subject)}</span></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
         <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>
         <code class="history-hash">${escapeHtml(commit.shortHash)}</code>
@@ -545,7 +559,7 @@
   }
 
   function changedFileGlyph(status) {
-    const glyphs = { added: '+', modified: '●', deleted: '−', renamed: '→', copied: '⊕', 'type-changed': 'T', unmerged: '!', unknown: '?' };
+    const glyphs = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', copied: 'C', 'type-changed': 'T', unmerged: '!', unknown: '?' };
     return glyphs[status] || '?';
   }
 
@@ -558,7 +572,8 @@
     const count = document.getElementById('changedFileCount');
     if (summary) {
       const refs = (detail.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
-      summary.innerHTML = `<div class="commit-avatar">${escapeHtml((detail.authorName || '?').charAt(0).toUpperCase())}</div><div class="commit-summary-copy"><strong>${escapeHtml(detail.subject)}</strong><span>${escapeHtml(detail.authorName)} &lt;${escapeHtml(detail.authorEmail)}&gt; · ${escapeHtml(formatHistoryDate(detail.authoredAt))}</span>${detail.body && detail.body !== detail.subject ? `<p>${escapeHtml(detail.body)}</p>` : ''}</div><code>${escapeHtml(detail.shortHash)}</code><div class="commit-summary-refs">${refs}</div>`;
+      const initials = (detail.authorName || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part.charAt(0)).join('').toUpperCase();
+      summary.innerHTML = `<div class="commit-avatar">${escapeHtml(initials)}</div><div class="commit-summary-copy"><strong>${escapeHtml(detail.subject)}</strong><span>${escapeHtml(detail.authorName)} · ${escapeHtml(formatHistoryDate(detail.authoredAt))} · ${escapeHtml(detail.shortHash)}</span>${detail.body && detail.body !== detail.subject ? `<p>${escapeHtml(detail.body)}</p>` : ''}</div><code>${escapeHtml(detail.shortHash)}</code><div class="commit-summary-refs">${refs}</div>`;
     }
     if (count) count.textContent = String((detail.files || []).length);
     if (files) {
@@ -931,6 +946,29 @@
 
   function updateRepositoryRows(repositories) {
     repositories.forEach(repository => {
+      const dashboardItem = Array.from(document.querySelectorAll('.dashboard-repository-item')).find(item => item.dataset.repository === repository.path);
+      if (dashboardItem) {
+        const dot = dashboardItem.querySelector('.repository-status-dot');
+        const branch = dashboardItem.querySelector('.repository-item-copy small');
+        const sync = dashboardItem.querySelector('.repository-sync-state');
+        if (dot) dot.className = 'repository-status-dot status-' + repository.status;
+        if (branch) branch.textContent = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`;
+        if (sync) sync.textContent = `${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}`;
+        if (repository.path === activeDashboardRepository) {
+          const context = document.getElementById('dashboardCommandContext');
+          if (context) context.innerHTML = `<span class="context-path">${escapeHtml(repository.path === '.' ? repository.name : repository.path)}</span><span class="context-branch">⑂ ${escapeHtml(repository.currentBranch || '(detached)')}</span>`;
+          const behindCount = document.getElementById('dashboardBehindCount');
+          const aheadCount = document.getElementById('dashboardAheadCount');
+          if (behindCount) {
+            behindCount.textContent = repository.behind > 0 ? String(repository.behind) : '';
+            behindCount.hidden = repository.behind <= 0;
+          }
+          if (aheadCount) {
+            aheadCount.textContent = repository.ahead > 0 ? String(repository.ahead) : '';
+            aheadCount.hidden = repository.ahead <= 0;
+          }
+        }
+      }
       const row = document.querySelector(`.repository-card[data-path="${repository.path}"]`);
       if (row) {
         const statusEl = row.querySelector('.row-status');
@@ -1218,6 +1256,23 @@
       historySearchTimer = setTimeout(function () {
         requestDashboardHistory(0, false);
       }, 250);
+    });
+  }
+
+  const dashboardRepositorySearch = document.getElementById('dashboardRepositorySearch');
+  if (dashboardRepositorySearch) {
+    dashboardRepositorySearch.addEventListener('input', function () {
+      const query = dashboardRepositorySearch.value.trim().toLowerCase();
+      document.querySelectorAll('.dashboard-repository-item').forEach(function (item) {
+        const searchable = `${item.dataset.name || ''} ${item.dataset.repository || ''} ${item.textContent || ''}`.toLowerCase();
+        item.hidden = Boolean(query) && !searchable.includes(query);
+      });
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === '/' && document.activeElement && document.activeElement.tagName !== 'INPUT') {
+        event.preventDefault();
+        dashboardRepositorySearch.focus();
+      }
     });
   }
 

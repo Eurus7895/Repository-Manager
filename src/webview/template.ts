@@ -22,6 +22,28 @@ export interface WorkspaceFolderInfo {
   isCurrent: boolean;
 }
 
+function escapeHtml(value: string | undefined): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function renderRepositoryMark(className: string = 'repository-mark'): string {
+  return `<svg class="${className}" viewBox="0 0 128 128" fill="none" aria-hidden="true">
+    <rect width="128" height="128" rx="28" fill="#12161C"></rect>
+    <rect x="1.5" y="1.5" width="125" height="125" rx="26.5" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"></rect>
+    <path d="M20 99H108" stroke="#3CC7A6" stroke-width="3" stroke-linecap="round" stroke-opacity="0.55"></path>
+    <path d="M64 42V87M64 52C64 66 34 60 34 74V87M64 52C64 66 94 60 94 74V87" stroke="#E8ECF1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
+    <circle cx="64" cy="31" r="12" fill="#3CC7A6"></circle>
+    <rect x="24" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+    <rect x="54" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+    <rect x="84" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+  </svg>`;
+}
+
 /**
  * Render the modals
  */
@@ -31,49 +53,53 @@ function renderModals(repositories: RepositoryInfo[]): string {
     <div class="modal-overlay" id="createBranchModal">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">Create Branch</span>
+          <div class="modal-heading"><span class="modal-title">Branch across repositories</span><span>One branch name, created from the same base in every selected repository.</span></div>
           <button class="modal-close" data-action="closeModal" data-modal="createBranchModal">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Select Repositories</label>
-            <div id="repositoryCheckboxes" style="max-height: 200px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
+            <label class="form-label">Repositories</label>
+            <div id="repositoryCheckboxes" class="branch-repository-list">
               ${repositories.map(repository => `
-                <label style="display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer;">
-                  <input type="checkbox" class="branch-repository" value="${repository.path}" checked>
-                  <span>${repository.name}${repository.isParentRepo ? ' <span class="parent-badge">PARENT</span>' : ''}</span>
+                <label class="branch-repository-row">
+                  <input type="checkbox" class="branch-repository" value="${escapeHtml(repository.path)}" ${repository.status === 'conflict' ? 'disabled' : 'checked'}>
+                  <strong>${escapeHtml(repository.name)}</strong>
+                  <code>${escapeHtml(repository.currentBranch || `(detached) ${repository.currentCommit || ''}`)}</code>
+                  <span class="repository-modal-status status-${repository.status}">${repository.isParentRepo ? 'parent' : repository.status}</span>
                 </label>
               `).join('')}
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Base Branch</label>
-            <div class="branch-dropdown" id="baseBranchDropdown">
-              <input type="text" class="branch-dropdown-input" id="baseBranchInput" placeholder="Loading branches..." readonly>
-              <span class="branch-dropdown-arrow">▼</span>
-              <div class="branch-dropdown-list" id="baseBranchList">
-                <!-- Populated dynamically -->
+          <div class="branch-form-grid branch-form-grid-equal">
+            <div class="form-group">
+              <label class="form-label">Base branch</label>
+              <div class="branch-dropdown" id="baseBranchDropdown">
+                <input type="text" class="branch-dropdown-input" id="baseBranchInput" placeholder="Loading branches..." readonly>
+                <span class="branch-dropdown-arrow">▼</span>
+                <div class="branch-dropdown-list" id="baseBranchList"><!-- Populated dynamically --></div>
               </div>
+              <input type="hidden" id="baseBranch" value="">
+              <div id="baseBranchHint" class="form-hint"></div>
             </div>
-            <input type="hidden" id="baseBranch" value="">
-            <div id="baseBranchHint" style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;"></div>
+            <div class="form-group">
+              <label class="form-label">Type</label>
+              <select class="form-select" id="branchPrefix">
+                <option value="bugfix">bugfix</option>
+                <option value="release">release</option>
+                <option value="dev">dev</option>
+              </select>
+              <div id="prefixRuleHint" class="form-hint"></div>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Branch Prefix</label>
-            <select class="form-select" id="branchPrefix">
-              <option value="bugfix">bugfix/</option>
-              <option value="release">release/</option>
-              <option value="dev">dev/</option>
-            </select>
-            <div id="prefixRuleHint" style="font-size: 11px; color: var(--info); margin-top: 4px;"></div>
-          </div>
-          <div class="form-group" id="ticketIdGroup">
-            <label class="form-label">Ticket ID (optional)</label>
-            <input type="text" class="form-input" id="ticketId" placeholder="e.g., ECPT-15474">
-          </div>
-          <div class="form-group" id="taskTitleGroup">
-            <label class="form-label">Task Title</label>
-            <input type="text" class="form-input" id="taskTitle" placeholder="e.g., Design and Implement XML Parser Abstraction Class">
+          <div class="branch-form-grid">
+            <div class="form-group" id="ticketIdGroup">
+              <label class="form-label">Ticket ID <span>optional</span></label>
+              <input type="text" class="form-input" id="ticketId" placeholder="e.g., ECPT-15474">
+            </div>
+            <div class="form-group" id="taskTitleGroup">
+              <label class="form-label">Task title</label>
+              <input type="text" class="form-input" id="taskTitle" placeholder="e.g., CAN timeout handling">
+            </div>
           </div>
           <div class="form-group" id="releaseInfoGroup" style="display: none;">
             <label class="form-label">Product Name</label>
@@ -86,8 +112,8 @@ function renderModals(repositories: RepositoryInfo[]): string {
             <input type="text" class="form-input" id="devBranchName" placeholder="e.g., sprint-42 or v2-refactor">
           </div>
           <div class="form-group">
-            <label class="form-label">Generated Branch Name</label>
-            <div id="branchPreview" style="padding: 10px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; font-family: var(--vscode-editor-font-family); word-break: break-all; min-height: 20px; color: var(--text-secondary);">
+            <label class="form-label branch-name-label">Branch name</label>
+            <div id="branchPreview" class="branch-name-preview">
               bugfix/your-branch-name
             </div>
             <input type="hidden" id="branchName">
@@ -95,7 +121,7 @@ function renderModals(repositories: RepositoryInfo[]): string {
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="createBranchModal">Cancel</button>
-          <button class="btn btn-primary" data-action="createBranch">Create Branch</button>
+          <button class="btn btn-primary" data-action="createBranch">Review &amp; create</button>
         </div>
       </div>
     </div>
@@ -222,34 +248,32 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
   `;
 }
 
-function renderDashboardSidebar(repositories: RepositoryInfo[], workspaceFolders: WorkspaceFolderInfo[]): string {
+function renderDashboardSidebar(repositories: RepositoryInfo[]): string {
   return `
     <aside class="dashboard-sidebar">
-      ${renderWorkspaceFolderSelector(workspaceFolders)}
+      <label class="repository-filter">
+        <span>⌕</span>
+        <input id="dashboardRepositorySearch" type="text" placeholder="Filter repositories" aria-label="Filter repositories">
+        <kbd>/</kbd>
+      </label>
       <section class="sidebar-section repositories-section">
         <div class="sidebar-section-title"><span>Repositories</span><span>${repositories.length}</span></div>
         <div class="dashboard-repository-list" id="dashboardRepositoryList">
           ${repositories.map((repository, index) => `
-            <button class="dashboard-repository-item${index === 0 ? ' active' : ''}" type="button" data-action="selectDashboardRepository" data-repository="${repository.path}">
+            <button class="dashboard-repository-item${index === 0 ? ' active' : ''}" type="button" data-action="selectDashboardRepository" data-repository="${escapeHtml(repository.path)}" data-name="${escapeHtml(repository.name)}">
               <span class="repository-status-dot status-${repository.status}"></span>
-              <span class="repository-item-copy"><strong>${repository.name}</strong><small>${repository.currentBranch || '(detached)'}</small></span>
-              ${repository.isParentRepo ? '<span class="sidebar-badge">PARENT</span>' : ''}
+              <span class="repository-item-copy"><strong>${escapeHtml(repository.name)}${repository.isParentRepo ? '<span class="sidebar-badge">PARENT</span>' : ''}</strong><small>${escapeHtml(repository.currentBranch || `(detached) ${repository.currentCommit || ''}`)}</small></span>
+              <span class="repository-sync-state">${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}</span>
             </button>
           `).join('')}
         </div>
       </section>
-      <section class="sidebar-section compact-ref-section">
-        <div class="sidebar-section-title"><span>Tags</span><span id="tagRefCount">—</span></div>
-        <div class="sidebar-ref-list" id="dashboardTags"></div>
-      </section>
-      <section class="sidebar-section compact-ref-section">
-        <div class="sidebar-section-title"><span>Remotes</span><span id="remoteRefCount">—</span></div>
-        <div class="sidebar-ref-list" id="dashboardRemotes"></div>
-      </section>
-      <section class="sidebar-section compact-ref-section">
-        <div class="sidebar-section-title"><span>Stashes</span><span id="stashRefCount">—</span></div>
-        <div class="sidebar-ref-list" id="dashboardStashes"></div>
-      </section>
+      <div class="sidebar-ref-storage" aria-hidden="true"><div id="dashboardTags"></div><div id="dashboardRemotes"></div><div id="dashboardStashes"></div></div>
+      <footer class="sidebar-reference-summary">
+        <div><span>Tags</span><span id="tagRefCount">—</span></div>
+        <div><span>Remotes</span><span id="remoteRefCount">—</span></div>
+        <div><span>Stashes</span><span id="stashRefCount">—</span></div>
+      </footer>
     </aside>
   `;
 }
@@ -259,24 +283,26 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
   return `
     <div class="dashboard-shell">
       <header class="dashboard-command-bar">
-        <div class="command-cluster">
-          <button class="dashboard-command" data-action="refresh"><span>↻</span><small>Refresh</small></button>
-          <button class="dashboard-command" data-action="pullActiveRepository"><span>↓</span><small>Pull</small></button>
-          <button class="dashboard-command" data-action="pushActiveRepository"><span>↑</span><small>Push</small></button>
-          <button class="dashboard-command" data-action="fetchActiveRepository"><span>⇣</span><small>Fetch</small></button>
-          <button class="dashboard-command" data-action="openCreateBranchModal"><span>⑂</span><small>Branch</small></button>
+        <div class="dashboard-brand">
+          ${renderRepositoryMark()}
+          <strong>Repository Manager</strong>
         </div>
+        ${renderWorkspaceFolderSelector(workspaceFolders)}
         <div class="command-context" id="dashboardCommandContext">
-          <strong>${activeRepository?.name || 'No repository'}</strong>
-          <small>${activeRepository?.path === '.' ? 'workspace root' : activeRepository?.path || ''}</small>
+          <span class="context-path">${escapeHtml(activeRepository?.path === '.' ? activeRepository?.name : activeRepository?.path || 'No repository')}</span>
+          <span class="context-branch">⑂ ${escapeHtml(activeRepository?.currentBranch || '(detached)')}</span>
         </div>
         <div class="command-cluster command-cluster-right">
-          <button class="dashboard-command" data-action="openActiveRepository"><span>↗</span><small>Explorer</small></button>
-          <button class="dashboard-command" data-action="syncAll"><span>⇄</span><small>Sync</small></button>
+          <button class="dashboard-icon-command" data-action="refresh" title="Refresh" aria-label="Refresh">↻</button>
+          <button class="dashboard-command" data-action="fetchActiveRepository"><span>⇣</span>Fetch</button>
+          <button class="dashboard-command" data-action="pullActiveRepository"><span>↓</span>Pull<small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
+          <button class="dashboard-command" data-action="pushActiveRepository"><span>↑</span>Push<small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
+          <button class="dashboard-command" data-action="syncAll"><span>⇄</span>Sync versions</button>
+          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal"><span>＋</span>Branch across repos</button>
         </div>
       </header>
       <div class="dashboard-body">
-        ${renderDashboardSidebar(repositories, workspaceFolders)}
+        ${renderDashboardSidebar(repositories)}
         <main class="dashboard-main">
           <div class="history-controls">
             <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
@@ -284,7 +310,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
           <section class="history-region">
-            <div class="history-table-header"><span class="graph-column"></span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
+            <div class="history-table-header"><span class="graph-column">Graph</span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
             <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
             <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
           </section>

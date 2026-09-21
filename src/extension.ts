@@ -9,6 +9,7 @@ import { RepositoryTreeProvider } from './repositoryTreeProvider';
 import { PRManager } from './prManager';
 import { registerBasicCommands, CommandContext } from './commands/submoduleCommands';
 import { registerCreateBranchCommand } from './commands/createBranchCommand';
+import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 
 let repositoryTreeProvider: RepositoryTreeProvider;
 let gitOps: GitOperations;
@@ -44,6 +45,12 @@ export function activate(context: vscode.ExtensionContext) {
   // Register commands
   registerBasicCommands(context, commandContext);
   registerCreateBranchCommand(context, gitOps, repositoryTreeProvider);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      RepositoryManagerLauncher.viewType,
+      new RepositoryManagerLauncher()
+    )
+  );
 
   // Auto-refresh when files change
   const watcher = vscode.workspace.createFileSystemWatcher('**/.gitmodules');

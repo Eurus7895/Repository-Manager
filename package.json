@@ -113,6 +113,25 @@
         "icon": "$(trash)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "repository-manager",
+          "title": "Repository Manager",
+          "icon": "resources/activitybar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "repository-manager": [
+        {
+          "type": "webview",
+          "id": "repositoryManager.launcher",
+          "name": "Repository Manager",
+          "contextualTitle": "Repository Manager"
+        }
+      ]
+    },
     "menus": {
       "commandPalette": [
         {
