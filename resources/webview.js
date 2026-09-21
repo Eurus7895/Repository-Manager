@@ -1,22 +1,22 @@
-// Webview script for Submodule Manager
+// Webview script for Repository Manager
 // This file is loaded as an external script by the webview panel.
-// Initial submodule data is provided via window.__initialSubmodules (set by inline script).
+// Initial repository data is provided via window.__initialRepositories (set by inline script).
 
 (function () {
   const vscode = acquireVsCodeApi();
 
   // Restore state from previous session
   const previousState = vscode.getState() || {};
-  let selectedSubmodules = new Set(previousState.selectedSubmodules || []);
-  let rebasingSubmodules = new Set(previousState.rebasingSubmodules || []);
-  let submoduleData = previousState.submoduleData || (window.__initialSubmodules || []);
+  let selectedRepositories = new Set(previousState.selectedRepositories || previousState.selectedSubmodules || []);
+  let rebasingRepositories = new Set(previousState.rebasingRepositories || previousState.rebasingSubmodules || []);
+  let repositoryData = previousState.repositoryData || previousState.submoduleData || (window.__initialRepositories || []);
 
   // Save state helper
   function saveState() {
     vscode.setState({
-      selectedSubmodules: Array.from(selectedSubmodules),
-      rebasingSubmodules: Array.from(rebasingSubmodules),
-      submoduleData
+      selectedRepositories: Array.from(selectedRepositories),
+      rebasingRepositories: Array.from(rebasingRepositories),
+      repositoryData
     });
   }
 
@@ -31,8 +31,8 @@
     updateAll: () => postMessage('updateSubmodules'),
 
     selectAll: () => {
-      document.querySelectorAll('.submodule-card').forEach(row => {
-        selectedSubmodules.add(row.dataset.path);
+      document.querySelectorAll('.repository-card').forEach(row => {
+        selectedRepositories.add(row.dataset.path);
         const cb = row.querySelector('.row-checkbox');
         if (cb) cb.checked = true;
         row.classList.add('selected');
@@ -42,8 +42,8 @@
     },
 
     deselectAll: () => {
-      selectedSubmodules.clear();
-      document.querySelectorAll('.submodule-card').forEach(row => {
+      selectedRepositories.clear();
+      document.querySelectorAll('.repository-card').forEach(row => {
         const cb = row.querySelector('.row-checkbox');
         if (cb) cb.checked = false;
         row.classList.remove('selected');
@@ -53,26 +53,26 @@
     },
 
     toggleSelection: (el) => {
-      const path = el.dataset.submodule;
+      const path = el.dataset.repository;
       if (!path) return;
 
       // Toggle selection state
-      if (selectedSubmodules.has(path)) {
-        selectedSubmodules.delete(path);
+      if (selectedRepositories.has(path)) {
+        selectedRepositories.delete(path);
       } else {
-        selectedSubmodules.add(path);
+        selectedRepositories.add(path);
       }
 
       // Update checkbox state directly
       const checkbox = el.tagName === 'INPUT' ? el : el.querySelector('.row-checkbox');
       if (checkbox) {
-        checkbox.checked = selectedSubmodules.has(path);
+        checkbox.checked = selectedRepositories.has(path);
       }
 
       // Update the row's selected class
-      const row = el.closest('.submodule-card');
+      const row = el.closest('.repository-card');
       if (row) {
-        row.classList.toggle('selected', selectedSubmodules.has(path));
+        row.classList.toggle('selected', selectedRepositories.has(path));
       }
 
       saveState();
@@ -100,7 +100,7 @@
       if (baseBranchDropdown) {
         baseBranchDropdown.classList.remove('open');
       }
-      // Request branches from first submodule (or main repo)
+      // Request branches from the first available repository.
       postMessage('getBaseBranchesForCreate', {});
       document.getElementById('createBranchModal').classList.add('active');
       // Retry if branches haven't loaded after 2s
@@ -126,21 +126,21 @@
         return;
       }
 
-      const checkboxes = document.querySelectorAll('.branch-submodule:checked');
-      const submodules = Array.from(checkboxes).map(cb => cb.value);
-      if (submodules.length === 0) {
+      const checkboxes = document.querySelectorAll('.branch-repository:checked');
+      const repositories = Array.from(checkboxes).map(cb => cb.value);
+      if (repositories.length === 0) {
         alert('Please select at least one repository.');
         return;
       }
 
       // Store pending info for review
-      pendingBranchInfo = { submodules, branchName, baseBranch };
-      postMessage('createBranchWithReview', { submodules, branchName, baseBranch });
+      pendingBranchInfo = { repositories, branchName, baseBranch };
+      postMessage('createBranchWithReview', { submodules: repositories, branchName, baseBranch });
       document.getElementById('createBranchModal').classList.remove('active');
     },
 
     createBranchForSelected: () => {
-      if (selectedSubmodules.size === 0) return;
+      if (selectedRepositories.size === 0) return;
       // Reset form fields
       document.getElementById('ticketId').value = '';
       document.getElementById('taskTitle').value = '';
@@ -163,9 +163,9 @@
       }
       // Request branches
       postMessage('getBaseBranchesForCreate', {});
-      // Set selected submodules
-      document.querySelectorAll('.branch-submodule').forEach(cb => {
-        cb.checked = selectedSubmodules.has(cb.value);
+      // Apply the repository selection to the branch workflow.
+      document.querySelectorAll('.branch-repository').forEach(cb => {
+        cb.checked = selectedRepositories.has(cb.value);
       });
       document.getElementById('createBranchModal').classList.add('active');
       // Retry if branches haven't loaded after 2s
@@ -177,7 +177,7 @@
       const shouldPush = document.getElementById('pushAfterCreate').checked;
       if (shouldPush) {
         postMessage('pushCreatedBranches', {
-          submodules: pendingBranchInfo.submodules,
+          submodules: pendingBranchInfo.repositories,
           branchName: pendingBranchInfo.branchName
         });
       }
@@ -186,80 +186,80 @@
     },
 
     openCheckoutModal: (el) => {
-      const submodule = el.dataset.submodule;
-      document.getElementById('checkoutSubmodule').value = submodule;
+      const repository = el.dataset.repository;
+      document.getElementById('checkoutRepository').value = repository;
       document.getElementById('branchSelect').innerHTML = '<option value="">Loading branches...</option>';
       document.getElementById('checkoutModal').classList.add('active');
-      postMessage('getBranches', { submodule });
+      postMessage('getBranches', { submodule: repository });
     },
 
     checkoutBranch: () => {
-      const submodule = document.getElementById('checkoutSubmodule').value;
+      const repository = document.getElementById('checkoutRepository').value;
       const branch = document.getElementById('branchSelect').value;
       if (!branch) return;
-      postMessage('checkoutBranch', { submodule, branch });
+      postMessage('checkoutBranch', { submodule: repository, branch });
       document.getElementById('checkoutModal').classList.remove('active');
     },
 
     openCommitModal: (el) => {
-      const submodule = el.dataset.submodule;
-      document.getElementById('commitSubmodule').value = submodule;
+      const repository = el.dataset.repository;
+      document.getElementById('commitRepository').value = repository;
       document.getElementById('commitSelect').innerHTML = '<option value="">Loading commits...</option>';
       document.getElementById('commitInput').value = '';
       document.getElementById('commitModal').classList.add('active');
-      postMessage('getCommits', { submodule });
-      postMessage('getRecordedCommit', { submodule });
+      postMessage('getCommits', { submodule: repository });
+      postMessage('getRecordedCommit', { submodule: repository });
     },
 
     checkoutCommit: () => {
-      const submodule = document.getElementById('commitSubmodule').value;
+      const repository = document.getElementById('commitRepository').value;
       const commitInput = document.getElementById('commitInput').value.trim();
       const commitSelect = document.getElementById('commitSelect').value;
       const commit = commitInput || commitSelect;
       if (!commit) return;
-      postMessage('checkoutCommit', { submodule, commit });
+      postMessage('checkoutCommit', { submodule: repository, commit });
       document.getElementById('commitModal').classList.remove('active');
     },
 
     useRecorded: () => {
-      const submodule = document.getElementById('commitSubmodule').value;
-      postMessage('updateToRecorded', { submodule });
+      const repository = document.getElementById('commitRepository').value;
+      postMessage('updateToRecorded', { submodule: repository });
       document.getElementById('commitModal').classList.remove('active');
     },
 
     toggleRebaseStatus: (el) => {
-      const submodule = el.dataset.submodule;
-      const isCurrentlyRebasing = rebasingSubmodules.has(submodule);
+      const repository = el.dataset.repository;
+      const isCurrentlyRebasing = rebasingRepositories.has(repository);
       if (isCurrentlyRebasing) {
-        rebasingSubmodules.delete(submodule);
+        rebasingRepositories.delete(repository);
       } else {
-        rebasingSubmodules.add(submodule);
+        rebasingRepositories.add(repository);
       }
       saveState();
-      postMessage('setRebaseStatus', { submodule, isRebasing: !isCurrentlyRebasing });
+      postMessage('setRebaseStatus', { submodule: repository, isRebasing: !isCurrentlyRebasing });
       updateRebaseUI();
     },
 
-    pullChanges: (el) => postMessage('pullChanges', { submodule: el.dataset.submodule }),
-    pushChanges: (el) => postMessage('pushChanges', { submodule: el.dataset.submodule }),
-    createPR: (el) => postMessage('createPR', { submodule: el.dataset.submodule }),
-    openSubmodule: (el) => postMessage('openSubmodule', { submodule: el.dataset.submodule }),
-    stageSubmodule: (el) => postMessage('stageSubmodule', { submodule: el.dataset.submodule }),
-    syncSelected: () => postMessage('syncVersions', { submodules: Array.from(selectedSubmodules) }),
+    pullChanges: (el) => postMessage('pullChanges', { submodule: el.dataset.repository }),
+    pushChanges: (el) => postMessage('pushChanges', { submodule: el.dataset.repository }),
+    createPR: (el) => postMessage('createPR', { submodule: el.dataset.repository }),
+    openRepository: (el) => postMessage('openSubmodule', { submodule: el.dataset.repository }),
+    stageSubmodule: (el) => postMessage('stageSubmodule', { submodule: el.dataset.repository }),
+    syncSelected: () => postMessage('syncVersions', { submodules: Array.from(selectedRepositories) }),
     syncAll: () => postMessage('syncVersions', { submodules: [] }),
 
     toggleBranches: (el) => {
-      const submodule = el.dataset.submodule;
-      const panelId = 'branches-' + submodule.replace(/[\\/.]/g, '-');
+      const repository = el.dataset.repository;
+      const panelId = 'branches-' + repository.replace(/[\\/.]/g, '-');
       const panel = document.getElementById(panelId);
       if (!panel) return;
 
-      const card = panel.closest('.submodule-card');
+      const card = panel.closest('.repository-card');
       if (panel.style.display === 'none') {
         panel.style.display = 'block';
         panel.innerHTML = '<div class="branches-loading">Loading branches...</div>';
         if (card) card.classList.add('branches-open');
-        postMessage('getBranches', { submodule });
+        postMessage('getBranches', { submodule: repository });
       } else {
         panel.style.display = 'none';
         if (card) card.classList.remove('branches-open');
@@ -267,11 +267,11 @@
     },
 
     checkoutBranchInline: (el) => {
-      const submodule = el.dataset.submodule;
+      const repository = el.dataset.repository;
       const branch = el.dataset.branch;
-      if (submodule && branch) {
+      if (repository && branch) {
         // Optimistic UI: immediately highlight the selected branch
-        const panelId = 'branches-' + submodule.replace(/[\\/.]/g, '-');
+        const panelId = 'branches-' + repository.replace(/[\\/.]/g, '-');
         const panel = document.getElementById(panelId);
         if (panel) {
           panel.querySelectorAll('.branch-item').forEach(function (item) {
@@ -294,7 +294,7 @@
                 var delBtn = document.createElement('span');
                 delBtn.className = 'branch-delete';
                 delBtn.setAttribute('data-action', 'deleteBranchInline');
-                delBtn.setAttribute('data-submodule', item.getAttribute('data-submodule') || submodule);
+                delBtn.setAttribute('data-repository', item.getAttribute('data-repository') || repository);
                 delBtn.setAttribute('data-branch', itemBranch || '');
                 delBtn.title = 'Delete ' + (itemBranch || '');
                 delBtn.textContent = '\u2715';
@@ -303,18 +303,18 @@
             }
           });
         }
-        postMessage('checkoutBranch', { submodule, branch });
+        postMessage('checkoutBranch', { submodule: repository, branch });
       }
     },
 
     deleteBranchInline: (el) => {
-      const submodule = el.dataset.submodule;
+      const repository = el.dataset.repository;
       const branch = el.dataset.branch;
-      if (!submodule || !branch) return;
+      if (!repository || !branch) return;
 
       const deleteRemote = confirm('Also delete the remote branch?');
       // Server-side handler will show a VS Code modal confirmation before actually deleting
-      postMessage('deleteBranch', { submodule, branch, deleteRemote });
+      postMessage('deleteBranch', { submodule: repository, branch, deleteRemote });
     }
   };
 
@@ -339,15 +339,15 @@
 
     // Special handling for checkboxes - don't prevent default, just track state
     if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleSelection') {
-      const path = el.dataset.submodule;
+      const path = el.dataset.repository;
       if (path) {
         // Sync our state with checkbox state (checkbox already toggled)
         if (el.checked) {
-          selectedSubmodules.add(path);
+          selectedRepositories.add(path);
         } else {
-          selectedSubmodules.delete(path);
+          selectedRepositories.delete(path);
         }
-        const row = el.closest('.submodule-card');
+        const row = el.closest('.repository-card');
         if (row) {
           row.classList.toggle('selected', el.checked);
         }
@@ -370,14 +370,14 @@
       el = el.parentElement;
     }
 
-    // If no action was found, check if the click was on a submodule row to toggle branches
-    const row = e.target.closest('.submodule-row');
+    // If no action was found, check if the click was on a repository row to toggle branches.
+    const row = e.target.closest('.repository-row');
     if (row) {
-      const card = row.closest('.submodule-card');
+      const card = row.closest('.repository-card');
       if (card && card.dataset.path) {
         // Don't toggle if clicked on a button, input, or link
         if (e.target.closest('.row-actions') || e.target.closest('.row-checkbox')) return;
-        actions.toggleBranches({ dataset: { submodule: card.dataset.path } });
+        actions.toggleBranches({ dataset: { repository: card.dataset.path } });
       }
     }
   });
@@ -398,7 +398,7 @@
   if (searchInput) {
     searchInput.addEventListener('input', function (e) {
       const query = (e.target.value || '').toLowerCase();
-      document.querySelectorAll('.submodule-card').forEach(function (row) {
+      document.querySelectorAll('.repository-card').forEach(function (row) {
         const name = (row.dataset.name || '').toLowerCase();
         const path = (row.dataset.path || '').toLowerCase();
         const branchEl = row.querySelector('.branch');
@@ -413,28 +413,28 @@
     const bar = document.getElementById('selectionBar');
     const count = document.getElementById('selectedCount');
 
-    if (selectedSubmodules.size > 0) {
+    if (selectedRepositories.size > 0) {
       bar.classList.add('active');
-      count.textContent = selectedSubmodules.size;
+      count.textContent = selectedRepositories.size;
     } else {
       bar.classList.remove('active');
     }
 
-    document.querySelectorAll('.submodule-card').forEach(row => {
+    document.querySelectorAll('.repository-card').forEach(row => {
       const checkbox = row.querySelector('.row-checkbox');
       if (checkbox) {
-        checkbox.checked = selectedSubmodules.has(row.dataset.path);
-        row.classList.toggle('selected', selectedSubmodules.has(row.dataset.path));
+        checkbox.checked = selectedRepositories.has(row.dataset.path);
+        row.classList.toggle('selected', selectedRepositories.has(row.dataset.path));
       }
     });
   }
 
   function updateRebaseUI() {
-    document.querySelectorAll('.submodule-card').forEach(row => {
+    document.querySelectorAll('.repository-card').forEach(row => {
       const path = row.dataset.path;
       const rebaseIndicator = row.querySelector('.rebase-indicator');
 
-      if (rebasingSubmodules.has(path)) {
+      if (rebasingRepositories.has(path)) {
         if (rebaseIndicator) rebaseIndicator.style.display = 'inline-block';
       } else {
         if (rebaseIndicator) rebaseIndicator.style.display = 'none';
@@ -452,7 +452,7 @@
         case 'branches': {
           const branchSelect = document.getElementById('branchSelect');
           const branches = (message.payload && message.payload.branches) || [];
-          const branchSubmodule = message.payload && message.payload.submodule;
+          const branchRepository = message.payload && message.payload.submodule;
 
           // Update checkout modal if open - just list all branches
           if (branchSelect) {
@@ -466,16 +466,16 @@
           }
 
           // Update inline branches panel if exists
-          if (branchSubmodule) {
-            const panelId = 'branches-' + branchSubmodule.replace(/[\\/.]/g, '-');
+          if (branchRepository) {
+            const panelId = 'branches-' + branchRepository.replace(/[\\/.]/g, '-');
             const panel = document.getElementById(panelId);
             if (panel) {
               if (branches.length === 0) {
                 panel.innerHTML = '<div class="branches-loading">No branches found</div>';
               } else {
-                const filterId = 'branch-filter-' + branchSubmodule.replace(/[\\/.]/g, '-');
-                const listId = 'branch-list-' + branchSubmodule.replace(/[\\/.]/g, '-');
-                const countId = 'branch-count-' + branchSubmodule.replace(/[\\/.]/g, '-');
+                const filterId = 'branch-filter-' + branchRepository.replace(/[\\/.]/g, '-');
+                const listId = 'branch-list-' + branchRepository.replace(/[\\/.]/g, '-');
+                const countId = 'branch-count-' + branchRepository.replace(/[\\/.]/g, '-');
                 panel.innerHTML =
                   '<div class="branches-filter">' +
                     '<input type="text" class="branches-filter-input" id="' + filterId + '" placeholder="Filter branches..." />' +
@@ -494,11 +494,11 @@
                       tags += '<span class="branch-tag tag-remote">remote</span>';
                     }
                   }
-                  return `<div class="branch-item ${b.isCurrent ? 'current' : ''}" data-branch-name="${b.name.toLowerCase()}" data-submodule="${branchSubmodule}" data-branch="${b.name}">
-                    <span class="branch-icon" data-action="checkoutBranchInline" data-submodule="${branchSubmodule}" data-branch="${b.name}" title="Checkout ${b.name}">${b.isCurrent ? '\u2713' : (b.isRemote ? '\u2601' : '\u238B')}</span>
-                    <span class="branch-name" data-action="checkoutBranchInline" data-submodule="${branchSubmodule}" data-branch="${b.name}" title="Checkout ${b.name}">${b.name}</span>
+                  return `<div class="branch-item ${b.isCurrent ? 'current' : ''}" data-branch-name="${b.name.toLowerCase()}" data-repository="${branchRepository}" data-branch="${b.name}">
+                    <span class="branch-icon" data-action="checkoutBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Checkout ${b.name}">${b.isCurrent ? '\u2713' : (b.isRemote ? '\u2601' : '\u238B')}</span>
+                    <span class="branch-name" data-action="checkoutBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Checkout ${b.name}">${b.name}</span>
                     <span class="branch-tags">${tags}</span>
-                    ${!b.isCurrent ? `<span class="branch-delete" data-action="deleteBranchInline" data-submodule="${branchSubmodule}" data-branch="${b.name}" title="Delete ${b.name}">\u2715</span>` : ''}
+                    ${!b.isCurrent ? `<span class="branch-delete" data-action="deleteBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Delete ${b.name}">\u2715</span>` : ''}
                   </div>`;
                 }).join('') + '</div>';
 
@@ -557,9 +557,9 @@
         }
 
         case 'updateSubmodules': {
-          submoduleData = message.payload.submodules;
+          repositoryData = message.payload.submodules;
           saveState();
-          updateSubmoduleRows(submoduleData);
+          updateRepositoryRows(repositoryData);
           break;
         }
 
@@ -627,27 +627,27 @@
     }
   });
 
-  function updateSubmoduleRows(submodules) {
-    submodules.forEach(s => {
-      const row = document.querySelector(`.submodule-card[data-path="${s.path}"]`);
+  function updateRepositoryRows(repositories) {
+    repositories.forEach(repository => {
+      const row = document.querySelector(`.repository-card[data-path="${repository.path}"]`);
       if (row) {
         const statusEl = row.querySelector('.row-status');
         if (statusEl) {
-          statusEl.className = 'row-status status-' + s.status;
-          statusEl.innerHTML = getStatusIcon(s.status) + ' ' + s.status.toUpperCase();
+          statusEl.className = 'row-status status-' + repository.status;
+          statusEl.innerHTML = getStatusIcon(repository.status) + ' ' + repository.status.toUpperCase();
         }
 
         const branchEl = row.querySelector('.branch');
-        if (branchEl) branchEl.textContent = s.currentBranch || '(detached)';
+        if (branchEl) branchEl.textContent = repository.currentBranch || '(detached)';
 
         const commitEl = row.querySelector('.commit');
-        if (commitEl) commitEl.textContent = s.currentCommit || 'N/A';
+        if (commitEl) commitEl.textContent = repository.currentCommit || 'N/A';
 
         const syncEl = row.querySelector('.row-sync');
         if (syncEl) {
           let syncHtml = '';
-          if (s.ahead > 0) syncHtml += `<span class="ahead">\u2191${s.ahead}</span>`;
-          if (s.behind > 0) syncHtml += `<span class="behind">\u2193${s.behind}</span>`;
+          if (repository.ahead > 0) syncHtml += `<span class="ahead">\u2191${repository.ahead}</span>`;
+          if (repository.behind > 0) syncHtml += `<span class="behind">\u2193${repository.behind}</span>`;
           syncEl.innerHTML = syncHtml;
         }
       }
@@ -825,12 +825,12 @@
     }
     html += '</div>';
 
-    // Show per-submodule results
+    // Show per-repository results.
     html += '<div style="max-height: 150px; overflow-y: auto; font-size: 12px;">';
     results.forEach(r => {
       const icon = r.success ? '\u2713' : '\u2717';
       const color = r.success ? 'var(--success)' : 'var(--error)';
-      html += `<div style="padding: 4px 0; color: ${color};">${icon} ${r.submodule}: ${r.message}</div>`;
+      html += `<div style="padding: 4px 0; color: ${color};">${icon} ${r.repository}: ${r.message}</div>`;
     });
     html += '</div>';
 
@@ -854,7 +854,7 @@
       // Check if still showing loading text (branches not received yet)
       const loadingEl = baseBranchList.querySelector('.branch-select-loading');
       if (loadingEl) {
-        console.log('[SubmoduleManager] Retrying base branch load, retries left:', retriesLeft - 1);
+        console.log('[RepositoryManager] Retrying base branch load, retries left:', retriesLeft - 1);
         postMessage('getBaseBranchesForCreate', {});
         retryLoadBaseBranches(retriesLeft - 1);
       }

@@ -44,10 +44,10 @@ async function sendToWebview(ctx: MessageHandlerContext, message: { type: string
   try {
     const delivered = await ctx.panel.webview.postMessage(message);
     if (!delivered) {
-      console.warn(`[SubmoduleManager] Message '${message.type}' was NOT delivered to webview`);
+      console.warn(`[RepositoryManager] Message '${message.type}' was NOT delivered to webview`);
     }
   } catch (error) {
-    console.error(`[SubmoduleManager] Failed to send message '${message.type}' to webview:`, error);
+    console.error(`[RepositoryManager] Failed to send message '${message.type}' to webview:`, error);
   }
 }
 
@@ -122,10 +122,10 @@ export async function handleCreateBranchWithReview(
   );
 
   // Convert results map to array for sending to webview
-  const resultsArray: Array<{ submodule: string; success: boolean; message: string }> = [];
+  const resultsArray: Array<{ repository: string; success: boolean; message: string }> = [];
   results.forEach((result, submodulePath) => {
     resultsArray.push({
-      submodule: submodulePath,
+      repository: submodulePath,
       success: result.success,
       message: result.message
     });
@@ -164,7 +164,7 @@ export async function handleGetBaseBranchesForCreate(ctx: MessageHandlerContext)
       branches = result;
     }
   } catch (error) {
-    console.error('[SubmoduleManager] Error getting base branches:', error);
+    console.error('[RepositoryManager] Error getting base branches:', error);
   }
 
   // Always send the response, whether we got real branches or fallback
@@ -345,7 +345,7 @@ export async function handleGetBranches(
       branches = result;
     }
   } catch (error) {
-    console.error('[SubmoduleManager] Error getting branches:', error);
+    console.error('[RepositoryManager] Error getting branches:', error);
   }
 
   await sendToWebview(ctx, {

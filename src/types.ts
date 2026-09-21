@@ -1,8 +1,8 @@
 /**
- * Types and interfaces for the Submodule Manager extension
+ * Types and interfaces for the Repository Manager extension
  */
 
-export interface SubmoduleInfo {
+export interface RepositoryInfo {
   name: string;
   path: string;
   url: string;
@@ -16,6 +16,11 @@ export interface SubmoduleInfo {
   lastUpdated?: Date;
   isParentRepo?: boolean;
 }
+
+/**
+ * Backward-compatible alias for services that specifically discover Git submodules.
+ */
+export type SubmoduleInfo = RepositoryInfo;
 
 export type SubmoduleStatus =
   | 'clean'
@@ -65,7 +70,7 @@ export interface SyncOptions {
   remoteBranch?: string;
 }
 
-export interface SubmoduleManagerConfig {
+export interface RepositoryManagerConfig {
   defaultBranch: string;
   autoFetch: boolean;
   showNotifications: boolean;

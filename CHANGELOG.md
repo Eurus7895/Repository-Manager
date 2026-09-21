@@ -29,9 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `task` can create `task/` branches.
   - Unknown branch types can use any supported prefix.
 - Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
+- Updated the dashboard to treat the parent and linked repositories as one repository collection, including repository-wide statistics, search, selection, and branch workflows.
+- Kept submodule terminology only for Git operations that specifically initialize, update, or stage submodule pointers.
 - Restored branch delete actions after an optimistic checkout changes the current branch.
 - Split the extension into command, handler, service, and webview modules for easier maintenance.
-- Retained `submoduleManager.*` command and setting identifiers for backward compatibility.
+- Renamed the extension package and publisher identifiers to `repository-manager`.
+- Renamed commands and settings from `submoduleManager.*` to `repositoryManager.*`.
+- Renamed the Activity Bar container and contributed view IDs to the Repository Manager namespace.
+- Changed the packaged artifact name to `repository-manager-1.1.0.vsix`.
+
+### Breaking
+
+- VS Code treats Repository Manager as a new extension identity rather than an automatic update from Submodule Manager.
+- Existing settings under `submoduleManager.*` must be migrated to `repositoryManager.*`.
+- Keybindings or automation invoking `submoduleManager.*` commands must use `repositoryManager.*`.
 
 ### Fixed
 

@@ -2,7 +2,7 @@
  * HTML template for the webview panel
  */
 
-import { SubmoduleInfo } from '../types';
+import { RepositoryInfo } from '../types';
 import * as vscode from 'vscode';
 
 /**
@@ -23,7 +23,7 @@ export interface WorkspaceFolderInfo {
 }
 
 /**
- * Get status icon for submodule status
+ * Get status icon for repository status
  */
 function getStatusIcon(status: string): string {
   const icons: Record<string, string> = {
@@ -38,13 +38,13 @@ function getStatusIcon(status: string): string {
 }
 
 /**
- * Get status tooltip for submodule status
+ * Get status tooltip for repository status
  */
 function getStatusTooltip(status: string): string {
   const tooltips: Record<string, string> = {
     'clean': 'Clean: On a branch with no uncommitted changes',
-    'modified': 'Modified: Has uncommitted changes inside the submodule',
-    'uninitialized': 'Uninitialized: Submodule has not been cloned yet. Run Init All to initialize.',
+    'modified': 'Modified: Has uncommitted changes in this repository',
+    'uninitialized': 'Uninitialized: This linked repository has not been cloned yet. Run Init Submodules to initialize it.',
     'detached': 'Detached HEAD: Checked out to a specific commit, not on any branch. This is normal when synced to the parent repo\'s recorded commit.',
     'conflict': 'Conflict: Merge conflict detected',
     'unknown': 'Unknown: Could not determine status'
@@ -53,45 +53,45 @@ function getStatusTooltip(status: string): string {
 }
 
 /**
- * Render a single submodule row
+ * Render a single repository row
  */
-export function renderSubmoduleRow(submodule: SubmoduleInfo, index: number): string {
-  const statusClass = `status-${submodule.status}`;
-  const statusIcon = getStatusIcon(submodule.status);
-  const statusTooltip = getStatusTooltip(submodule.status);
-  const branchDisplay = submodule.currentBranch || '(detached)';
-  const branchTooltip = submodule.currentBranch
-    ? `Currently on branch: ${submodule.currentBranch}`
-    : `Detached HEAD: Not on any branch, checked out to commit ${submodule.currentCommit}`;
+export function renderRepositoryRow(repository: RepositoryInfo, index: number): string {
+  const statusClass = `status-${repository.status}`;
+  const statusIcon = getStatusIcon(repository.status);
+  const statusTooltip = getStatusTooltip(repository.status);
+  const branchDisplay = repository.currentBranch || '(detached)';
+  const branchTooltip = repository.currentBranch
+    ? `Currently on branch: ${repository.currentBranch}`
+    : `Detached HEAD: Not on any branch, checked out to commit ${repository.currentCommit}`;
 
-  const isParent = submodule.isParentRepo === true;
-  const cardClass = isParent ? 'submodule-card parent-repo' : 'submodule-card';
+  const isParent = repository.isParentRepo === true;
+  const cardClass = isParent ? 'repository-card parent-repo' : 'repository-card';
   const parentBadge = isParent ? '<span class="parent-badge">PARENT</span>' : '';
-  const pathDisplay = isParent ? '(root)' : submodule.path;
+  const pathDisplay = isParent ? '(root)' : repository.path;
 
   return `
-    <div class="${cardClass}" data-name="${submodule.name}" data-path="${submodule.path}" style="animation-delay: ${index * 0.02}s">
-      <div class="submodule-row">
-        <input type="checkbox" class="row-checkbox" data-action="toggleSelection" data-submodule="${submodule.path}">
-        <span class="row-name" title="${submodule.name}">${submodule.name}${parentBadge}</span>
-        <span class="row-path" title="${submodule.path}">${pathDisplay}</span>
+    <div class="${cardClass}" data-name="${repository.name}" data-path="${repository.path}" style="animation-delay: ${index * 0.02}s">
+      <div class="repository-row">
+        <input type="checkbox" class="row-checkbox" data-action="toggleSelection" data-repository="${repository.path}">
+        <span class="row-name" title="${repository.name}">${repository.name}${parentBadge}</span>
+        <span class="row-path" title="${repository.path}">${pathDisplay}</span>
         <span class="row-branch branch" title="${branchTooltip}">${branchDisplay}</span>
-        <span class="row-commit commit">${submodule.currentCommit || 'N/A'}</span>
-        <span class="row-status ${statusClass}" title="${statusTooltip}">${statusIcon} ${submodule.status.toUpperCase()}</span>
+        <span class="row-commit commit">${repository.currentCommit || 'N/A'}</span>
+        <span class="row-status ${statusClass}" title="${statusTooltip}">${statusIcon} ${repository.status.toUpperCase()}</span>
         <div class="row-sync">
-          ${submodule.ahead > 0 ? `<span class="ahead">↑${submodule.ahead}</span>` : ''}
-          ${submodule.behind > 0 ? `<span class="behind">↓${submodule.behind}</span>` : ''}
+          ${repository.ahead > 0 ? `<span class="ahead">↑${repository.ahead}</span>` : ''}
+          ${repository.behind > 0 ? `<span class="behind">↓${repository.behind}</span>` : ''}
         </div>
         <span class="rebase-badge rebase-indicator" style="display: none;">REBASING</span>
         <div class="row-actions">
-          ${!isParent ? `<button class="btn btn-sm" data-action="openCommitModal" data-submodule="${submodule.path}" title="Checkout specific commit">⎔</button>` : ''}
-          <button class="btn btn-sm" data-action="pullChanges" data-submodule="${submodule.path}" title="Pull changes">↓</button>
-          <button class="btn btn-sm" data-action="pushChanges" data-submodule="${submodule.path}" title="Push changes">↑</button>
-          <button class="btn btn-sm" data-action="openSubmodule" data-submodule="${submodule.path}" title="Open in explorer">📂</button>
-          ${submodule.hasChanges && !isParent ? `<button class="btn btn-sm" data-action="stageSubmodule" data-submodule="${submodule.path}" title="Stage submodule pointer">+</button>` : ''}
+          ${!isParent ? `<button class="btn btn-sm" data-action="openCommitModal" data-repository="${repository.path}" title="Checkout specific commit">⎔</button>` : ''}
+          <button class="btn btn-sm" data-action="pullChanges" data-repository="${repository.path}" title="Pull changes">↓</button>
+          <button class="btn btn-sm" data-action="pushChanges" data-repository="${repository.path}" title="Push changes">↑</button>
+          <button class="btn btn-sm" data-action="openRepository" data-repository="${repository.path}" title="Open in explorer">📂</button>
+          ${repository.hasChanges && !isParent ? `<button class="btn btn-sm" data-action="stageSubmodule" data-repository="${repository.path}" title="Stage submodule pointer">+</button>` : ''}
         </div>
       </div>
-      <div class="branches-panel" id="branches-${submodule.path.replace(/[/.]/g, '-')}" style="display: none;">
+      <div class="branches-panel" id="branches-${repository.path.replace(/[/.]/g, '-')}" style="display: none;">
         <div class="branches-loading">Loading branches...</div>
       </div>
     </div>
@@ -101,30 +101,28 @@ export function renderSubmoduleRow(submodule: SubmoduleInfo, index: number): str
 /**
  * Render the stats section
  */
-function renderStats(submodules: SubmoduleInfo[]): string {
-  // Filter out parent repo for stats calculation
-  const submodulesOnly = submodules.filter(s => !s.isParentRepo);
+function renderStats(repositories: RepositoryInfo[]): string {
 
   return `
     <div class="stats">
-      <div class="stat-card" title="Total number of submodules configured in this repository">
-        <div class="stat-label">Total Submodules</div>
-        <div class="stat-value">${submodulesOnly.length}</div>
-        <div class="stat-desc">All configured submodules</div>
+      <div class="stat-card" title="Total number of repositories in this workspace">
+        <div class="stat-label">Total Repositories</div>
+        <div class="stat-value">${repositories.length}</div>
+        <div class="stat-desc">Parent and linked repositories</div>
       </div>
-      <div class="stat-card" title="Submodules on a branch with no uncommitted changes">
+      <div class="stat-card" title="Repositories on a branch with no uncommitted changes">
         <div class="stat-label">Clean</div>
-        <div class="stat-value success">${submodulesOnly.filter(s => s.status === 'clean').length}</div>
+        <div class="stat-value success">${repositories.filter(s => s.status === 'clean').length}</div>
         <div class="stat-desc">On branch, no changes</div>
       </div>
-      <div class="stat-card" title="Submodules with uncommitted changes (staged or unstaged files)">
+      <div class="stat-card" title="Repositories with uncommitted changes (staged or unstaged files)">
         <div class="stat-label">Modified</div>
-        <div class="stat-value warning">${submodulesOnly.filter(s => s.status === 'modified').length}</div>
+        <div class="stat-value warning">${repositories.filter(s => s.status === 'modified').length}</div>
         <div class="stat-desc">Has uncommitted changes</div>
       </div>
-      <div class="stat-card" title="Submodules that are detached (not on a branch), uninitialized, or have conflicts">
+      <div class="stat-card" title="Repositories that are detached, uninitialized, or have conflicts">
         <div class="stat-label">Needs Attention</div>
-        <div class="stat-value error">${submodulesOnly.filter(s => ['uninitialized', 'conflict', 'detached'].includes(s.status)).length}</div>
+        <div class="stat-value error">${repositories.filter(s => ['uninitialized', 'conflict', 'detached'].includes(s.status)).length}</div>
         <div class="stat-desc">Detached, uninitialized, or conflict</div>
       </div>
     </div>
@@ -132,21 +130,21 @@ function renderStats(submodules: SubmoduleInfo[]): string {
 }
 
 /**
- * Render the submodule list or empty state
+ * Render the repository list or empty state
  */
-function renderSubmoduleList(submodules: SubmoduleInfo[]): string {
-  if (submodules.length > 0) {
+function renderRepositoryList(repositories: RepositoryInfo[]): string {
+  if (repositories.length > 0) {
     return `
-      <div class="submodule-list" id="submoduleList">
-        ${submodules.map((s, i) => renderSubmoduleRow(s, i)).join('')}
+      <div class="repository-list" id="repositoryList">
+        ${repositories.map((repository, index) => renderRepositoryRow(repository, index)).join('')}
       </div>
     `;
   }
   return `
     <div class="empty-state">
-      <h2>No Submodules Found</h2>
-      <p>This workspace doesn't have any Git submodules yet.</p>
-      <button class="btn btn-primary" data-action="initAll">Initialize Submodules</button>
+      <h2>No Repositories Available</h2>
+      <p>Repository data could not be loaded for this workspace.</p>
+      <button class="btn btn-primary" data-action="refresh">Refresh Repositories</button>
     </div>
   `;
 }
@@ -154,7 +152,7 @@ function renderSubmoduleList(submodules: SubmoduleInfo[]): string {
 /**
  * Render the modals
  */
-function renderModals(submodules: SubmoduleInfo[]): string {
+function renderModals(repositories: RepositoryInfo[]): string {
   return `
     <!-- Create Branch Modal -->
     <div class="modal-overlay" id="createBranchModal">
@@ -166,11 +164,11 @@ function renderModals(submodules: SubmoduleInfo[]): string {
         <div class="modal-body">
           <div class="form-group">
             <label class="form-label">Select Repositories</label>
-            <div id="submoduleCheckboxes" style="max-height: 200px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
-              ${submodules.map(s => `
+            <div id="repositoryCheckboxes" style="max-height: 200px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
+              ${repositories.map(repository => `
                 <label style="display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer;">
-                  <input type="checkbox" class="branch-submodule" value="${s.path}" checked>
-                  <span>${s.name}${s.isParentRepo ? ' <span class="parent-badge">PARENT</span>' : ''}</span>
+                  <input type="checkbox" class="branch-repository" value="${repository.path}" checked>
+                  <span>${repository.name}${repository.isParentRepo ? ' <span class="parent-badge">PARENT</span>' : ''}</span>
                 </label>
               `).join('')}
             </div>
@@ -270,7 +268,7 @@ function renderModals(submodules: SubmoduleInfo[]): string {
               <option value="">Loading branches...</option>
             </select>
           </div>
-          <input type="hidden" id="checkoutSubmodule">
+          <input type="hidden" id="checkoutRepository">
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="checkoutModal">Cancel</button>
@@ -300,7 +298,7 @@ function renderModals(submodules: SubmoduleInfo[]): string {
               <option value="">Loading commits...</option>
             </select>
           </div>
-          <input type="hidden" id="commitSubmodule">
+          <input type="hidden" id="commitRepository">
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="commitModal">Cancel</button>
@@ -354,7 +352,7 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
 /**
  * Generate the full HTML for the webview
  */
-export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: WebviewResourceUris, workspaceFolders: WorkspaceFolderInfo[] = []): string {
+export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: WebviewResourceUris, workspaceFolders: WorkspaceFolderInfo[] = []): string {
   const nonce = getNonce();
 
   return `<!DOCTYPE html>
@@ -378,20 +376,20 @@ export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: Web
 
     ${renderWorkspaceFolderSelector(workspaceFolders)}
 
-    ${renderStats(submodules)}
+    ${renderStats(repositories)}
 
     <div class="toolbar">
       <div class="search-box">
-        <input type="text" id="searchInput" placeholder="Search submodules...">
+        <input type="text" id="searchInput" placeholder="Search repositories...">
       </div>
       <button class="btn" data-action="selectAll">☑ Select All</button>
       <button class="btn" data-action="deselectAll">☐ Deselect All</button>
-      <button class="btn" data-action="initAll">↓ Init All</button>
-      <button class="btn" data-action="updateAll">⟳ Update All</button>
+      <button class="btn" data-action="initAll" title="Initialize configured Git submodules">↓ Init Submodules</button>
+      <button class="btn" data-action="updateAll" title="Update configured Git submodules">⟳ Update Submodules</button>
       <button class="btn" data-action="syncAll">⟲ Sync Versions</button>
     </div>
 
-    ${renderSubmoduleList(submodules)}
+    ${renderRepositoryList(repositories)}
   </div>
 
   <div class="selection-bar" id="selectionBar">
@@ -401,9 +399,9 @@ export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: Web
     <button class="btn btn-sm" data-action="deselectAll">Cancel</button>
   </div>
 
-  ${renderModals(submodules)}
+  ${renderModals(repositories)}
 
-  <script nonce="${nonce}">window.__initialSubmodules = ${JSON.stringify(submodules)};</script>
+  <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
   <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
 </body>
 </html>`;

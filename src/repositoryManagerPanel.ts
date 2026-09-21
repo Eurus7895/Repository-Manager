@@ -1,5 +1,5 @@
 /**
- * Webview Panel for the Submodule Manager with modern UI
+ * Webview panel for Repository Manager
  */
 
 import * as vscode from 'vscode';
@@ -9,8 +9,8 @@ import { PRManager } from './prManager';
 import { getHtmlForWebview, WebviewResourceUris, WorkspaceFolderInfo } from './webview/template';
 import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessageHandler';
 
-export class SubmoduleManagerPanel {
-  public static currentPanel: SubmoduleManagerPanel | undefined;
+export class RepositoryManagerPanel {
+  public static currentPanel: RepositoryManagerPanel | undefined;
   private readonly _panel: vscode.WebviewPanel;
   private readonly _extensionUri: vscode.Uri;
   private _gitOps: GitOperations;
@@ -23,14 +23,14 @@ export class SubmoduleManagerPanel {
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
 
-    if (SubmoduleManagerPanel.currentPanel) {
-      SubmoduleManagerPanel.currentPanel._panel.reveal(column);
-      SubmoduleManagerPanel.currentPanel.refresh();
+    if (RepositoryManagerPanel.currentPanel) {
+      RepositoryManagerPanel.currentPanel._panel.reveal(column);
+      RepositoryManagerPanel.currentPanel.refresh();
       return;
     }
 
     const panel = vscode.window.createWebviewPanel(
-      'submoduleManager',
+      'repositoryManager',
       'Repository Manager',
       column || vscode.ViewColumn.One,
       {
@@ -40,7 +40,7 @@ export class SubmoduleManagerPanel {
       }
     );
 
-    SubmoduleManagerPanel.currentPanel = new SubmoduleManagerPanel(
+    RepositoryManagerPanel.currentPanel = new RepositoryManagerPanel(
       panel,
       extensionUri,
       workspaceRoot
@@ -185,7 +185,7 @@ export class SubmoduleManagerPanel {
   }
 
   public dispose() {
-    SubmoduleManagerPanel.currentPanel = undefined;
+    RepositoryManagerPanel.currentPanel = undefined;
     this._panel.dispose();
 
     while (this._disposables.length) {

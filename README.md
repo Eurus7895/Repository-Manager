@@ -44,7 +44,9 @@ Repository Manager works with:
 
 The parent repository participates in branch creation, deletion, checkout, pull, and push workflows. Submodule-specific actions such as initialization and pointer staging are available when applicable.
 
-The existing `submoduleManager.*` command and setting identifiers are intentionally retained in version 1.1.0 for backward compatibility.
+Version 1.1.0 completes the rename to Repository Manager. Its extension ID, commands, settings, view IDs, and package artifact now use the `repository-manager` or `repositoryManager.*` namespaces.
+
+This is an intentional breaking identity change. VS Code treats it as a separate extension instead of an in-place update from the former Submodule Manager package.
 
 ## Installation
 
@@ -92,10 +94,10 @@ Open VS Code settings and search for **Repository Manager**.
 
 | Setting | Description | Default |
 |---|---|---|
-| `submoduleManager.defaultBranch` | Default branch used by branch workflows | `main` |
-| `submoduleManager.autoFetch` | Fetch updates when opening the panel | `true` |
-| `submoduleManager.showNotifications` | Show notifications for Git operations | `true` |
-| `submoduleManager.githubToken` | Optional GitHub token for PR operations | `""` |
+| `repositoryManager.defaultBranch` | Default branch used by branch workflows | `main` |
+| `repositoryManager.autoFetch` | Fetch updates when opening the panel | `true` |
+| `repositoryManager.showNotifications` | Show notifications for Git operations | `true` |
+| `repositoryManager.githubToken` | Optional GitHub token for PR operations | `""` |
 
 ## Keyboard shortcuts
 

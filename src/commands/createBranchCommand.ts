@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { GitOperations } from '../gitOperations';
-import { SubmoduleTreeProvider } from '../submoduleTreeProvider';
+import { RepositoryTreeProvider } from '../repositoryTreeProvider';
 
 // Branch hierarchy rules
 const branchHierarchy: Record<string, { prefixes: string[]; hint: string }> = {
@@ -52,12 +52,12 @@ function toKebabCase(str: string): string {
 export function registerCreateBranchCommand(
   context: vscode.ExtensionContext,
   gitOps: GitOperations,
-  submoduleTreeProvider: SubmoduleTreeProvider
+  repositoryTreeProvider: RepositoryTreeProvider
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.createBranch', async () => {
+    vscode.commands.registerCommand('repositoryManager.createBranch', async () => {
       // Fetch submodules directly to ensure we have fresh data
-      let submodules = submoduleTreeProvider.getSubmodules();
+      let submodules = repositoryTreeProvider.getSubmodules();
 
       // If cached submodules are empty, fetch them directly
       if (submodules.length === 0) {
@@ -259,7 +259,7 @@ export function registerCreateBranchCommand(
         vscode.window.showErrorMessage('Failed to create branch in all repositories');
       }
 
-      submoduleTreeProvider.refresh();
+      repositoryTreeProvider.refresh();
     })
   );
 }

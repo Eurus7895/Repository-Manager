@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { GitOperations } from './gitOperations';
 import { SubmoduleInfo, SubmoduleStatus } from './types';
 
-export class SubmoduleTreeProvider implements vscode.TreeDataProvider<SubmoduleTreeItem> {
+export class RepositoryTreeProvider implements vscode.TreeDataProvider<SubmoduleTreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<SubmoduleTreeItem | undefined | null | void> =
     new vscode.EventEmitter<SubmoduleTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData: vscode.Event<SubmoduleTreeItem | undefined | null | void> =
@@ -191,7 +191,7 @@ export class SubmoduleTreeItem extends vscode.TreeItem {
       this.tooltip = `Click to checkout branch: ${this.branchName}${this.isRemote ? ' (will create local tracking branch)' : ''}`;
       this.command = {
         title: 'Checkout Branch',
-        command: 'submoduleManager.checkoutBranchFromTree',
+        command: 'repositoryManager.checkoutBranchFromTree',
         arguments: [this.submodule.path, this.branchName]
       };
     } else {
@@ -282,19 +282,19 @@ export class ActionsTreeProvider implements vscode.TreeDataProvider<ActionTreeIt
 
   getChildren(): ActionTreeItem[] {
     return [
-      new ActionTreeItem('Open Manager Panel', 'submoduleManager.openPanel', 'dashboard',
+      new ActionTreeItem('Open Manager Panel', 'repositoryManager.openPanel', 'dashboard',
         'Open the Repository Manager webview panel'),
-      new ActionTreeItem('Create Branch', 'submoduleManager.createBranch', 'git-branch',
+      new ActionTreeItem('Create Branch', 'repositoryManager.createBranch', 'git-branch',
         'Create a new branch across multiple submodules'),
-      new ActionTreeItem('Delete Branch', 'submoduleManager.deleteBranchAcrossSubmodules', 'trash',
+      new ActionTreeItem('Delete Branch', 'repositoryManager.deleteBranchAcrossSubmodules', 'trash',
         'Delete a branch across multiple submodules'),
-      new ActionTreeItem('Sync Versions', 'submoduleManager.syncVersions', 'sync',
+      new ActionTreeItem('Sync Versions', 'repositoryManager.syncVersions', 'sync',
         'Sync all submodules to the commits recorded in the parent repository'),
-      new ActionTreeItem('Initialize All', 'submoduleManager.initSubmodules', 'cloud-download',
+      new ActionTreeItem('Initialize All', 'repositoryManager.initSubmodules', 'cloud-download',
         'Initialize and clone all submodules (git submodule update --init)'),
-      new ActionTreeItem('Update All', 'submoduleManager.updateSubmodules', 'cloud-upload',
+      new ActionTreeItem('Update All', 'repositoryManager.updateSubmodules', 'cloud-upload',
         'Update all submodules to latest from their remote branches'),
-      new ActionTreeItem('Refresh', 'submoduleManager.refresh', 'refresh',
+      new ActionTreeItem('Refresh', 'repositoryManager.refresh', 'refresh',
         'Refresh the submodule list and status')
     ];
   }
