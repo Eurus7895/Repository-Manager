@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
  * URIs for external webview resources
  */
 export interface WebviewResourceUris {
+  graphScriptUri: vscode.Uri;
   scriptUri: vscode.Uri;
   styleUri: vscode.Uri;
 }
@@ -329,7 +330,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <button class="dashboard-command" data-action="pullActiveRepository"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg>Pull<small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
           <button class="dashboard-command" data-action="pushActiveRepository"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg>Push<small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
           <span class="command-separator" aria-hidden="true"></span>
-          <button class="dashboard-command" data-action="syncAll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"></path><path d="M20 4v5h-5"></path><path d="M20 12a8 8 0 0 1-14 5.3L4 15"></path><path d="M4 20v-5h5"></path></svg>Sync versions</button>
+          <button class="dashboard-command dashboard-command-sync" data-action="syncAll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"></path><path d="M20 4v5h-5"></path><path d="M20 12a8 8 0 0 1-14 5.3L4 15"></path><path d="M4 20v-5h5"></path></svg>Sync versions</button>
           <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Branch across repos</button>
         </div>
       </header>
@@ -345,7 +346,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
-            <div class="commit-compare-status" id="commitCompareStatus" hidden></div>
+            <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
           <section class="history-region">
@@ -404,6 +405,7 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
   ${renderModals(repositories)}
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
+  <script nonce="${nonce}" src="${resourceUris.graphScriptUri}"></script>
   <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
 </body>
 </html>`;

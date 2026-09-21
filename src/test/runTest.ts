@@ -6,6 +6,21 @@ import { GitCommandService } from '../services/gitCommandService';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const historyGraph = require('../../resources/historyGraph.js') as {
+  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[] }>) => {
+    rows: Array<{ lane: number; parentLanes: number[]; isMerge: boolean }>;
+    laneCount: number;
+    width: number;
+  };
+  laneX: (lane: number) => number;
+  toggleCompareSelection: (selection: string[], commitHash: string) => string[];
+  transitionCompareSelection: (
+    selection: string[], commitHash: string, comparisonActive: boolean
+  ) => { selection: string[]; action: 'compare' | 'parent' | 'none' };
+  normalizeHistoryFilters: (saved: unknown) => { branch: string; includeRemotes: boolean; search: string };
+};
+
 function testParsers(): void {
   const history = parseHistoryOutput(
     'abcdef\x1fabc1234\x1fparent1 parent2\x1fJane Doe\x1fjane@example.com\x1f2026-09-21T10:00:00Z\x1fSubject with | delimiter\x1fHEAD -> refs/heads/main, tag: refs/tags/v1.1.0\x1e'
@@ -41,6 +56,61 @@ function testPathBoundary(): void {
   assert.throws(() => git.resolveRepositoryPath('/tmp/outside'));
   assert.equal(git.resolveFilePath('src/index.ts'), 'src/index.ts');
   assert.throws(() => git.resolveFilePath('../secret'));
+}
+
+function testHistoryGraph(): void {
+  const linear = historyGraph.buildGraphModel([
+    { hash: 'c', parentHashes: ['b'] },
+    { hash: 'b', parentHashes: ['a'] },
+    { hash: 'a', parentHashes: [] }
+  ]);
+  assert.equal(linear.laneCount, 1);
+  assert.deepEqual(linear.rows.map(row => row.lane), [0, 0, 0]);
+  assert.equal(linear.width, 76);
+
+  const merge = historyGraph.buildGraphModel([
+    { hash: 'merge', parentHashes: ['left', 'right'] },
+    { hash: 'left', parentHashes: ['root'] },
+    { hash: 'right', parentHashes: ['root'] },
+    { hash: 'root', parentHashes: [] }
+  ]);
+  assert.equal(merge.laneCount, 2);
+  assert.equal(merge.rows[0].isMerge, true);
+  assert.deepEqual(merge.rows[0].parentLanes, [0, 1]);
+  assert.equal(merge.rows[2].lane, 1);
+
+  const octopusParents = Array.from({ length: 8 }, (_, index) => `parent-${index}`);
+  const octopus = historyGraph.buildGraphModel([
+    { hash: 'octopus', parentHashes: octopusParents },
+    ...octopusParents.map(hash => ({ hash, parentHashes: [] }))
+  ]);
+  assert.equal(octopus.laneCount, 8);
+  assert.ok(octopus.width > 76);
+  assert.equal(new Set(octopusParents.map((_, index) => historyGraph.laneX(index))).size, 8);
+
+  let selection: string[] = [];
+  selection = historyGraph.toggleCompareSelection(selection, 'a');
+  selection = historyGraph.toggleCompareSelection(selection, 'b');
+  assert.deepEqual(selection, ['a', 'b']);
+  selection = historyGraph.toggleCompareSelection(selection, 'c');
+  assert.deepEqual(selection, ['b', 'c']);
+  selection = historyGraph.toggleCompareSelection(selection, 'b');
+  assert.deepEqual(selection, ['c']);
+
+  assert.deepEqual(historyGraph.transitionCompareSelection(['a', 'b'], 'b', true), {
+    selection: ['a'], action: 'parent'
+  });
+  assert.deepEqual(historyGraph.transitionCompareSelection(['a'], 'b', false), {
+    selection: ['a', 'b'], action: 'compare'
+  });
+  assert.deepEqual(historyGraph.normalizeHistoryFilters(undefined), {
+    branch: '', includeRemotes: true, search: ''
+  });
+  assert.deepEqual(historyGraph.normalizeHistoryFilters({
+    branch: 'origin/main', includeRemotes: false, search: 'merge'
+  }), {
+    branch: 'origin/main', includeRemotes: false, search: 'merge'
+  });
 }
 
 async function testRepositoryIntegration(): Promise<void> {
@@ -96,6 +166,7 @@ async function testRepositoryIntegration(): Promise<void> {
 async function main(): Promise<void> {
   testParsers();
   testPathBoundary();
+  testHistoryGraph();
   await testRepositoryIntegration();
   console.log('Repository Manager backend tests passed');
 }

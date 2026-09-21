@@ -105,13 +105,16 @@ export class RepositoryManagerPanel {
   }
 
   private _getResourceUris(): WebviewResourceUris {
+    const graphScriptUri = this._panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'resources', 'historyGraph.js')
+    );
     const scriptUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.js')
     );
     const styleUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.css')
     );
-    return { scriptUri, styleUri };
+    return { graphScriptUri, scriptUri, styleUri };
   }
 
   private async _update(fullRefresh: boolean = true) {

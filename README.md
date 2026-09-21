@@ -13,8 +13,8 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Browse the active repository's topology-aware commit graph with distinct branch and merge lanes plus tag, remote, and stash context.
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
 - Resize the history, changed-files, and diff panes to suit the current review task.
-- Select up to two circular graph nodes to compare distant commits; local and remote branches can also be compared directly.
-- Filter history by branch, include remote refs, or search by author, hash, message, and ref.
+- Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
+- Filter history by branch, include remote refs, or search by author, hash, message, and ref; these filters are remembered per repository.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
 - Filter history from the dashboard branch list or selector; both controls stay synchronized and highlight the selected branch.

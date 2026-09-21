@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sidebar reference browsing for branches, tags, remotes, and stashes.
 - Workspace alignment cards that compare every repository with the active target branch and surface drift or conflicts.
 - Resizable history/diff and changed-files/diff split panes with persisted panel sizes.
-- Graph-node selection for comparing any two history commits and a dedicated branch comparison workflow.
+- Accessible graph-node selection for comparing any two history commits, with explicit Base/Target markers and a dedicated branch comparison workflow.
 - Expandable tag, remote, and stash details in the dashboard sidebar.
 
 ### Changed
@@ -40,7 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the duplicate Activity Bar `Repositories` and `Quick Actions` views so the editor dashboard is the only UI surface.
 - Reintroduced the compact branch list inside the editor dashboard while keeping the removed Activity Bar tree views out of the extension.
 - Synchronized the branch list with the history selector and highlighted the active history branch.
-- Replaced the decorative single-line history graph with a topology-aware multi-lane SVG graph for branches and merges.
+- Replaced the decorative single-line history graph with a continuous, topology-aware SVG graph that expands beyond five branch and merge lanes.
+- Persisted branch, remote-inclusion, and search filters independently for each repository.
+- Restored the active commit's parent diff whenever a comparison is cleared or reduced to one selected node.
+- Hardened graph and toolbar layouts at narrow breakpoints and increased graph-node keyboard and pointer hit areas.
 - Matched the dashboard command buttons to the approved HTML design with compact outlined icons, counters, spacing, and separators.
 - Unified commit, merge, release, and branch comparisons around an explicit base-to-target diff range.
 - Reworked the dashboard visual system from the approved design: compact branded header, repository filter, status-aware repository rows, denser history graph, commit inspector, diff styling, and branch workflow modal.

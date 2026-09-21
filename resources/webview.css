@@ -2268,6 +2268,8 @@ button.reference-detail-item:hover { background: #222730; }
 
 .commit-compare-status button {
   margin-left: 5px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   color: inherit;
@@ -2275,17 +2277,38 @@ button.reference-detail-item:hover { background: #222730; }
   cursor: pointer;
 }
 
+.compare-role {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 50%;
+  color: #0b1512;
+  background: var(--info);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.compare-role-target { background: var(--accent); }
+
 .history-region {
+  --graph-width: 76px;
+  --history-horizontal-padding: 20px;
   grid-template-rows: 28px minmax(0, 1fr) auto;
   border-bottom: 1px solid var(--border);
 }
 
 .history-table-header,
 .history-row {
-  grid-template-columns: 76px minmax(260px, 1fr) 150px 110px 80px;
+  grid-template-columns: var(--graph-width) minmax(260px, 1fr) 150px 110px 80px;
   gap: 12px;
-  min-width: 760px;
-  padding: 0 20px;
+  min-width: calc(684px + var(--graph-width));
+  padding: 0 var(--history-horizontal-padding);
+}
+
+.history-table-content {
+  position: relative;
+  min-width: calc(684px + var(--graph-width));
 }
 
 .history-row { position: relative; }
@@ -2302,6 +2325,7 @@ button.reference-detail-item:hover { background: #222730; }
 }
 
 .history-row {
+  height: 32px;
   min-height: 32px;
   color: var(--text-primary);
   background: transparent;
@@ -2316,32 +2340,59 @@ button.reference-detail-item:hover { background: #222730; }
   box-shadow: inset 2px 0 0 var(--warning);
 }
 
-.history-graph {
+.history-graph-cell {
   position: relative;
   align-self: stretch;
   display: block;
-  width: 76px;
+  width: var(--graph-width);
 }
 
-.history-graph svg { display: block; width: 76px; height: 32px; overflow: visible; }
-.history-graph::before { content: none; }
+.history-graph-overlay {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: var(--history-horizontal-padding);
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .graph-edge { fill: none; stroke-width: 2; stroke-linecap: round; }
 .graph-lane-0 { stroke: var(--warning); }
 .graph-lane-1 { stroke: var(--accent); }
 .graph-lane-2 { stroke: #a48bf0; }
 .graph-lane-3 { stroke: var(--info); }
 .graph-lane-4 { stroke: var(--error); }
+.graph-lane-5 { stroke: #d48fd5; }
+.graph-lane-6 { stroke: #6fc2e8; }
+.graph-lane-7 { stroke: #a9c36b; }
 .graph-node { fill: var(--bg-primary); stroke-width: 2; }
 .graph-node-core.graph-lane-0 { fill: var(--warning); }
 .graph-node-core.graph-lane-1 { fill: var(--accent); }
 .graph-node-core.graph-lane-2 { fill: #a48bf0; }
 .graph-node-core.graph-lane-3 { fill: var(--info); }
 .graph-node-core.graph-lane-4 { fill: var(--error); }
-.history-row.active .graph-node { fill: rgba(229, 165, 71, .12); stroke-width: 2.5; }
+.graph-node-core.graph-lane-5 { fill: #d48fd5; }
+.graph-node-core.graph-lane-6 { fill: #6fc2e8; }
+.graph-node-core.graph-lane-7 { fill: #a9c36b; }
 .history-row.compare-base { background: rgba(139, 167, 240, .06); }
 .history-row.compare-target { background: rgba(60, 199, 166, .06); }
 .history-message { gap: 8px; }
-.history-subject { color: #e4e7ec; }
+.history-subject {
+  overflow: hidden;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: #e4e7ec;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.history-subject:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .history-author { color: var(--text-secondary); }
 .history-date,
 .history-hash { color: var(--text-muted); }
@@ -2350,9 +2401,9 @@ button.reference-detail-item:hover { background: #222730; }
 .graph-node-button {
   position: absolute;
   z-index: 3;
-  top: 9px;
-  width: 14px;
-  height: 14px;
+  top: 4px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -2362,9 +2413,34 @@ button.reference-detail-item:hover { background: #222730; }
 }
 
 .graph-node-button:hover,
-.graph-node-button:focus-visible { box-shadow: 0 0 0 3px rgba(229, 165, 71, .28); }
-.history-row.compare-base .graph-node-button { box-shadow: 0 0 0 3px rgba(139, 167, 240, .42); }
-.history-row.compare-target .graph-node-button { box-shadow: 0 0 0 3px rgba(60, 199, 166, .45); }
+.graph-node-button:focus-visible { box-shadow: inset 0 0 0 2px rgba(229, 165, 71, .62); }
+
+.graph-node-button[data-marker="B"]::after,
+.graph-node-button[data-marker="T"]::after {
+  position: absolute;
+  inset: 4px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: #0b1512;
+  content: attr(data-marker);
+  font-family: var(--vscode-editor-font-family), Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.graph-node-button[data-marker="B"]::after { background: var(--info); }
+.graph-node-button[data-marker="T"]::after { background: var(--accent); }
+.history-row.compare-base .graph-node-button { box-shadow: inset 0 0 0 2px rgba(139, 167, 240, .55); }
+.history-row.compare-target .graph-node-button { box-shadow: inset 0 0 0 2px rgba(60, 199, 166, .55); }
+
+body.vscode-high-contrast .graph-node-button:focus-visible,
+body.vscode-high-contrast .graph-node-button[data-marker="B"],
+body.vscode-high-contrast .graph-node-button[data-marker="T"] {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
 
 .history-ref {
   max-width: 170px;
@@ -2637,11 +2713,13 @@ button.reference-detail-item:hover { background: #222730; }
   .dashboard-command-bar { gap: 8px; padding: 0 10px; }
   .dashboard-brand strong { display: none; }
   .dashboard-command { padding: 0 9px; }
-  .dashboard-command:nth-last-child(2) { display: none; }
+  .dashboard-command-sync { display: none; }
+  .command-separator { display: none; }
   .dashboard-body { grid-template-columns: 248px minmax(0, 1fr); }
   .workspace-alignment { grid-template-columns: 150px minmax(0, 1fr) auto; padding-left: 14px; }
   .history-table-header,
-  .history-row { grid-template-columns: 58px minmax(245px, 1fr) 125px 98px 68px; gap: 8px; padding: 0 12px; }
+  .history-row { grid-template-columns: var(--graph-width) minmax(245px, 1fr) 125px 98px 68px; gap: 8px; }
+  .history-region { --history-horizontal-padding: 12px; }
   .commit-content { grid-template-columns: 250px 6px minmax(0, 1fr); }
 }
 

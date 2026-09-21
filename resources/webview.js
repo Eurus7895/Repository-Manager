@@ -18,9 +18,13 @@
   let selectedDashboardFile = null;
   let comparisonBaseHash = null;
   let activeComparisonTarget = null;
+  let comparisonSource = null;
   let commitCompareSelection = Array.isArray(previousState.commitCompareSelection)
     ? previousState.commitCompareSelection.slice(0, 2)
     : [];
+  let comparisonRepository = previousState.comparisonRepository || activeDashboardRepository;
+  let dashboardHistoryState = previousState.dashboardHistoryState || {};
+  let dashboardActivated = false;
   let loadedHistoryCommits = [];
   let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
@@ -35,6 +39,8 @@
       activeDashboardRepository,
       selectedDashboardCommit,
       commitCompareSelection,
+      comparisonRepository,
+      dashboardHistoryState,
       historyPanelHeight,
       filesPanelWidth
     });
@@ -67,19 +73,8 @@
     selectHistoryCommit: (el) => {
       const commitHash = el.dataset.commit;
       if (!commitHash) return;
-      clearCommitComparison();
-      selectedDashboardCommit = commitHash;
-      activeComparisonTarget = commitHash;
-      comparisonBaseHash = null;
-      document.querySelectorAll('.history-row').forEach(row => {
-        row.classList.toggle('active', row.dataset.commit === commitHash);
-      });
-      saveState();
-      showCommitDetailLoading();
-      postMessage('getCommitDetail', {
-        repositoryPath: activeDashboardRepository,
-        commitHash
-      });
+      clearCommitComparison(false);
+      loadParentCommitDetail(commitHash);
     },
 
     selectChangedFile: (el) => {
@@ -123,6 +118,8 @@
         }
         branchFilter.value = revision;
       }
+      captureDashboardFilters();
+      saveState();
       requestDashboardHistory(0, false);
     },
 
@@ -132,6 +129,8 @@
       const branchFilter = document.getElementById('dashboardBranchFilter');
       if (branchFilter) branchFilter.value = revision;
       updateSelectedBranchUI(revision);
+      captureDashboardFilters();
+      saveState();
       requestDashboardHistory(0, false);
     },
 
@@ -153,10 +152,11 @@
       const modal = document.getElementById('branchCompareModal');
       if (modal) modal.classList.remove('active');
       commitCompareSelection = [];
+      comparisonRepository = activeDashboardRepository;
       loadComparison(base.value, target.value, 'branches');
     },
 
-    clearCommitComparison: () => clearCommitComparison(),
+    clearCommitComparison: () => clearCommitComparison(true),
 
     toggleCommitCompareNode: (el) => toggleCommitCompareNode(el.dataset.commit),
 
@@ -473,8 +473,23 @@
 
   function updateCommitCompareUI() {
     document.querySelectorAll('.history-row').forEach(row => {
-      row.classList.toggle('compare-base', commitCompareSelection[0] === row.dataset.commit);
-      row.classList.toggle('compare-target', commitCompareSelection[1] === row.dataset.commit);
+      const marker = commitCompareSelection[0] === row.dataset.commit
+        ? 'B'
+        : commitCompareSelection[1] === row.dataset.commit
+          ? 'T'
+          : '';
+      row.classList.toggle('compare-base', marker === 'B');
+      row.classList.toggle('compare-target', marker === 'T');
+      const node = row.querySelector('.graph-node-button');
+      if (node) {
+        node.dataset.marker = marker;
+        node.setAttribute('aria-pressed', marker ? 'true' : 'false');
+        const accessibleLabel = marker
+          ? `${marker === 'B' ? 'Base' : 'Target'} commit ${shortRevision(row.dataset.commit)}. Press to remove from comparison.`
+          : `Select commit ${shortRevision(row.dataset.commit)} for comparison.`;
+        node.setAttribute('aria-label', accessibleLabel);
+        node.title = accessibleLabel;
+      }
     });
     const status = document.getElementById('commitCompareStatus');
     if (!status) return;
@@ -485,28 +500,52 @@
     }
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
-      ? `Base ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `${escapeHtml(shortRevision(commitCompareSelection[0]))} → ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
+      : `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
   }
 
-  function clearCommitComparison() {
-    commitCompareSelection = [];
+  function loadParentCommitDetail(commitHash) {
+    if (!commitHash) return;
+    selectedDashboardCommit = commitHash;
+    activeComparisonTarget = commitHash;
+    comparisonBaseHash = null;
+    comparisonSource = null;
+    document.querySelectorAll('.history-row').forEach(row => {
+      row.classList.toggle('active', row.dataset.commit === commitHash);
+    });
     updateCommitCompareUI();
     saveState();
+    showCommitDetailLoading();
+    postMessage('getCommitDetail', {
+      repositoryPath: activeDashboardRepository,
+      commitHash
+    });
+  }
+
+  function clearCommitComparison(restoreParent) {
+    const shouldRestoreParent = Boolean(restoreParent && comparisonSource && selectedDashboardCommit);
+    commitCompareSelection = [];
+    comparisonRepository = activeDashboardRepository;
+    updateCommitCompareUI();
+    saveState();
+    if (shouldRestoreParent) loadParentCommitDetail(selectedDashboardCommit);
   }
 
   function toggleCommitCompareNode(commitHash) {
     if (!commitHash) return;
-    if (commitCompareSelection.includes(commitHash)) {
-      commitCompareSelection = commitCompareSelection.filter(hash => hash !== commitHash);
-    } else {
-      if (commitCompareSelection.length === 2) commitCompareSelection.shift();
-      commitCompareSelection.push(commitHash);
-    }
+    const transition = window.RepositoryHistoryGraph.transitionCompareSelection(
+      commitCompareSelection,
+      commitHash,
+      Boolean(comparisonSource)
+    );
+    commitCompareSelection = transition.selection;
+    comparisonRepository = activeDashboardRepository;
     updateCommitCompareUI();
     saveState();
-    if (commitCompareSelection.length === 2) {
+    if (transition.action === 'compare') {
       loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
+    } else if (transition.action === 'parent' && selectedDashboardCommit) {
+      loadParentCommitDetail(selectedDashboardCommit);
     }
   }
 
@@ -514,6 +553,7 @@
     selectedDashboardCommit = targetRevision;
     activeComparisonTarget = targetRevision;
     comparisonBaseHash = baseRevision;
+    comparisonSource = source;
     document.querySelectorAll('.history-row').forEach(row => {
       row.classList.toggle('active', row.dataset.commit === targetRevision);
     });
@@ -546,19 +586,58 @@
     if (alternative) targetSelect.value = alternative.isRemote ? `origin/${alternative.name}` : alternative.name;
   }
 
+  function getDashboardFilters(repositoryPath) {
+    return window.RepositoryHistoryGraph.normalizeHistoryFilters(dashboardHistoryState[repositoryPath]);
+  }
+
+  function captureDashboardFilters() {
+    if (!activeDashboardRepository) return;
+    const branch = document.getElementById('dashboardBranchFilter');
+    const includeRemotes = document.getElementById('dashboardIncludeRemotes');
+    const search = document.getElementById('dashboardSearch');
+    dashboardHistoryState[activeDashboardRepository] = {
+      branch: branch ? branch.value : '',
+      includeRemotes: Boolean(includeRemotes && includeRemotes.checked),
+      search: search ? search.value : ''
+    };
+  }
+
+  function applyDashboardFilters(repositoryPath) {
+    const filters = getDashboardFilters(repositoryPath);
+    const branch = document.getElementById('dashboardBranchFilter');
+    const includeRemotes = document.getElementById('dashboardIncludeRemotes');
+    const search = document.getElementById('dashboardSearch');
+    if (branch) {
+      if (filters.branch && !Array.from(branch.options).some(option => option.value === filters.branch)) {
+        branch.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(filters.branch)}">${escapeHtml(filters.branch)}</option>`);
+      }
+      branch.value = filters.branch;
+    }
+    if (includeRemotes) includeRemotes.checked = filters.includeRemotes;
+    if (search) search.value = filters.search;
+  }
+
   function activateDashboardRepository(repositoryPath) {
     const repository = getRepository(repositoryPath);
     if (!repository) return;
 
+    if (dashboardActivated) captureDashboardFilters();
     activeDashboardRepository = repositoryPath;
-    selectedDashboardCommit = null;
+    const canRestoreComparison = !dashboardActivated && comparisonRepository === repositoryPath;
+    if (!canRestoreComparison) {
+      selectedDashboardCommit = null;
+      commitCompareSelection = [];
+      comparisonRepository = repositoryPath;
+    }
     selectedDashboardFile = null;
     historyNextOffset = null;
     loadedHistoryCommits = [];
-    commitCompareSelection = [];
     comparisonBaseHash = null;
     activeComparisonTarget = null;
+    comparisonSource = null;
     repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
+    applyDashboardFilters(repositoryPath);
+    dashboardActivated = true;
     updateCommitCompareUI();
     document.querySelectorAll('.dashboard-repository-item').forEach(item => {
       item.classList.toggle('active', item.dataset.repository === repositoryPath);
@@ -594,6 +673,8 @@
     const includeRemotes = document.getElementById('dashboardIncludeRemotes');
     const history = document.getElementById('dashboardHistory');
     if (!append) loadedHistoryCommits = [];
+    captureDashboardFilters();
+    saveState();
     if (!append && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
     if (!append) historyRequestId += 1;
     postMessage('getHistory', {
@@ -620,78 +701,44 @@
     }).format(date);
   }
 
-  function graphLaneX(lane) {
-    return 10 + (Math.min(lane, 4) * 14);
-  }
-
-  function buildGraphLayouts(commits) {
-    const lanes = [];
-    return commits.map(commit => {
-      let lane = lanes.indexOf(commit.hash);
-      const startsHere = lane < 0;
-      if (lane < 0) {
-        lane = lanes.findIndex(value => !value);
-        if (lane < 0) lane = lanes.length;
-        lanes[lane] = commit.hash;
-      }
-
-      const before = lanes.slice();
-      const parents = commit.parentHashes || [];
-      const parentLanes = [];
-      if (parents.length === 0) {
-        lanes[lane] = null;
-      } else {
-        const existingFirstParentLane = lanes.findIndex((value, index) => index !== lane && value === parents[0]);
-        if (existingFirstParentLane >= 0) {
-          lanes[lane] = null;
-          parentLanes.push(existingFirstParentLane);
-        } else {
-          lanes[lane] = parents[0];
-          parentLanes.push(lane);
+  function renderHistoryGraph(commits, graphModel) {
+    const paths = [];
+    const nodes = [];
+    graphModel.rows.forEach((layout, index) => {
+      const commit = commits[index];
+      const top = layout.rowIndex * graphModel.rowHeight;
+      const middle = top + (graphModel.rowHeight / 2);
+      const bottom = top + graphModel.rowHeight;
+      const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
+      const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
+      for (let lane = 0; lane < continuingLaneCount; lane += 1) {
+        if (lane === layout.lane) continue;
+        if (layout.before[lane] && layout.after[lane] && layout.before[lane] === layout.after[lane]) {
+          const x = window.RepositoryHistoryGraph.laneX(lane);
+          paths.push(`<path class="graph-edge graph-lane-${lane % 8}" d="M ${x} ${top} V ${bottom}"/>`);
         }
-
-        parents.slice(1).forEach(parentHash => {
-          let parentLane = lanes.indexOf(parentHash);
-          if (parentLane < 0) {
-            parentLane = lanes.findIndex(value => !value);
-            if (parentLane < 0) parentLane = lanes.length;
-            lanes[parentLane] = parentHash;
-          }
-          parentLanes.push(parentLane);
-        });
       }
 
-      while (lanes.length && !lanes[lanes.length - 1]) lanes.pop();
-      return { lane, before, after: lanes.slice(), parentLanes, isMerge: parents.length > 1, startsHere };
+      if (!layout.startsHere) {
+        paths.push(`<path class="graph-edge graph-lane-${layout.lane % 8}" d="M ${currentX} ${top} V ${middle}"/>`);
+      }
+      layout.parentLanes.forEach((parentLane, parentIndex) => {
+        const parentX = window.RepositoryHistoryGraph.laneX(parentLane);
+        const colorLane = parentIndex === 0 ? layout.lane : parentLane;
+        paths.push(`<path class="graph-edge graph-lane-${colorLane % 8}" d="M ${currentX} ${middle} C ${currentX} ${middle + 9}, ${parentX} ${bottom - 9}, ${parentX} ${bottom}"/>`);
+      });
+
+      const decorated = (commit.refs || []).length > 0 || layout.isMerge;
+      nodes.push(decorated
+        ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
+        : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
     });
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}" aria-hidden="true">${paths.join('')}${nodes.join('')}</svg>`;
   }
 
   function renderGraphCell(commit, layout) {
-    const currentX = graphLaneX(layout.lane);
-    const paths = [];
-    const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
-    for (let lane = 0; lane < continuingLaneCount; lane += 1) {
-      if (lane === layout.lane) continue;
-      if (layout.before[lane] && layout.after[lane] && layout.before[lane] === layout.after[lane]) {
-        const x = graphLaneX(lane);
-        paths.push(`<path class="graph-edge graph-lane-${lane % 5}" d="M ${x} 0 V 32"/>`);
-      }
-    }
-
-    if (!layout.startsHere) {
-      paths.push(`<path class="graph-edge graph-lane-${layout.lane % 5}" d="M ${currentX} 0 V 16"/>`);
-    }
-    layout.parentLanes.forEach((parentLane, index) => {
-      const parentX = graphLaneX(parentLane);
-      const colorLane = index === 0 ? layout.lane : parentLane;
-      paths.push(`<path class="graph-edge graph-lane-${colorLane % 5}" d="M ${currentX} 16 C ${currentX} 25, ${parentX} 23, ${parentX} 32"/>`);
-    });
-
-    const decorated = (commit.refs || []).length > 0 || layout.isMerge;
-    const node = decorated
-      ? `<circle class="graph-node graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="2.3"/>`
-      : `<circle class="graph-node-core graph-lane-${layout.lane % 5}" cx="${currentX}" cy="16" r="4"/>`;
-    return `<span class="history-graph"><svg viewBox="0 0 76 32" aria-hidden="true">${paths.join('')}${node}</svg><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 7}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select ${escapeHtml(commit.shortHash)} for comparison"></button></span>`;
+    const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
+    return `<span class="history-graph-cell"><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 12}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button></span>`;
   }
 
   function renderHistoryPage(payload) {
@@ -706,12 +753,14 @@
     } else {
       loadedHistoryCommits = payload.commits || [];
     }
-    const graphLayouts = buildGraphLayouts(loadedHistoryCommits);
+    const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
+    const historyRegion = history.closest('.history-region');
+    if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = (commit.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
-      return `<div class="history-row" role="button" tabindex="0" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
-        ${renderGraphCell(commit, graphLayouts[index])}
-        <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<span class="history-subject">${escapeHtml(commit.subject)}</span></span>
+      return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
+        ${renderGraphCell(commit, graphModel.rows[index])}
+        <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<button class="history-subject" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">${escapeHtml(commit.subject)}</button></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
         <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>
         <code class="history-hash">${escapeHtml(commit.shortHash)}</code>
@@ -719,15 +768,25 @@
     }).join('');
 
     const append = payload.offset > 0;
-    history.innerHTML = rows || '<div class="dashboard-empty">No commits match this view.</div>';
+    history.innerHTML = rows
+      ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
+      : '<div class="dashboard-empty">No commits match this view.</div>';
     historyNextOffset = payload.nextOffset;
     if (loadMore) loadMore.hidden = historyNextOffset === null;
     updateCommitCompareUI();
 
     if (!append && payload.commits && payload.commits.length > 0) {
+      const visibleHashes = new Set(loadedHistoryCommits.map(commit => commit.hash));
+      commitCompareSelection = comparisonRepository === activeDashboardRepository
+        ? commitCompareSelection.filter(hash => visibleHashes.has(hash)).slice(0, 2)
+        : [];
       const preferred = payload.commits.find(commit => commit.hash === selectedDashboardCommit) || payload.commits[0];
-      const row = Array.from(document.querySelectorAll('.history-row')).find(item => item.dataset.commit === preferred.hash);
-      if (row) actions.selectHistoryCommit(row);
+      updateCommitCompareUI();
+      if (commitCompareSelection.length === 2) {
+        loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
+      } else {
+        loadParentCommitDetail(preferred.hash);
+      }
     }
   }
 
@@ -756,7 +815,7 @@
     if (branchList) {
       branchList.innerHTML = branches.map(branch => {
         const revision = branch.isRemote ? `origin/${branch.name}` : branch.name;
-        return `<button class="sidebar-ref-item" type="button" data-action="selectDashboardBranch" data-revision="${escapeHtml(revision)}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`;
+        return `<button class="sidebar-ref-item" type="button" data-action="selectDashboardBranch" data-revision="${escapeHtml(revision)}" aria-pressed="false"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`;
       }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
@@ -784,7 +843,9 @@
     const currentBranch = (repositoryRefs.branches || []).find(branch => branch.isCurrent);
     const selectedRevision = revision || (currentBranch ? currentBranch.name : '');
     document.querySelectorAll('#dashboardBranches .sidebar-ref-item').forEach(item => {
-      item.classList.toggle('selected', item.dataset.revision === selectedRevision);
+      const selected = item.dataset.revision === selectedRevision;
+      item.classList.toggle('selected', selected);
+      item.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
   }
 
@@ -965,14 +1026,6 @@
         if (e.target.closest('.row-actions') || e.target.closest('.row-checkbox')) return;
         actions.toggleBranches({ dataset: { repository: card.dataset.path } });
       }
-    }
-  });
-
-  document.body.addEventListener('keydown', function (event) {
-    const row = event.target.closest && event.target.closest('.history-row');
-    if (row && event.target === row && (event.key === 'Enter' || event.key === ' ')) {
-      event.preventDefault();
-      actions.selectHistoryCommit(row);
     }
   });
 
@@ -1550,6 +1603,8 @@
   const dashboardSearch = document.getElementById('dashboardSearch');
   if (dashboardSearch) {
     dashboardSearch.addEventListener('input', function () {
+      captureDashboardFilters();
+      saveState();
       if (historySearchTimer) clearTimeout(historySearchTimer);
       historySearchTimer = setTimeout(function () {
         requestDashboardHistory(0, false);
@@ -1578,6 +1633,8 @@
   if (dashboardBranchFilter) {
     dashboardBranchFilter.addEventListener('change', function () {
       updateSelectedBranchUI(dashboardBranchFilter.value);
+      captureDashboardFilters();
+      saveState();
       requestDashboardHistory(0, false);
     });
   }
@@ -1585,6 +1642,8 @@
   const dashboardIncludeRemotes = document.getElementById('dashboardIncludeRemotes');
   if (dashboardIncludeRemotes) {
     dashboardIncludeRemotes.addEventListener('change', function () {
+      captureDashboardFilters();
+      saveState();
       requestDashboardHistory(0, false);
     });
   }
