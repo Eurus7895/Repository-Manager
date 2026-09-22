@@ -274,26 +274,9 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
   `;
 }
 
-function renderDashboardSidebar(repositories: RepositoryInfo[]): string {
+function renderDashboardSidebar(): string {
   return `
     <aside class="dashboard-sidebar">
-      <label class="repository-filter">
-        <span>⌕</span>
-        <input id="dashboardRepositorySearch" type="text" placeholder="Filter repositories" aria-label="Filter repositories">
-        <kbd>/</kbd>
-      </label>
-      <section class="sidebar-section repositories-section">
-        <div class="sidebar-section-title"><span>Repositories</span><span>${repositories.length}</span></div>
-        <div class="dashboard-repository-list" id="dashboardRepositoryList">
-          ${repositories.map((repository, index) => `
-            <button class="dashboard-repository-item${index === 0 ? ' active' : ''}" type="button" data-action="selectDashboardRepository" data-repository="${escapeHtml(repository.path)}" data-name="${escapeHtml(repository.name)}">
-              <span class="repository-status-dot status-${repository.status}"></span>
-              <span class="repository-item-copy"><strong>${escapeHtml(repository.name)}${repository.isParentRepo ? '<span class="sidebar-badge">PARENT</span>' : ''}</strong><small>${escapeHtml(repository.currentBranch || `(detached) ${repository.currentCommit || ''}`)}</small></span>
-              <span class="repository-sync-state">${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}</span>
-            </button>
-          `).join('')}
-        </div>
-      </section>
       <section class="sidebar-section branches-section">
         <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
         <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
@@ -326,12 +309,12 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull" title="Pull" aria-label="Pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
           <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push" title="Push" aria-label="Push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
           <span class="command-separator" aria-hidden="true"></span>
-          <button class="dashboard-command dashboard-command-sync" data-action="syncAll" title="Sync versions" aria-label="Sync versions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"></path><path d="M20 4v5h-5"></path><path d="M20 12a8 8 0 0 1-14 5.3L4 15"></path><path d="M4 20v-5h5"></path></svg></button>
+          <button class="dashboard-command dashboard-command-sync" data-action="syncAll" title="Sync versions" aria-label="Sync versions">Sync</button>
           <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal" title="New Branch" aria-label="New Branch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
         </div>
       </header>
       <div class="dashboard-body">
-        ${renderDashboardSidebar(repositories)}
+        ${renderDashboardSidebar()}
         <main class="dashboard-main">
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>

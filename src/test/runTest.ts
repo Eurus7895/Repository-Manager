@@ -103,6 +103,12 @@ function testHistoryGraph(): void {
   assert.deepEqual(historyGraph.transitionCompareSelection(['a'], 'b', false), {
     selection: ['a', 'b'], action: 'compare'
   });
+  assert.deepEqual(historyGraph.transitionCompareSelection([], 'a', false), {
+    selection: ['a'], action: 'none'
+  });
+  assert.deepEqual(historyGraph.transitionCompareSelection(['a', 'b'], 'c', true), {
+    selection: ['c'], action: 'parent'
+  });
   assert.deepEqual(historyGraph.normalizeHistoryFilters(undefined), {
     branch: '', includeRemotes: true, search: ''
   });

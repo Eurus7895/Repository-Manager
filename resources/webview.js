@@ -28,6 +28,7 @@
   let loadedHistoryCommits = [];
   let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
   let pendingBranchCheckout = null;
+  let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const runningToolbarOperations = new Set();
@@ -90,11 +91,6 @@
     refresh: () => runToolbarOperation('refresh', 'refresh'),
     initAll: () => postMessage('initSubmodules'),
     updateAll: () => postMessage('updateSubmodules'),
-
-    selectDashboardRepository: (el) => {
-      const repository = el.dataset.repository;
-      if (repository) activateDashboardRepository(repository);
-    },
 
     pullActiveRepository: () => runToolbarOperation('pull', 'pullChanges'),
     pushActiveRepository: () => runToolbarOperation('push', 'pushChanges'),
@@ -543,7 +539,7 @@
       row.classList.toggle('compare-base', marker === 'B');
       row.classList.toggle('compare-target', marker === 'T');
     });
-    document.querySelectorAll('.graph-node-button').forEach(node => {
+    document.querySelectorAll('.graph-node-control').forEach(node => {
       const marker = commitCompareSelection[0] === node.dataset.commit
         ? 'B'
         : commitCompareSelection[1] === node.dataset.commit
@@ -555,7 +551,10 @@
         ? `${marker === 'B' ? 'Base' : 'Target'} commit ${shortRevision(node.dataset.commit)}. Press to remove from comparison.`
         : `Select commit ${shortRevision(node.dataset.commit)} for comparison.`;
       node.setAttribute('aria-label', accessibleLabel);
-      node.title = accessibleLabel;
+      const markerLabel = node.querySelector('.graph-node-marker');
+      const title = node.querySelector('title');
+      if (markerLabel) markerLabel.textContent = marker;
+      if (title) title.textContent = accessibleLabel;
     });
     const status = document.getElementById('commitCompareStatus');
     if (!status) return;
@@ -599,16 +598,20 @@
 
   function toggleCommitCompareNode(commitHash) {
     if (!commitHash) return;
-    const comparisonWasActive = commitCompareSelection.length === 2;
-    const transition = window.RepositoryHistoryGraph.transitionCompareSelection(commitCompareSelection, commitHash, comparisonWasActive);
+    const transition = window.RepositoryHistoryGraph.transitionCompareSelection(
+      commitCompareSelection,
+      commitHash,
+      Boolean(comparisonSource)
+    );
     commitCompareSelection = transition.selection;
     comparisonRepository = activeDashboardRepository;
     updateCommitCompareUI();
     saveState();
     if (transition.action === 'compare') {
       loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
-    } else if (transition.action === 'parent' && selectedDashboardCommit) {
-      loadParentCommitDetail(selectedDashboardCommit);
+    } else if (transition.action === 'parent') {
+      const remainingCommit = commitCompareSelection[0] || selectedDashboardCommit;
+      if (remainingCommit) loadParentCommitDetail(remainingCommit);
     }
   }
 
@@ -703,10 +706,6 @@
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
-    document.querySelectorAll('.dashboard-repository-item').forEach(item => {
-      item.classList.toggle('active', item.dataset.repository === repositoryPath);
-    });
-
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -726,16 +725,33 @@
     postMessage('getRepositoryRefs', { repositoryPath });
   }
 
-  function requestDashboardHistory(offset, append) {
+  function captureHistoryViewport(history) {
+    if (!history) return null;
+    const scrollTop = history.scrollTop;
+    const rows = Array.from(history.querySelectorAll('.history-row'));
+    const anchor = rows.find(row => row.offsetTop + row.offsetHeight > scrollTop);
+    return {
+      commit: anchor ? anchor.dataset.commit : null,
+      offset: anchor ? anchor.offsetTop - scrollTop : 0,
+      scrollTop
+    };
+  }
+
+  function requestDashboardHistory(offset, append, options) {
     const search = document.getElementById('dashboardSearch');
     const includeRemotes = document.getElementById('dashboardIncludeRemotes');
     const history = document.getElementById('dashboardHistory');
-    if (!append) loadedHistoryCommits = [];
+    const preserveViewport = Boolean(options && options.preserveViewport && !append);
+    const viewport = preserveViewport ? captureHistoryViewport(history) : null;
+    if (!append && !preserveViewport) loadedHistoryCommits = [];
     captureDashboardFilters();
     const filters = getDashboardFilters(activeDashboardRepository);
     saveState();
-    if (!append && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    if (!append && !preserveViewport && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
     if (!append) historyRequestId += 1;
+    pendingHistoryViewport = viewport
+      ? Object.assign({}, viewport, { requestId: historyRequestId, repositoryPath: activeDashboardRepository })
+      : null;
     postMessage('getHistory', {
       repositoryPath: activeDashboardRepository,
       limit: 100,
@@ -792,9 +808,9 @@
       nodes.push(decorated
         ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
         : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
-      controls.push(`<button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 12}px;top:${middle - 12}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button>`);
+      controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}" aria-hidden="true">${paths.join('')}${nodes.join('')}</svg><div class="history-graph-controls" style="width:${graphModel.width}px;height:${graphModel.height}px">${controls.join('')}</div>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
   }
 
   function renderGraphCell() {
@@ -831,6 +847,14 @@
     history.innerHTML = rows
       ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
       : '<div class="dashboard-empty">No commits match this view.</div>';
+    const viewport = pendingHistoryViewport;
+    if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
+      const anchor = viewport.commit
+        ? Array.from(history.querySelectorAll('.history-row')).find(row => row.dataset.commit === viewport.commit)
+        : null;
+      history.scrollTop = anchor ? Math.max(0, anchor.offsetTop - viewport.offset) : 0;
+      pendingHistoryViewport = null;
+    }
     historyNextOffset = payload.nextOffset;
     if (loadMore) loadMore.hidden = historyNextOffset === null;
     updateCommitCompareUI();
@@ -1056,6 +1080,13 @@
     requestBranchCheckout(branchRef.dataset.branch);
   });
 
+  document.body.addEventListener('keydown', function (e) {
+    const graphNode = e.target.closest && e.target.closest('.graph-node-control');
+    if (!graphNode || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    toggleCommitCompareNode(graphNode.dataset.commit);
+  });
+
   // Handle workspace folder switching
   const workspaceFolderSelect = document.getElementById('workspaceFolderSelect');
   if (workspaceFolderSelect) {
@@ -1260,7 +1291,7 @@
             activeComparisonTarget = null;
             comparisonSource = null;
             saveState();
-            requestDashboardHistory(0, false);
+            requestDashboardHistory(0, false, { preserveViewport: true });
             postMessage('getRepositoryRefs', { repositoryPath: activeDashboardRepository });
           }
           break;
@@ -1352,25 +1383,16 @@
 
   function updateRepositoryRows(repositories) {
     repositories.forEach(repository => {
-      const dashboardItem = Array.from(document.querySelectorAll('.dashboard-repository-item')).find(item => item.dataset.repository === repository.path);
-      if (dashboardItem) {
-        const dot = dashboardItem.querySelector('.repository-status-dot');
-        const branch = dashboardItem.querySelector('.repository-item-copy small');
-        const sync = dashboardItem.querySelector('.repository-sync-state');
-        if (dot) dot.className = 'repository-status-dot status-' + repository.status;
-        if (branch) branch.textContent = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`;
-        if (sync) sync.textContent = `${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}`;
-        if (repository.path === activeDashboardRepository) {
-          const behindCount = document.getElementById('dashboardBehindCount');
-          const aheadCount = document.getElementById('dashboardAheadCount');
-          if (behindCount) {
-            behindCount.textContent = repository.behind > 0 ? String(repository.behind) : '';
-            behindCount.hidden = repository.behind <= 0;
-          }
-          if (aheadCount) {
-            aheadCount.textContent = repository.ahead > 0 ? String(repository.ahead) : '';
-            aheadCount.hidden = repository.ahead <= 0;
-          }
+      if (repository.path === activeDashboardRepository) {
+        const behindCount = document.getElementById('dashboardBehindCount');
+        const aheadCount = document.getElementById('dashboardAheadCount');
+        if (behindCount) {
+          behindCount.textContent = repository.behind > 0 ? String(repository.behind) : '';
+          behindCount.hidden = repository.behind <= 0;
+        }
+        if (aheadCount) {
+          aheadCount.textContent = repository.ahead > 0 ? String(repository.ahead) : '';
+          aheadCount.hidden = repository.ahead <= 0;
         }
       }
       const row = document.querySelector(`.repository-card[data-path="${repository.path}"]`);
@@ -1662,23 +1684,6 @@
       historySearchTimer = setTimeout(function () {
         requestDashboardHistory(0, false);
       }, 250);
-    });
-  }
-
-  const dashboardRepositorySearch = document.getElementById('dashboardRepositorySearch');
-  if (dashboardRepositorySearch) {
-    dashboardRepositorySearch.addEventListener('input', function () {
-      const query = dashboardRepositorySearch.value.trim().toLowerCase();
-      document.querySelectorAll('.dashboard-repository-item').forEach(function (item) {
-        const searchable = `${item.dataset.name || ''} ${item.dataset.repository || ''} ${item.textContent || ''}`.toLowerCase();
-        item.hidden = Boolean(query) && !searchable.includes(query);
-      });
-    });
-    document.addEventListener('keydown', function (event) {
-      if (event.key === '/' && document.activeElement && document.activeElement.tagName !== 'INPUT') {
-        event.preventDefault();
-        dashboardRepositorySearch.focus();
-      }
     });
   }
 

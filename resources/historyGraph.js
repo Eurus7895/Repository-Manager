@@ -85,7 +85,17 @@
   }
 
   function transitionCompareSelection(selection, commitHash, comparisonActive) {
-    const nextSelection = toggleCompareSelection(selection, commitHash);
+    const current = Array.isArray(selection) ? selection.filter(Boolean).slice(0, 2) : [];
+    const selectedIndex = current.indexOf(commitHash);
+    let nextSelection;
+    if (selectedIndex >= 0) {
+      nextSelection = current.slice();
+      nextSelection.splice(selectedIndex, 1);
+    } else if (current.length < 2) {
+      nextSelection = current.concat(commitHash);
+    } else {
+      nextSelection = [commitHash];
+    }
     return {
       selection: nextSelection,
       action: nextSelection.length === 2 ? 'compare' : comparisonActive ? 'parent' : 'none'
