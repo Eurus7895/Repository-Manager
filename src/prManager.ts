@@ -2,6 +2,8 @@
  * Pull Request Manager for GitHub integration
  */
 
+/* eslint-disable @typescript-eslint/naming-convention -- GitHub payload and HTTP header names are external contracts. */
+
 import * as vscode from 'vscode';
 import * as https from 'https';
 import { GitOperations } from './gitOperations';
@@ -30,7 +32,7 @@ export class PRManager {
   }
 
   private getToken(): string | undefined {
-    const config = vscode.workspace.getConfiguration('submoduleManager');
+    const config = vscode.workspace.getConfiguration('repositoryManager');
     const token = config.get<string>('githubToken');
     return token && token.length > 0 ? token : undefined;
   }
@@ -42,7 +44,7 @@ export class PRManager {
   ): Promise<T> {
     const token = this.getToken();
     if (!token) {
-      throw new Error('GitHub token not configured. Please set submoduleManager.githubToken in settings.');
+      throw new Error('GitHub token not configured. Please set repositoryManager.githubToken in settings.');
     }
 
     return new Promise((resolve, reject) => {
@@ -53,7 +55,7 @@ export class PRManager {
         method: method,
         headers: {
           'Authorization': `token ${token}`,
-          'User-Agent': 'VSCode-Submodule-Manager',
+          'User-Agent': 'VSCode-Repository-Manager',
           'Accept': 'application/vnd.github.v3+json',
           'Content-Type': 'application/json'
         }
@@ -227,7 +229,7 @@ export class PRManager {
     if (action === 'Open Settings') {
       await vscode.commands.executeCommand(
         'workbench.action.openSettings',
-        'submoduleManager.githubToken'
+        'repositoryManager.githubToken'
       );
       return true;
     }

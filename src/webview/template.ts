@@ -2,13 +2,14 @@
  * HTML template for the webview panel
  */
 
-import { SubmoduleInfo } from '../types';
+import { RepositoryInfo } from '../types';
 import * as vscode from 'vscode';
 
 /**
  * URIs for external webview resources
  */
 export interface WebviewResourceUris {
+  graphScriptUri: vscode.Uri;
   scriptUri: vscode.Uri;
   styleUri: vscode.Uri;
 }
@@ -22,187 +23,84 @@ export interface WorkspaceFolderInfo {
   isCurrent: boolean;
 }
 
-/**
- * Get status icon for submodule status
- */
-function getStatusIcon(status: string): string {
-  const icons: Record<string, string> = {
-    'clean': '✓',
-    'modified': '●',
-    'uninitialized': '○',
-    'detached': '◎',
-    'conflict': '⚠',
-    'unknown': '?'
-  };
-  return icons[status] || '?';
+function escapeHtml(value: string | undefined): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
-/**
- * Get status tooltip for submodule status
- */
-function getStatusTooltip(status: string): string {
-  const tooltips: Record<string, string> = {
-    'clean': 'Clean: On a branch with no uncommitted changes',
-    'modified': 'Modified: Has uncommitted changes inside the submodule',
-    'uninitialized': 'Uninitialized: Submodule has not been cloned yet. Run Init All to initialize.',
-    'detached': 'Detached HEAD: Checked out to a specific commit, not on any branch. This is normal when synced to the parent repo\'s recorded commit.',
-    'conflict': 'Conflict: Merge conflict detected',
-    'unknown': 'Unknown: Could not determine status'
-  };
-  return tooltips[status] || 'Unknown status';
-}
-
-/**
- * Render a single submodule row
- */
-export function renderSubmoduleRow(submodule: SubmoduleInfo, index: number): string {
-  const statusClass = `status-${submodule.status}`;
-  const statusIcon = getStatusIcon(submodule.status);
-  const statusTooltip = getStatusTooltip(submodule.status);
-  const branchDisplay = submodule.currentBranch || '(detached)';
-  const branchTooltip = submodule.currentBranch
-    ? `Currently on branch: ${submodule.currentBranch}`
-    : `Detached HEAD: Not on any branch, checked out to commit ${submodule.currentCommit}`;
-
-  const isParent = submodule.isParentRepo === true;
-  const cardClass = isParent ? 'submodule-card parent-repo' : 'submodule-card';
-  const parentBadge = isParent ? '<span class="parent-badge">PARENT</span>' : '';
-  const pathDisplay = isParent ? '(root)' : submodule.path;
-
-  return `
-    <div class="${cardClass}" data-name="${submodule.name}" data-path="${submodule.path}" style="animation-delay: ${index * 0.02}s">
-      <div class="submodule-row">
-        <input type="checkbox" class="row-checkbox" data-action="toggleSelection" data-submodule="${submodule.path}">
-        <span class="row-name" title="${submodule.name}">${submodule.name}${parentBadge}</span>
-        <span class="row-path" title="${submodule.path}">${pathDisplay}</span>
-        <span class="row-branch branch" title="${branchTooltip}">${branchDisplay}</span>
-        <span class="row-commit commit">${submodule.currentCommit || 'N/A'}</span>
-        <span class="row-status ${statusClass}" title="${statusTooltip}">${statusIcon} ${submodule.status.toUpperCase()}</span>
-        <div class="row-sync">
-          ${submodule.ahead > 0 ? `<span class="ahead">↑${submodule.ahead}</span>` : ''}
-          ${submodule.behind > 0 ? `<span class="behind">↓${submodule.behind}</span>` : ''}
-        </div>
-        <span class="rebase-badge rebase-indicator" style="display: none;">REBASING</span>
-        <div class="row-actions">
-          ${!isParent ? `<button class="btn btn-sm" data-action="openCommitModal" data-submodule="${submodule.path}" title="Checkout specific commit">⎔</button>` : ''}
-          <button class="btn btn-sm" data-action="pullChanges" data-submodule="${submodule.path}" title="Pull changes">↓</button>
-          <button class="btn btn-sm" data-action="pushChanges" data-submodule="${submodule.path}" title="Push changes">↑</button>
-          <button class="btn btn-sm" data-action="openSubmodule" data-submodule="${submodule.path}" title="Open in explorer">📂</button>
-          ${submodule.hasChanges && !isParent ? `<button class="btn btn-sm" data-action="stageSubmodule" data-submodule="${submodule.path}" title="Stage submodule pointer">+</button>` : ''}
-        </div>
-      </div>
-      <div class="branches-panel" id="branches-${submodule.path.replace(/[/.]/g, '-')}" style="display: none;">
-        <div class="branches-loading">Loading branches...</div>
-      </div>
-    </div>
-  `;
-}
-
-/**
- * Render the stats section
- */
-function renderStats(submodules: SubmoduleInfo[]): string {
-  // Filter out parent repo for stats calculation
-  const submodulesOnly = submodules.filter(s => !s.isParentRepo);
-
-  return `
-    <div class="stats">
-      <div class="stat-card" title="Total number of submodules configured in this repository">
-        <div class="stat-label">Total Submodules</div>
-        <div class="stat-value">${submodulesOnly.length}</div>
-        <div class="stat-desc">All configured submodules</div>
-      </div>
-      <div class="stat-card" title="Submodules on a branch with no uncommitted changes">
-        <div class="stat-label">Clean</div>
-        <div class="stat-value success">${submodulesOnly.filter(s => s.status === 'clean').length}</div>
-        <div class="stat-desc">On branch, no changes</div>
-      </div>
-      <div class="stat-card" title="Submodules with uncommitted changes (staged or unstaged files)">
-        <div class="stat-label">Modified</div>
-        <div class="stat-value warning">${submodulesOnly.filter(s => s.status === 'modified').length}</div>
-        <div class="stat-desc">Has uncommitted changes</div>
-      </div>
-      <div class="stat-card" title="Submodules that are detached (not on a branch), uninitialized, or have conflicts">
-        <div class="stat-label">Needs Attention</div>
-        <div class="stat-value error">${submodulesOnly.filter(s => ['uninitialized', 'conflict', 'detached'].includes(s.status)).length}</div>
-        <div class="stat-desc">Detached, uninitialized, or conflict</div>
-      </div>
-    </div>
-  `;
-}
-
-/**
- * Render the submodule list or empty state
- */
-function renderSubmoduleList(submodules: SubmoduleInfo[]): string {
-  if (submodules.length > 0) {
-    return `
-      <div class="submodule-list" id="submoduleList">
-        ${submodules.map((s, i) => renderSubmoduleRow(s, i)).join('')}
-      </div>
-    `;
-  }
-  return `
-    <div class="empty-state">
-      <h2>No Submodules Found</h2>
-      <p>This workspace doesn't have any Git submodules yet.</p>
-      <button class="btn btn-primary" data-action="initAll">Initialize Submodules</button>
-    </div>
-  `;
+function renderRepositoryMark(className: string = 'repository-mark'): string {
+  return `<svg class="${className}" viewBox="0 0 128 128" fill="none" aria-hidden="true">
+    <rect width="128" height="128" rx="28" fill="#12161C"></rect>
+    <rect x="1.5" y="1.5" width="125" height="125" rx="26.5" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"></rect>
+    <path d="M20 99H108" stroke="#3CC7A6" stroke-width="3" stroke-linecap="round" stroke-opacity="0.55"></path>
+    <path d="M64 42V87M64 52C64 66 34 60 34 74V87M64 52C64 66 94 60 94 74V87" stroke="#E8ECF1" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
+    <circle cx="64" cy="31" r="12" fill="#3CC7A6"></circle>
+    <rect x="24" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+    <rect x="54" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+    <rect x="84" y="89" width="20" height="20" rx="5.5" fill="#12161C" stroke="#E8ECF1" stroke-width="6"></rect>
+  </svg>`;
 }
 
 /**
  * Render the modals
  */
-function renderModals(submodules: SubmoduleInfo[]): string {
+function renderModals(repositories: RepositoryInfo[]): string {
   return `
     <!-- Create Branch Modal -->
     <div class="modal-overlay" id="createBranchModal">
       <div class="modal">
         <div class="modal-header">
-          <span class="modal-title">Create Branch</span>
+          <div class="modal-heading"><span class="modal-title">Branch across repositories</span><span>One branch name, created from the same base in every selected repository.</span></div>
           <button class="modal-close" data-action="closeModal" data-modal="createBranchModal">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label class="form-label">Select Repositories</label>
-            <div id="submoduleCheckboxes" style="max-height: 200px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px;">
-              ${submodules.map(s => `
-                <label style="display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer;">
-                  <input type="checkbox" class="branch-submodule" value="${s.path}" checked>
-                  <span>${s.name}${s.isParentRepo ? ' <span class="parent-badge">PARENT</span>' : ''}</span>
+            <label class="form-label">Repositories</label>
+            <div id="repositoryCheckboxes" class="branch-repository-list">
+              ${repositories.map(repository => `
+                <label class="branch-repository-row">
+                  <input type="checkbox" class="branch-repository" value="${escapeHtml(repository.path)}" ${repository.status === 'conflict' ? 'disabled' : 'checked'}>
+                  <strong>${escapeHtml(repository.name)}</strong>
+                  <code>${escapeHtml(repository.currentBranch || `(detached) ${repository.currentCommit || ''}`)}</code>
+                  <span class="repository-modal-status status-${repository.status}">${repository.isParentRepo ? 'parent' : repository.status}</span>
                 </label>
               `).join('')}
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Base Branch</label>
-            <div class="branch-dropdown" id="baseBranchDropdown">
-              <input type="text" class="branch-dropdown-input" id="baseBranchInput" placeholder="Loading branches..." readonly>
-              <span class="branch-dropdown-arrow">▼</span>
-              <div class="branch-dropdown-list" id="baseBranchList">
-                <!-- Populated dynamically -->
+          <div class="branch-form-grid branch-form-grid-equal">
+            <div class="form-group">
+              <label class="form-label">Base branch</label>
+              <div class="branch-dropdown" id="baseBranchDropdown">
+                <input type="text" class="branch-dropdown-input" id="baseBranchInput" placeholder="Loading branches..." readonly>
+                <span class="branch-dropdown-arrow">▼</span>
+                <div class="branch-dropdown-list" id="baseBranchList"><!-- Populated dynamically --></div>
               </div>
+              <input type="hidden" id="baseBranch" value="">
+              <div id="baseBranchHint" class="form-hint"></div>
             </div>
-            <input type="hidden" id="baseBranch" value="">
-            <div id="baseBranchHint" style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;"></div>
+            <div class="form-group">
+              <label class="form-label">Type</label>
+              <select class="form-select" id="branchPrefix">
+                <option value="bugfix">bugfix</option>
+                <option value="release">release</option>
+                <option value="dev">dev</option>
+              </select>
+              <div id="prefixRuleHint" class="form-hint"></div>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Branch Prefix</label>
-            <select class="form-select" id="branchPrefix">
-              <option value="bugfix">bugfix/</option>
-              <option value="release">release/</option>
-              <option value="dev">dev/</option>
-            </select>
-            <div id="prefixRuleHint" style="font-size: 11px; color: var(--info); margin-top: 4px;"></div>
-          </div>
-          <div class="form-group" id="ticketIdGroup">
-            <label class="form-label">Ticket ID (optional)</label>
-            <input type="text" class="form-input" id="ticketId" placeholder="e.g., ECPT-15474">
-          </div>
-          <div class="form-group" id="taskTitleGroup">
-            <label class="form-label">Task Title</label>
-            <input type="text" class="form-input" id="taskTitle" placeholder="e.g., Design and Implement XML Parser Abstraction Class">
+          <div class="branch-form-grid">
+            <div class="form-group" id="ticketIdGroup">
+              <label class="form-label">Ticket ID <span>optional</span></label>
+              <input type="text" class="form-input" id="ticketId" placeholder="e.g., ECPT-15474">
+            </div>
+            <div class="form-group" id="taskTitleGroup">
+              <label class="form-label">Task title</label>
+              <input type="text" class="form-input" id="taskTitle" placeholder="e.g., CAN timeout handling">
+            </div>
           </div>
           <div class="form-group" id="releaseInfoGroup" style="display: none;">
             <label class="form-label">Product Name</label>
@@ -215,8 +113,8 @@ function renderModals(submodules: SubmoduleInfo[]): string {
             <input type="text" class="form-input" id="devBranchName" placeholder="e.g., sprint-42 or v2-refactor">
           </div>
           <div class="form-group">
-            <label class="form-label">Generated Branch Name</label>
-            <div id="branchPreview" style="padding: 10px 12px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; font-family: var(--vscode-editor-font-family); word-break: break-all; min-height: 20px; color: var(--text-secondary);">
+            <label class="form-label branch-name-label">Branch name</label>
+            <div id="branchPreview" class="branch-name-preview">
               bugfix/your-branch-name
             </div>
             <input type="hidden" id="branchName">
@@ -224,7 +122,7 @@ function renderModals(submodules: SubmoduleInfo[]): string {
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="createBranchModal">Cancel</button>
-          <button class="btn btn-primary" data-action="createBranch">Create Branch</button>
+          <button class="btn btn-primary" data-action="createBranch">Review &amp; create</button>
         </div>
       </div>
     </div>
@@ -270,7 +168,7 @@ function renderModals(submodules: SubmoduleInfo[]): string {
               <option value="">Loading branches...</option>
             </select>
           </div>
-          <input type="hidden" id="checkoutSubmodule">
+          <input type="hidden" id="checkoutRepository">
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="checkoutModal">Cancel</button>
@@ -300,12 +198,37 @@ function renderModals(submodules: SubmoduleInfo[]): string {
               <option value="">Loading commits...</option>
             </select>
           </div>
-          <input type="hidden" id="commitSubmodule">
+          <input type="hidden" id="commitRepository">
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="commitModal">Cancel</button>
           <button class="btn" data-action="useRecorded">Use Recorded</button>
           <button class="btn btn-primary" data-action="checkoutCommit">Checkout</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Compare Branches Modal -->
+    <div class="modal-overlay" id="branchCompareModal">
+      <div class="modal branch-compare-modal">
+        <div class="modal-header">
+          <div class="modal-heading"><span class="modal-title">Compare branches</span><span>Show the changes required to move from the base branch to the target branch.</span></div>
+          <button class="modal-close" data-action="closeModal" data-modal="branchCompareModal">&times;</button>
+        </div>
+        <div class="modal-body branch-compare-fields">
+          <div class="form-group">
+            <label class="form-label" for="compareBaseBranch">Base branch</label>
+            <select class="form-select" id="compareBaseBranch"><option value="">Loading branches...</option></select>
+          </div>
+          <span class="compare-direction" aria-hidden="true">→</span>
+          <div class="form-group">
+            <label class="form-label" for="compareTargetBranch">Target branch</label>
+            <select class="form-select" id="compareTargetBranch"><option value="">Loading branches...</option></select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" data-action="closeModal" data-modal="branchCompareModal">Cancel</button>
+          <button class="btn btn-primary" data-action="compareBranches">Compare branches</button>
         </div>
       </div>
     </div>
@@ -328,12 +251,11 @@ function getNonce(): string {
  * Render workspace folder selector (only shown if multiple folders exist)
  */
 function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
-  if (folders.length <= 1) {
+  if (folders.length === 0) {
     return '';
   }
 
   const currentFolder = folders.find(f => f.isCurrent);
-  const currentName = currentFolder ? currentFolder.name : 'Unknown';
 
   return `
     <div class="workspace-folder-bar">
@@ -352,10 +274,113 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
   `;
 }
 
+function renderDashboardSidebar(repositories: RepositoryInfo[]): string {
+  return `
+    <aside class="dashboard-sidebar">
+      <label class="repository-filter">
+        <span>⌕</span>
+        <input id="dashboardRepositorySearch" type="text" placeholder="Filter repositories" aria-label="Filter repositories">
+        <kbd>/</kbd>
+      </label>
+      <section class="sidebar-section repositories-section">
+        <div class="sidebar-section-title"><span>Repositories</span><span>${repositories.length}</span></div>
+        <div class="dashboard-repository-list" id="dashboardRepositoryList">
+          ${repositories.map((repository, index) => `
+            <button class="dashboard-repository-item${index === 0 ? ' active' : ''}" type="button" data-action="selectDashboardRepository" data-repository="${escapeHtml(repository.path)}" data-name="${escapeHtml(repository.name)}">
+              <span class="repository-status-dot status-${repository.status}"></span>
+              <span class="repository-item-copy"><strong>${escapeHtml(repository.name)}${repository.isParentRepo ? '<span class="sidebar-badge">PARENT</span>' : ''}</strong><small>${escapeHtml(repository.currentBranch || `(detached) ${repository.currentCommit || ''}`)}</small></span>
+              <span class="repository-sync-state">${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}</span>
+            </button>
+          `).join('')}
+        </div>
+      </section>
+      <section class="sidebar-section branches-section">
+        <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
+        <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
+      </section>
+      <footer class="sidebar-reference-summary">
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="tags"><span>Tags</span><span id="tagRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardTags" data-reference-panel="tags" hidden></div>
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="remotes"><span>Remotes</span><span id="remoteRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardRemotes" data-reference-panel="remotes" hidden></div>
+        <button class="reference-summary-row" type="button" data-action="toggleReferenceSection" data-section="stashes"><span>Stashes</span><span id="stashRefCount">—</span><i>›</i></button>
+        <div class="reference-detail-list" id="dashboardStashes" data-reference-panel="stashes" hidden></div>
+      </footer>
+    </aside>
+  `;
+}
+
+function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: WorkspaceFolderInfo[]): string {
+  const activeRepository = repositories[0];
+  return `
+    <div class="dashboard-shell">
+      <header class="dashboard-command-bar">
+        <div class="dashboard-brand">
+          ${renderRepositoryMark()}
+          <strong>Repository Manager</strong>
+        </div>
+        ${renderWorkspaceFolderSelector(workspaceFolders)}
+        <div class="command-context" id="dashboardCommandContext">
+          <span class="context-path">${escapeHtml(activeRepository?.path === '.' ? activeRepository?.name : activeRepository?.path || 'No repository')}</span>
+          <span class="context-branch">⑂ ${escapeHtml(activeRepository?.currentBranch || '(detached)')}</span>
+        </div>
+        <div class="command-cluster command-cluster-right">
+          <button class="dashboard-icon-command" data-action="refresh" data-operation="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
+          <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg><span class="command-label">Fetch</span></button>
+          <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><span class="command-label">Pull</span><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
+          <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><span class="command-label">Push</span><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
+          <span class="command-separator" aria-hidden="true"></span>
+          <button class="dashboard-command dashboard-command-sync" data-action="syncAll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"></path><path d="M20 4v5h-5"></path><path d="M20 12a8 8 0 0 1-14 5.3L4 15"></path><path d="M4 20v-5h5"></path></svg>Sync versions</button>
+          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg><span class="command-label">New Branch</span></button>
+        </div>
+      </header>
+      <div class="dashboard-body">
+        ${renderDashboardSidebar(repositories)}
+        <main class="dashboard-main">
+          <section class="workspace-alignment" id="workspaceAlignment">
+            <div class="alignment-heading"><span>Workspace alignment</span><strong id="workspaceAlignmentSummary">Checking repositories…</strong></div>
+            <div class="alignment-cards" id="workspaceAlignmentCards"></div>
+            <button class="alignment-action" id="workspaceAlignmentAction" type="button" data-action="openCreateBranchModal" hidden>Align repositories</button>
+          </section>
+          <div class="history-controls">
+            <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
+            <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
+            <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
+            <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
+            <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
+          </div>
+          <section class="history-region">
+            <div class="history-table-header"><span class="graph-column">Graph</span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
+            <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
+            <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
+          </section>
+          <div class="dashboard-splitter dashboard-splitter-horizontal" id="historyDiffSplitter" role="separator" aria-label="Resize history and diff panels" aria-orientation="horizontal" tabindex="0"></div>
+          <section class="commit-detail-region">
+            <div class="commit-summary" id="dashboardCommitSummary">
+              <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
+            </div>
+            <div class="commit-content">
+              <div class="changed-files-panel">
+                <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>
+                <div class="changed-files-list" id="dashboardChangedFiles"></div>
+              </div>
+              <div class="dashboard-splitter dashboard-splitter-vertical" id="filesDiffSplitter" role="separator" aria-label="Resize changed files and diff panels" aria-orientation="vertical" tabindex="0"></div>
+              <div class="diff-panel">
+                <div class="panel-title"><span id="diffFileName">Diff</span><span id="diffTruncated"></span></div>
+                <pre class="diff-viewer" id="dashboardDiff"><span class="diff-placeholder">Select a changed file to load its patch.</span></pre>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  `;
+}
+
 /**
  * Generate the full HTML for the webview
  */
-export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: WebviewResourceUris, workspaceFolders: WorkspaceFolderInfo[] = []): string {
+export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: WebviewResourceUris, workspaceFolders: WorkspaceFolderInfo[] = []): string {
   const nonce = getNonce();
 
   return `<!DOCTYPE html>
@@ -368,32 +393,7 @@ export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: Web
   <link rel="stylesheet" href="${resourceUris.styleUri}">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Repository Manager</h1>
-      <div class="header-actions">
-        <button class="btn" data-action="refresh">↻ Refresh</button>
-        <button class="btn btn-primary" data-action="openCreateBranchModal">+ Create Branch</button>
-      </div>
-    </header>
-
-    ${renderWorkspaceFolderSelector(workspaceFolders)}
-
-    ${renderStats(submodules)}
-
-    <div class="toolbar">
-      <div class="search-box">
-        <input type="text" id="searchInput" placeholder="Search submodules...">
-      </div>
-      <button class="btn" data-action="selectAll">☑ Select All</button>
-      <button class="btn" data-action="deselectAll">☐ Deselect All</button>
-      <button class="btn" data-action="initAll">↓ Init All</button>
-      <button class="btn" data-action="updateAll">⟳ Update All</button>
-      <button class="btn" data-action="syncAll">⟲ Sync Versions</button>
-    </div>
-
-    ${renderSubmoduleList(submodules)}
-  </div>
+  ${renderDashboard(repositories, workspaceFolders)}
 
   <div class="selection-bar" id="selectionBar">
     <span class="selection-count"><span id="selectedCount">0</span> selected</span>
@@ -402,9 +402,10 @@ export function getHtmlForWebview(submodules: SubmoduleInfo[], resourceUris: Web
     <button class="btn btn-sm" data-action="deselectAll">Cancel</button>
   </div>
 
-  ${renderModals(submodules)}
+  ${renderModals(repositories)}
 
-  <script nonce="${nonce}">window.__initialSubmodules = ${JSON.stringify(submodules)};</script>
+  <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
+  <script nonce="${nonce}" src="${resourceUris.graphScriptUri}"></script>
   <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
 </body>
 </html>`;

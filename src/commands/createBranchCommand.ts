@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode';
 import { GitOperations } from '../gitOperations';
-import { SubmoduleTreeProvider } from '../submoduleTreeProvider';
+import { RepositoryTreeProvider } from '../repositoryTreeProvider';
 
 // Branch hierarchy rules
 const branchHierarchy: Record<string, { prefixes: string[]; hint: string }> = {
@@ -20,10 +20,18 @@ const branchHierarchy: Record<string, { prefixes: string[]; hint: string }> = {
  */
 function getBaseBranchType(branch: string): string {
   const lower = branch.toLowerCase();
-  if (lower === 'main' || lower === 'master') return 'main';
-  if (lower === 'dev' || lower.startsWith('dev/') || lower.startsWith('dev-')) return 'dev';
-  if (lower.startsWith('feature/') || lower.startsWith('feature-')) return 'feature';
-  if (lower === 'task' || lower.startsWith('task/') || lower.startsWith('task-')) return 'task';
+  if (lower === 'main' || lower === 'master') {
+    return 'main';
+  }
+  if (lower === 'dev' || lower.startsWith('dev/') || lower.startsWith('dev-')) {
+    return 'dev';
+  }
+  if (lower.startsWith('feature/') || lower.startsWith('feature-')) {
+    return 'feature';
+  }
+  if (lower === 'task' || lower.startsWith('task/') || lower.startsWith('task-')) {
+    return 'task';
+  }
   return 'unknown';
 }
 
@@ -44,12 +52,12 @@ function toKebabCase(str: string): string {
 export function registerCreateBranchCommand(
   context: vscode.ExtensionContext,
   gitOps: GitOperations,
-  submoduleTreeProvider: SubmoduleTreeProvider
+  repositoryTreeProvider: RepositoryTreeProvider
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.createBranch', async () => {
+    vscode.commands.registerCommand('repositoryManager.createBranch', async () => {
       // Fetch submodules directly to ensure we have fresh data
-      let submodules = submoduleTreeProvider.getSubmodules();
+      let submodules = repositoryTreeProvider.getSubmodules();
 
       // If cached submodules are empty, fetch them directly
       if (submodules.length === 0) {
@@ -137,13 +145,17 @@ export function registerCreateBranchCommand(
           placeHolder: 'HexOGen',
           title: 'Step 4: Branch Details'
         });
-        if (!productName) return;
+        if (!productName) {
+          return;
+        }
 
         const version = await vscode.window.showInputBox({
           prompt: 'Enter version',
           placeHolder: '10.54.0'
         });
-        if (!version) return;
+        if (!version) {
+          return;
+        }
 
         branchName = `release/${productName}_${version}`;
       } else if (prefix === 'dev/') {
@@ -152,7 +164,9 @@ export function registerCreateBranchCommand(
           placeHolder: 'sprint-42',
           title: 'Step 4: Branch Details'
         });
-        if (!devName) return;
+        if (!devName) {
+          return;
+        }
 
         branchName = `dev/${toKebabCase(devName)}`;
       } else {
@@ -167,7 +181,9 @@ export function registerCreateBranchCommand(
           prompt: 'Enter task title',
           placeHolder: 'Design and Implement XML Parser'
         });
-        if (!taskTitle) return;
+        if (!taskTitle) {
+          return;
+        }
 
         const kebabTitle = toKebabCase(taskTitle);
 
@@ -229,7 +245,9 @@ export function registerCreateBranchCommand(
               let pushSuccess = 0;
               for (const submodulePath of successfulPaths) {
                 const pushResult = await gitOps.pushChanges(submodulePath);
-                if (pushResult.success) pushSuccess++;
+                if (pushResult.success) {
+                  pushSuccess++;
+                }
               }
               vscode.window.showInformationMessage(
                 `Pushed to ${pushSuccess}/${successfulPaths.length} remote(s)`
@@ -241,7 +259,7 @@ export function registerCreateBranchCommand(
         vscode.window.showErrorMessage('Failed to create branch in all repositories');
       }
 
-      submoduleTreeProvider.refresh();
+      repositoryTreeProvider.refresh();
     })
   );
 }

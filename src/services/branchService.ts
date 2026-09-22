@@ -3,7 +3,6 @@
  * Handles branch-related operations
  */
 
-import * as path from 'path';
 import { GitCommandService } from './gitCommandService';
 import { BranchInfo, CommandResult } from '../types';
 
@@ -14,7 +13,7 @@ export class BranchService {
    * Get branches for a submodule (fast - single git command, no network calls)
    */
   async getBranches(submodulePath: string): Promise<BranchInfo[]> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
     const branches: BranchInfo[] = [];
 
     try {
@@ -71,8 +70,12 @@ export class BranchService {
 
       // Sort: current first, then alphabetically
       branches.sort((a, b) => {
-        if (a.isCurrent) return -1;
-        if (b.isCurrent) return 1;
+        if (a.isCurrent) {
+          return -1;
+        }
+        if (b.isCurrent) {
+          return 1;
+        }
         return a.name.localeCompare(b.name);
       });
 
@@ -92,7 +95,7 @@ export class BranchService {
     baseBranch?: string,
     checkout: boolean = true
   ): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       // If base branch specified, start from it
@@ -138,7 +141,7 @@ export class BranchService {
    * Checkout a branch in a submodule
    */
   async checkoutBranch(submodulePath: string, branchName: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       await this.gitCmd.execGit(['checkout', branchName], fullPath);
@@ -153,7 +156,7 @@ export class BranchService {
    * Pull changes for a submodule
    */
   async pullChanges(submodulePath: string, branch?: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       const currentBranch = branch || await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD'], fullPath);
@@ -169,7 +172,7 @@ export class BranchService {
    * Push changes for a submodule
    */
   async pushChanges(submodulePath: string, branch?: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       const currentBranch = branch || await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD'], fullPath);
@@ -189,7 +192,7 @@ export class BranchService {
     branchName: string,
     deleteRemote: boolean = false
   ): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       // Check if trying to delete current branch
@@ -243,7 +246,7 @@ export class BranchService {
    * Fetch updates for a submodule
    */
   async fetchUpdates(submodulePath: string): Promise<CommandResult> {
-    const fullPath = path.join(this.gitCmd.getWorkspaceRoot(), submodulePath);
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
       await this.gitCmd.execGit(['fetch', '--all', '--prune'], fullPath);

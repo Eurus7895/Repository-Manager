@@ -1,159 +1,147 @@
-# Submodule Manager
+# Repository Manager
 
-A modern VS Code extension for managing Git submodules with a beautiful UI. Create branches, sync versions, and manage pull requests across multiple submodules with ease.
+Repository Manager is a VS Code extension for coordinating Git workflows across a parent repository and its linked repositories from one place.
 
-## Features
+Its primary focus is repository and branch workflow management: inspect repository state, create consistent branches, switch branches, synchronize versions, and move changes toward review. Git submodules remain supported as the current linked-repository mechanism, but they are not the product's main purpose.
 
-### Modern Dashboard
-- **Visual Overview**: See all your submodules at a glance with status indicators
-- **Quick Stats**: Track clean, modified, and problematic submodules
-- **Search & Filter**: Quickly find submodules in large projects
+## What it helps with
 
-### Branch Management
-- **Create Branches Across Submodules**: Create a feature branch in multiple submodules simultaneously
-- **Checkout**: Switch branches with a visual branch picker
-- **Push/Pull**: Sync changes with remote repositories
+### Unified repository overview
 
-### Version Synchronization
-- **Sync All**: Update all submodules to their configured branches
-- **Status Tracking**: See ahead/behind counts for each submodule
-- **Stage Changes**: Stage submodule pointer changes in the parent repo
+- See the parent repository and linked repositories in one dashboard.
+- Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
+- Browse the active repository's topology-aware commit graph with distinct branch and merge lanes plus tag, remote, and stash context.
+- Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
+- Resize the history, changed-files, and diff panes to suit the current review task.
+- Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
+- Filter history by branch, include remote refs, or search by author, hash, message, and ref; these filters are remembered per repository.
+- Review the active branch, current commit, working-tree state, and ahead/behind counts.
+- Search repositories and branches in larger workspaces.
+- Filter history from the dashboard branch list or selector; both controls stay synchronized and highlight the selected branch.
+- Expand tags, remotes, and stashes to inspect hashes, timestamps, subjects, and remote URLs; tags and stashes can open their history directly.
+- Switch between workspace folders in multi-root VS Code workspaces.
 
-### Pull Request Support
-- **Quick PR Creation**: Open GitHub PR creation page directly
-- **GitHub Integration**: Configure a token for advanced PR features
+### Coordinated branch workflows
+
+- Create a branch across selected repositories with one guided workflow.
+- Apply branch hierarchy rules for `main`, `dev`, `feature`, `task`, and `release` workflows.
+- Generate consistent branch names from an optional ticket ID and task title.
+- Select a base branch with search, local/remote indicators, and current-branch highlighting.
+- Delete branches locally or from both local and remote repositories with confirmation.
+
+### Everyday Git operations
+
+- Checkout, fetch, pull, and push without leaving the dashboard.
+- Open a repository in Explorer.
+- Open GitHub's pull-request creation flow.
+- Restore a linked repository to the commit recorded by the parent repository.
+- Mark rebase activity to reduce accidental synchronization during an active rebase.
+- Inspect merge and release commits against their first parent, including their changed files and per-file patches.
+
+### Linked-repository synchronization
+
+- Initialize and update Git submodules when the workspace uses them.
+- Synchronize selected or all linked repositories to their recorded commits.
+- Stage updated repository pointers in the parent repository.
+
+## Repository model
+
+Repository Manager works with:
+
+- the workspace's parent Git repository; and
+- linked repositories declared through `.gitmodules`.
+
+The parent repository participates in branch creation, deletion, checkout, pull, and push workflows. Submodule-specific actions such as initialization and pointer staging are available when applicable.
+
+Version 1.1.0 completes the rename to Repository Manager. Its extension ID, commands, settings, view IDs, and package artifact now use the `repository-manager` or `repositoryManager.*` namespaces.
+
+This is an intentional breaking identity change. VS Code treats it as a separate extension instead of an in-place update from the former Submodule Manager package.
 
 ## Installation
 
-### From Source
-1. Clone this repository
-2. Run `npm install` to install dependencies
-3. Run `npm run compile` to build the extension
-4. Press `F5` in VS Code to launch the extension in development mode
+### From a VSIX package
 
-### From VSIX
-1. Download the `.vsix` file from releases
-2. In VS Code, go to Extensions (`Ctrl+Shift+X`)
-3. Click the `...` menu and select "Install from VSIX..."
-4. Select the downloaded file
+1. Download the latest `.vsix` package from the project release artifacts.
+2. Open Extensions in VS Code (`Ctrl+Shift+X`).
+3. Select the `...` menu and choose **Install from VSIX...**.
+4. Select the downloaded package.
 
-## Usage
+### From source
 
-### Opening the Manager
-- **Command Palette**: `Ctrl+Shift+P` → "Open Submodule Manager"
-- **Keyboard Shortcut**: `Ctrl+Shift+G M` (Mac: `Cmd+Shift+G M`)
-- **Activity Bar**: Click the Submodule Manager icon in the sidebar
-
-### Creating a Branch Across Submodules
-1. Open the Submodule Manager panel
-2. Click "Create Branch" button
-3. Enter the branch name (e.g., `feature/my-feature`)
-4. Enter the base branch (default: `main`)
-5. Select which submodules should have the new branch
-6. Click "Create Branch"
-
-### Syncing Submodules
-1. Open the Submodule Manager panel
-2. Click "Sync Versions" or use the sync button on individual submodules
-3. All submodules will be updated to their configured remote branches
-
-### Managing Individual Submodules
-Each submodule card provides quick actions:
-- **Checkout**: Switch to a different branch
-- **Pull**: Fetch and merge changes from remote
-- **Push**: Push local changes to remote
-- **PR**: Open GitHub to create a pull request
-- **Open**: Reveal the submodule folder in Explorer
-- **Stage**: Stage the submodule pointer change
-
-## Configuration
-
-Access settings via `File > Preferences > Settings` and search for "Submodule Manager".
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `submoduleManager.defaultBranch` | Default branch name for new branches | `main` |
-| `submoduleManager.autoFetch` | Auto-fetch when opening panel | `true` |
-| `submoduleManager.showNotifications` | Show operation notifications | `true` |
-| `submoduleManager.githubToken` | GitHub token for PR operations | `""` |
-
-### GitHub Token Setup
-For advanced PR features, create a personal access token:
-1. Go to GitHub → Settings → Developer settings → Personal access tokens
-2. Generate a new token with `repo` scope
-3. Copy the token and paste it in the extension settings
-
-## Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+G M` | Open Submodule Manager |
-| `Ctrl+Shift+G R` | Refresh submodules |
-
-## Requirements
-
-- VS Code 1.74.0 or higher
-- Git 2.20.0 or higher
-- Node.js (for development)
-
-## Extension Views
-
-### Submodule List
-Shows all submodules with:
-- Status indicator (clean/modified/uninitialized/detached)
-- Current branch
-- Ahead/behind remote counts
-
-### Quick Actions
-Provides one-click access to common operations:
-- Open Manager Panel
-- Create Branch
-- Sync Versions
-- Initialize All
-- Update All
-- Refresh
-
-## Development
-
-### Building
 ```bash
-npm install
+npm ci
 npm run compile
 ```
 
-### Watching for Changes
-```bash
-npm run watch
-```
+Press `F5` in VS Code to launch an Extension Development Host.
 
-### Linting
+## Usage
+
+### Open Repository Manager
+
+- Command Palette: **Repository Manager: Open Repository Manager**
+- Keyboard: `Ctrl+Shift+G M` (`Cmd+Shift+G M` on macOS)
+- Activity Bar: select the Repository Manager icon to launch the editor dashboard
+
+### Create a branch across repositories
+
+1. Open Repository Manager.
+2. Select **Create Branch**.
+3. Choose the parent and linked repositories that should receive the branch.
+4. Select a base branch.
+5. Select an allowed branch prefix.
+6. Enter the ticket and branch details.
+7. Review the result and optionally push successful branches.
+
+### Synchronize recorded versions
+
+Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. You can synchronize all repositories or operate on an individual repository from its card.
+
+## Configuration
+
+Open VS Code settings and search for **Repository Manager**.
+
+| Setting | Description | Default |
+|---|---|---|
+| `repositoryManager.defaultBranch` | Default branch used by branch workflows | `main` |
+| `repositoryManager.autoFetch` | Fetch updates when opening the panel | `true` |
+| `repositoryManager.showNotifications` | Show notifications for Git operations | `true` |
+| `repositoryManager.githubToken` | Optional GitHub token for PR operations | `""` |
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Shift+G M` | Open Repository Manager |
+| `Ctrl+Shift+G R` | Refresh repositories |
+
+Use `Cmd` instead of `Ctrl` on macOS.
+
+## Requirements
+
+- VS Code 1.74.0 or newer
+- Git 2.20.0 or newer
+- Node.js for development only
+
+## Development
+
 ```bash
+npm ci
+npm run compile
 npm run lint
-```
-
-### Packaging
-```bash
 npm run package
 ```
 
+The package command creates a `.vsix` file in the repository root.
+
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
+1. Create a focused branch.
+2. Make and document the change.
+3. Run compile and lint checks.
+4. Package the extension when the change affects the shipped artifact.
+5. Open a pull request with the validation results.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Changelog
-
-### 1.0.0
-- Initial release
-- Modern webview UI with dashboard
-- Branch creation across multiple submodules
-- Version synchronization
-- GitHub PR integration
-- Tree view sidebar with quick actions
+Repository Manager is available under the [MIT License](LICENSE).

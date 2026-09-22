@@ -1,8 +1,8 @@
 /**
- * Types and interfaces for the Submodule Manager extension
+ * Types and interfaces for the Repository Manager extension
  */
 
-export interface SubmoduleInfo {
+export interface RepositoryInfo {
   name: string;
   path: string;
   url: string;
@@ -16,6 +16,11 @@ export interface SubmoduleInfo {
   lastUpdated?: Date;
   isParentRepo?: boolean;
 }
+
+/**
+ * Backward-compatible alias for services that specifically discover Git submodules.
+ */
+export type SubmoduleInfo = RepositoryInfo;
 
 export type SubmoduleStatus =
   | 'clean'
@@ -65,7 +70,7 @@ export interface SyncOptions {
   remoteBranch?: string;
 }
 
-export interface SubmoduleManagerConfig {
+export interface RepositoryManagerConfig {
   defaultBranch: string;
   autoFetch: boolean;
   showNotifications: boolean;
@@ -97,3 +102,100 @@ export interface CommitInfo {
   date: Date;
   message: string;
 }
+
+export type GitRefKind = 'local-branch' | 'remote-branch' | 'tag' | 'head' | 'other';
+
+export interface GitRefLabel {
+  name: string;
+  kind: GitRefKind;
+  isCurrent?: boolean;
+}
+
+export interface HistoryCommit {
+  hash: string;
+  shortHash: string;
+  parentHashes: string[];
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  subject: string;
+  refs: GitRefLabel[];
+}
+
+export interface HistoryQuery {
+  repositoryPath: string;
+  limit?: number;
+  offset?: number;
+  search?: string;
+  branch?: string;
+  includeRemotes?: boolean;
+}
+
+export interface HistoryPage {
+  repositoryPath: string;
+  offset: number;
+  commits: HistoryCommit[];
+  nextOffset: number | null;
+}
+
+export type ChangedFileStatus =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'type-changed'
+  | 'unmerged'
+  | 'unknown';
+
+export interface ChangedFileInfo {
+  path: string;
+  oldPath?: string;
+  status: ChangedFileStatus;
+}
+
+export interface CommitDetail extends HistoryCommit {
+  body: string;
+  comparisonBaseHash: string | null;
+  comparisonMode: 'parent' | 'range' | 'root';
+  committedAt: string;
+  committerName: string;
+  committerEmail: string;
+  files: ChangedFileInfo[];
+}
+
+export interface FileDiff {
+  repositoryPath: string;
+  commitHash: string;
+  baseCommitHash: string | null;
+  path: string;
+  patch: string;
+  truncated: boolean;
+}
+
+export interface TagInfo {
+  name: string;
+  targetHash: string;
+  createdAt?: string;
+}
+
+export interface StashInfo {
+  index: number;
+  ref: string;
+  subject: string;
+  createdAt: string;
+}
+
+export interface RepositoryRefs {
+  repositoryPath: string;
+  branches: BranchInfo[];
+  tags: TagInfo[];
+  remotes: RemoteInfo[];
+  stashes: StashInfo[];
+}
+
+export type DashboardRequest =
+  | { type: 'getHistory'; payload: HistoryQuery }
+  | { type: 'getCommitDetail'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string } }
+  | { type: 'getFileDiff'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string; path: string } }
+  | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } };

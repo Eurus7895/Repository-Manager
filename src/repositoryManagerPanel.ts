@@ -1,5 +1,5 @@
 /**
- * Webview Panel for the Submodule Manager with modern UI
+ * Webview panel for Repository Manager
  */
 
 import * as vscode from 'vscode';
@@ -9,8 +9,8 @@ import { PRManager } from './prManager';
 import { getHtmlForWebview, WebviewResourceUris, WorkspaceFolderInfo } from './webview/template';
 import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessageHandler';
 
-export class SubmoduleManagerPanel {
-  public static currentPanel: SubmoduleManagerPanel | undefined;
+export class RepositoryManagerPanel {
+  public static currentPanel: RepositoryManagerPanel | undefined;
   private readonly _panel: vscode.WebviewPanel;
   private readonly _extensionUri: vscode.Uri;
   private _gitOps: GitOperations;
@@ -23,14 +23,14 @@ export class SubmoduleManagerPanel {
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
 
-    if (SubmoduleManagerPanel.currentPanel) {
-      SubmoduleManagerPanel.currentPanel._panel.reveal(column);
-      SubmoduleManagerPanel.currentPanel.refresh();
+    if (RepositoryManagerPanel.currentPanel) {
+      RepositoryManagerPanel.currentPanel._panel.reveal(column);
+      RepositoryManagerPanel.currentPanel.refresh();
       return;
     }
 
     const panel = vscode.window.createWebviewPanel(
-      'submoduleManager',
+      'repositoryManager',
       'Repository Manager',
       column || vscode.ViewColumn.One,
       {
@@ -40,7 +40,7 @@ export class SubmoduleManagerPanel {
       }
     );
 
-    SubmoduleManagerPanel.currentPanel = new SubmoduleManagerPanel(
+    RepositoryManagerPanel.currentPanel = new RepositoryManagerPanel(
       panel,
       extensionUri,
       workspaceRoot
@@ -105,13 +105,16 @@ export class SubmoduleManagerPanel {
   }
 
   private _getResourceUris(): WebviewResourceUris {
+    const graphScriptUri = this._panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'resources', 'historyGraph.js')
+    );
     const scriptUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.js')
     );
     const styleUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.css')
     );
-    return { scriptUri, styleUri };
+    return { graphScriptUri, scriptUri, styleUri };
   }
 
   private async _update(fullRefresh: boolean = true) {
@@ -151,7 +154,20 @@ export class SubmoduleManagerPanel {
     try {
       // Handle refresh separately as it's not in the handler map
       if (message.type === 'refresh') {
-        await this.refresh();
+        try {
+          await this.refresh();
+          await this._panel.webview.postMessage({
+            type: 'repositoryOperationResult',
+            payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' }
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          await this._panel.webview.postMessage({
+            type: 'repositoryOperationResult',
+            payload: { operation: 'refresh', success: false, message: `Refresh failed: ${errorMessage}` }
+          });
+          throw error;
+        }
         return;
       }
 
@@ -185,7 +201,7 @@ export class SubmoduleManagerPanel {
   }
 
   public dispose() {
-    SubmoduleManagerPanel.currentPanel = undefined;
+    RepositoryManagerPanel.currentPanel = undefined;
     this._panel.dispose();
 
     while (this._disposables.length) {

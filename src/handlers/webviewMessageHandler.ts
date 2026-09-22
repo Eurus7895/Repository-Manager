@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitOperations } from '../gitOperations';
 import { PRManager } from '../prManager';
+import { HistoryQuery } from '../types';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -44,10 +45,115 @@ async function sendToWebview(ctx: MessageHandlerContext, message: { type: string
   try {
     const delivered = await ctx.panel.webview.postMessage(message);
     if (!delivered) {
-      console.warn(`[SubmoduleManager] Message '${message.type}' was NOT delivered to webview`);
+      console.warn(`[RepositoryManager] Message '${message.type}' was NOT delivered to webview`);
     }
   } catch (error) {
-    console.error(`[SubmoduleManager] Failed to send message '${message.type}' to webview:`, error);
+    console.error(`[RepositoryManager] Failed to send message '${message.type}' to webview:`, error);
+  }
+}
+
+function requireRecord(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid dashboard request payload');
+  }
+  return payload as Record<string, unknown>;
+}
+
+function requireString(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Missing or invalid '${field}'`);
+  }
+  return value;
+}
+
+async function sendDashboardError(
+  ctx: MessageHandlerContext,
+  request: string,
+  repositoryPath: string,
+  error: unknown
+): Promise<void> {
+  await sendToWebview(ctx, {
+    type: 'dashboardError',
+    payload: {
+      request,
+      repositoryPath,
+      message: error instanceof Error ? error.message : 'Unknown dashboard backend error'
+    }
+  });
+}
+
+export async function handleGetHistory(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const query: HistoryQuery = {
+    repositoryPath,
+    limit: typeof request.limit === 'number' ? request.limit : undefined,
+    offset: typeof request.offset === 'number' ? request.offset : undefined,
+    search: typeof request.search === 'string' ? request.search : undefined,
+    branch: typeof request.branch === 'string' ? request.branch : undefined,
+    includeRemotes: request.includeRemotes === true
+  };
+
+  try {
+    const history = await ctx.gitOps.getHistory(query);
+    await sendToWebview(ctx, {
+      type: 'historyLoaded',
+      payload: {
+        ...history,
+        requestId: typeof request.requestId === 'number' ? request.requestId : 0
+      }
+    });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getHistory', repositoryPath, error);
+  }
+}
+
+export async function handleGetCommitDetail(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const commitHash = requireString(request, 'commitHash');
+  const baseRevision = typeof request.baseRevision === 'string' && request.baseRevision.length > 0
+    ? request.baseRevision
+    : undefined;
+
+  try {
+    const detail = await ctx.gitOps.getCommitDetail(repositoryPath, commitHash, baseRevision);
+    await sendToWebview(ctx, {
+      type: 'commitDetailLoaded',
+      payload: { repositoryPath, detail, baseRevision, targetRevision: commitHash }
+    });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getCommitDetail', repositoryPath, error);
+  }
+}
+
+export async function handleGetFileDiff(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const commitHash = requireString(request, 'commitHash');
+  const filePath = requireString(request, 'path');
+  const baseRevision = typeof request.baseRevision === 'string' && request.baseRevision.length > 0
+    ? request.baseRevision
+    : undefined;
+
+  try {
+    const diff = await ctx.gitOps.getFileDiff(repositoryPath, commitHash, filePath, baseRevision);
+    await sendToWebview(ctx, { type: 'fileDiffLoaded', payload: diff });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getFileDiff', repositoryPath, error);
+  }
+}
+
+export async function handleGetRepositoryRefs(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+
+  try {
+    const refs = await ctx.gitOps.getRepositoryRefs(repositoryPath);
+    await sendToWebview(ctx, { type: 'repositoryRefsLoaded', payload: refs });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getRepositoryRefs', repositoryPath, error);
   }
 }
 
@@ -122,10 +228,10 @@ export async function handleCreateBranchWithReview(
   );
 
   // Convert results map to array for sending to webview
-  const resultsArray: Array<{ submodule: string; success: boolean; message: string }> = [];
+  const resultsArray: Array<{ repository: string; success: boolean; message: string }> = [];
   results.forEach((result, submodulePath) => {
     resultsArray.push({
-      submodule: submodulePath,
+      repository: submodulePath,
       success: result.success,
       message: result.message
     });
@@ -164,7 +270,7 @@ export async function handleGetBaseBranchesForCreate(ctx: MessageHandlerContext)
       branches = result;
     }
   } catch (error) {
-    console.error('[SubmoduleManager] Error getting base branches:', error);
+    console.error('[RepositoryManager] Error getting base branches:', error);
   }
 
   // Always send the response, whether we got real branches or fallback
@@ -243,6 +349,10 @@ export async function handlePullChanges(
   const result = await ctx.gitOps.pullChanges(payload.submodule);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
+  });
 }
 
 /**
@@ -255,6 +365,26 @@ export async function handlePushChanges(
   const result = await ctx.gitOps.pushChanges(payload.submodule);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
+  });
+}
+
+/**
+ * Handler for fetching remote refs without modifying the working tree.
+ */
+export async function handleFetchUpdates(
+  ctx: MessageHandlerContext,
+  payload: { submodule: string }
+): Promise<void> {
+  const result = await ctx.gitOps.fetchUpdates(payload.submodule);
+  showResult(result.success, result.message);
+  await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
+  });
 }
 
 /**
@@ -345,7 +475,7 @@ export async function handleGetBranches(
       branches = result;
     }
   } catch (error) {
-    console.error('[SubmoduleManager] Error getting branches:', error);
+    console.error('[RepositoryManager] Error getting branches:', error);
   }
 
   await sendToWebview(ctx, {
@@ -467,6 +597,10 @@ export async function handleSetRebaseStatus(
  * Message handler map for quick lookup
  */
 export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payload?: unknown) => Promise<void>> = {
+  'getHistory': (ctx, payload) => handleGetHistory(ctx, payload),
+  'getCommitDetail': (ctx, payload) => handleGetCommitDetail(ctx, payload),
+  'getFileDiff': (ctx, payload) => handleGetFileDiff(ctx, payload),
+  'getRepositoryRefs': (ctx, payload) => handleGetRepositoryRefs(ctx, payload),
   'initSubmodules': (ctx) => handleInitSubmodules(ctx),
   'updateSubmodules': (ctx) => handleUpdateSubmodules(ctx),
   'createBranch': (ctx, payload) => handleCreateBranch(ctx, payload as { submodules: string[]; branchName: string; baseBranch: string }),
@@ -476,6 +610,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'checkoutBranch': (ctx, payload) => handleCheckoutBranch(ctx, payload as { submodule: string; branch: string }),
   'pullChanges': (ctx, payload) => handlePullChanges(ctx, payload as { submodule: string }),
   'pushChanges': (ctx, payload) => handlePushChanges(ctx, payload as { submodule: string }),
+  'fetchUpdates': (ctx, payload) => handleFetchUpdates(ctx, payload as { submodule: string }),
   'syncVersions': (ctx, payload) => handleSyncVersions(ctx, payload as { submodules: string[] }),
   'createPR': (ctx, payload) => handleCreatePR(ctx, payload as { submodule: string }),
   'openSubmodule': (ctx, payload) => handleOpenSubmodule(ctx, payload as { submodule: string }),

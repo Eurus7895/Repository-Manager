@@ -1,9 +1,98 @@
 # Changelog
 
-All notable changes to the Submodule Manager extension will be documented in this file.
+All notable changes to Repository Manager will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.1.0] - 2026-09-21
+
+### Added
+
+- Parent repository support in the dashboard and coordinated branch workflows.
+- Parent repository selection for branch creation and deletion quick actions.
+- One-click **Sync Versions** action for all linked repositories.
+- Multi-root workspace selection and repository refresh when switching folders.
+- Searchable branch lists with local and remote indicators.
+- Branch filtering by repository name, path, and branch name.
+- Checkout, pull, push, branch deletion, and pull-request actions from the repository view.
+- Commit checkout and comparison with the commit recorded by the parent repository.
+- Rebase-state tracking to reduce accidental synchronization during rebase work.
+- Repository history with paginated commit loading, branch filtering, remote inclusion, and search.
+- Commit inspection with changed-file navigation and per-file patches.
+- Sidebar reference browsing for branches, tags, remotes, and stashes.
+- Workspace alignment cards that compare every repository with the active target branch and surface drift or conflicts.
+- Resizable history/diff and changed-files/diff split panes with persisted panel sizes.
+- Accessible graph-node selection for comparing any two history commits, with explicit Base/Target markers and a dedicated branch comparison workflow.
+- Expandable tag, remote, and stash details in the dashboard sidebar.
+
+### Changed
+
+- Repositioned the extension as **Repository Manager**, with repository and branch workflow management as its primary purpose.
+- Reduced submodule-specific terminology in the main product description and documentation. Git submodules remain the supported linked-repository mechanism.
+- Extended branch hierarchy rules:
+  - `dev` can create `feature/` and `release/` branches.
+  - `feature` can create `feature/` and `task/` branches.
+  - `task` can create `task/` branches.
+  - Unknown branch types can use any supported prefix.
+- Improved repository row and branch-list layouts for stable sizing and clearer current-branch highlighting.
+- Redesigned the webview as a desktop Git dashboard with a command bar, repository sidebar, history table, commit summary, changed-file list, and diff viewer.
+- Removed the duplicate Activity Bar `Repositories` and `Quick Actions` views so the editor dashboard is the only UI surface.
+- Reintroduced the compact branch list inside the editor dashboard while keeping the removed Activity Bar tree views out of the extension.
+- Synchronized the branch list with the history selector and highlighted the active history branch.
+- Replaced the decorative single-line history graph with a continuous, topology-aware SVG graph that expands beyond five branch and merge lanes.
+- Persisted branch, remote-inclusion, and search filters independently for each repository.
+- Restored the active commit's parent diff whenever a comparison is cleared or reduced to one selected node.
+- Hardened graph and toolbar layouts at narrow breakpoints and increased graph-node keyboard and pointer hit areas.
+- Matched the dashboard command buttons to the approved HTML design with compact outlined icons, counters, spacing, and separators.
+- Unified commit, merge, release, and branch comparisons around an explicit base-to-target diff range.
+- Reworked the dashboard visual system from the approved design: compact branded header, repository filter, status-aware repository rows, denser history graph, commit inspector, diff styling, and branch workflow modal.
+- Restored the Repository Manager Activity Bar icon as a single dashboard launcher without bringing back the removed repository and quick-action trees.
+- Replaced the extension artwork with the Repository Manager graph icon and added a monochrome Activity Bar variant.
+- Updated the dashboard to treat the parent and linked repositories as one repository collection, including repository-wide statistics, search, selection, and branch workflows.
+- Kept submodule terminology only for Git operations that specifically initialize, update, or stage submodule pointers.
+- Restored branch delete actions after an optimistic checkout changes the current branch.
+- Split the extension into command, handler, service, and webview modules for easier maintenance.
+- Added dedicated read services for paginated history, commit details, file diffs, branches, tags, remotes, and stashes.
+- Added typed dashboard request/response contracts so the redesigned UI can lazy-load repository data.
+- Replaced shell-based Git execution with argument-safe process execution and workspace path validation.
+- Renamed the extension package and publisher identifiers to `repository-manager`.
+- Renamed commands and settings from `submoduleManager.*` to `repositoryManager.*`.
+- Renamed the Activity Bar container and contributed view IDs to the Repository Manager namespace.
+- Changed the packaged artifact name to `repository-manager-1.1.0.vsix`.
+
+### Breaking
+
+- VS Code treats Repository Manager as a new extension identity rather than an automatic update from Submodule Manager.
+- Existing settings under `submoduleManager.*` must be migrated to `repositoryManager.*`.
+- Keybindings or automation invoking `submoduleManager.*` commands must use `repositoryManager.*`.
+
+### Fixed
+
+- Branch lists not updating after asynchronous loading.
+- Base-branch delivery failures by awaiting webview messages and retrying incomplete loads.
+- Inconsistent branch tags and row sizing during filtering and checkout.
+- Webview interaction failures caused by inline handlers and Content Security Policy constraints.
+- Empty changed-file lists and patches for merge commits by comparing against the merge commit's first parent.
+- TypeScript rebuilds accidentally reading generated declaration files from `out/`.
+- Added backend parser, path-boundary, and live Git integration tests.
+
+## [1.0.2] - 2026-02-24
+
+### Added
+
+- Branch-name filtering in the repository search field.
+
+### Changed
+
+- Reworked repository rows with a consistent CSS grid layout.
+- Kept branch tags focused on local and remote state while using highlighting for the current branch.
+- Excluded the generated `out/` directory from TypeScript compilation inputs.
+
+### Fixed
+
+- Repository cards changing size while branch filters were active.
+- Merge-conflict remnants in the webview stylesheet.
 
 ## [1.0.1] - 2025-01-29
 

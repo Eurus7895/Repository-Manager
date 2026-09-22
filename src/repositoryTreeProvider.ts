@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { GitOperations } from './gitOperations';
 import { SubmoduleInfo, SubmoduleStatus } from './types';
 
-export class SubmoduleTreeProvider implements vscode.TreeDataProvider<SubmoduleTreeItem> {
+export class RepositoryTreeProvider implements vscode.TreeDataProvider<SubmoduleTreeItem> {
   private _onDidChangeTreeData: vscode.EventEmitter<SubmoduleTreeItem | undefined | null | void> =
     new vscode.EventEmitter<SubmoduleTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData: vscode.Event<SubmoduleTreeItem | undefined | null | void> =
@@ -191,7 +191,7 @@ export class SubmoduleTreeItem extends vscode.TreeItem {
       this.tooltip = `Click to checkout branch: ${this.branchName}${this.isRemote ? ' (will create local tracking branch)' : ''}`;
       this.command = {
         title: 'Checkout Branch',
-        command: 'submoduleManager.checkoutBranchFromTree',
+        command: 'repositoryManager.checkoutBranchFromTree',
         arguments: [this.submodule.path, this.branchName]
       };
     } else {
@@ -267,56 +267,5 @@ export class SubmoduleTreeItem extends vscode.TreeItem {
     }
 
     return parts.join(' ');
-  }
-}
-
-export class ActionsTreeProvider implements vscode.TreeDataProvider<ActionTreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<ActionTreeItem | undefined | null | void> =
-    new vscode.EventEmitter<ActionTreeItem | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<ActionTreeItem | undefined | null | void> =
-    this._onDidChangeTreeData.event;
-
-  getTreeItem(element: ActionTreeItem): vscode.TreeItem {
-    return element;
-  }
-
-  getChildren(): ActionTreeItem[] {
-    return [
-      new ActionTreeItem('Open Manager Panel', 'submoduleManager.openPanel', 'dashboard',
-        'Open the Repository Manager webview panel'),
-      new ActionTreeItem('Create Branch', 'submoduleManager.createBranch', 'git-branch',
-        'Create a new branch across multiple submodules'),
-      new ActionTreeItem('Delete Branch', 'submoduleManager.deleteBranchAcrossSubmodules', 'trash',
-        'Delete a branch across multiple submodules'),
-      new ActionTreeItem('Sync Versions', 'submoduleManager.syncVersions', 'sync',
-        'Sync all submodules to the commits recorded in the parent repository'),
-      new ActionTreeItem('Initialize All', 'submoduleManager.initSubmodules', 'cloud-download',
-        'Initialize and clone all submodules (git submodule update --init)'),
-      new ActionTreeItem('Update All', 'submoduleManager.updateSubmodules', 'cloud-upload',
-        'Update all submodules to latest from their remote branches'),
-      new ActionTreeItem('Refresh', 'submoduleManager.refresh', 'refresh',
-        'Refresh the submodule list and status')
-    ];
-  }
-
-  refresh(): void {
-    this._onDidChangeTreeData.fire();
-  }
-}
-
-export class ActionTreeItem extends vscode.TreeItem {
-  constructor(
-    label: string,
-    commandId: string,
-    icon: string,
-    description?: string
-  ) {
-    super(label, vscode.TreeItemCollapsibleState.None);
-    this.iconPath = new vscode.ThemeIcon(icon);
-    this.tooltip = description || label;
-    this.command = {
-      title: label,
-      command: commandId
-    };
   }
 }

@@ -5,13 +5,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitOperations } from '../gitOperations';
-import { SubmoduleTreeProvider } from '../submoduleTreeProvider';
-import { SubmoduleManagerPanel } from '../webviewPanel';
+import { RepositoryTreeProvider } from '../repositoryTreeProvider';
+import { RepositoryManagerPanel } from '../repositoryManagerPanel';
 import { PRManager } from '../prManager';
 
 export interface CommandContext {
   gitOps: GitOperations;
-  submoduleTreeProvider: SubmoduleTreeProvider;
+  repositoryTreeProvider: RepositoryTreeProvider;
   prManager: PRManager;
   workspaceRoot: string;
   extensionUri: vscode.Uri;
@@ -25,10 +25,10 @@ export function registerRefreshCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.refresh', () => {
-      ctx.submoduleTreeProvider.refresh();
-      if (SubmoduleManagerPanel.currentPanel) {
-        SubmoduleManagerPanel.currentPanel.refresh();
+    vscode.commands.registerCommand('repositoryManager.refresh', () => {
+      ctx.repositoryTreeProvider.refresh();
+      if (RepositoryManagerPanel.currentPanel) {
+        RepositoryManagerPanel.currentPanel.refresh();
       }
       vscode.window.showInformationMessage('Repositories refreshed');
     })
@@ -43,8 +43,8 @@ export function registerOpenPanelCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.openPanel', () => {
-      SubmoduleManagerPanel.createOrShow(ctx.extensionUri, ctx.workspaceRoot);
+    vscode.commands.registerCommand('repositoryManager.openPanel', () => {
+      RepositoryManagerPanel.createOrShow(ctx.extensionUri, ctx.workspaceRoot);
     })
   );
 }
@@ -57,7 +57,7 @@ export function registerInitSubmodulesCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.initSubmodules', async () => {
+    vscode.commands.registerCommand('repositoryManager.initSubmodules', async () => {
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -75,7 +75,7 @@ export function registerInitSubmodulesCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -88,7 +88,7 @@ export function registerUpdateSubmodulesCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.updateSubmodules', async () => {
+    vscode.commands.registerCommand('repositoryManager.updateSubmodules', async () => {
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -106,7 +106,7 @@ export function registerUpdateSubmodulesCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -119,7 +119,7 @@ export function registerSyncVersionsCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.syncVersions', async () => {
+    vscode.commands.registerCommand('repositoryManager.syncVersions', async () => {
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -142,7 +142,7 @@ export function registerSyncVersionsCommand(
         `Synced ${successCount}/${result.size} submodule(s)`
       );
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -155,7 +155,7 @@ export function registerOpenSubmoduleCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.openSubmodule', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.openSubmodule', async (item) => {
       if (item && item.submodule) {
         const fullPath = vscode.Uri.file(
           path.join(ctx.workspaceRoot, item.submodule.path)
@@ -174,7 +174,7 @@ export function registerCheckoutBranchCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.checkoutBranch', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.checkoutBranch', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -208,7 +208,7 @@ export function registerCheckoutBranchCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -221,7 +221,7 @@ export function registerCheckoutBranchFromTreeCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.checkoutBranchFromTree', async (submodulePath: string, branchName: string) => {
+    vscode.commands.registerCommand('repositoryManager.checkoutBranchFromTree', async (submodulePath: string, branchName: string) => {
       if (!submodulePath || !branchName) {
         return;
       }
@@ -234,7 +234,7 @@ export function registerCheckoutBranchFromTreeCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -247,7 +247,7 @@ export function registerPullChangesCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.pullChanges', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.pullChanges', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -269,7 +269,7 @@ export function registerPullChangesCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -282,7 +282,7 @@ export function registerPushChangesCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.pushChanges', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.pushChanges', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -304,7 +304,7 @@ export function registerPushChangesCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -317,7 +317,7 @@ export function registerCreatePRCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.createPR', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.createPR', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -335,7 +335,7 @@ export function registerStageSubmoduleCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.stageSubmodule', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.stageSubmodule', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -359,7 +359,7 @@ export function registerDeleteBranchCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.deleteBranch', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.deleteBranch', async (item) => {
       if (!item || !item.submodule) {
         return;
       }
@@ -425,7 +425,7 @@ export function registerDeleteBranchCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -438,7 +438,7 @@ export function registerDeleteBranchFromTreeCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.deleteBranchFromTree', async (item) => {
+    vscode.commands.registerCommand('repositoryManager.deleteBranchFromTree', async (item) => {
       if (!item || !item.submodule || !item.branchName) {
         return;
       }
@@ -480,7 +480,7 @@ export function registerDeleteBranchFromTreeCommand(
         vscode.window.showErrorMessage(result.message);
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
@@ -493,8 +493,8 @@ export function registerDeleteBranchAcrossSubmodulesCommand(
   ctx: CommandContext
 ): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('submoduleManager.deleteBranchAcrossSubmodules', async () => {
-      let submodules = ctx.submoduleTreeProvider.getSubmodules();
+    vscode.commands.registerCommand('repositoryManager.deleteBranchAcrossSubmodules', async () => {
+      let submodules = ctx.repositoryTreeProvider.getSubmodules();
       if (submodules.length === 0) {
         submodules = await ctx.gitOps.getSubmodules();
       }
@@ -593,7 +593,7 @@ export function registerDeleteBranchAcrossSubmodulesCommand(
         );
       }
 
-      ctx.submoduleTreeProvider.refresh();
+      ctx.repositoryTreeProvider.refresh();
     })
   );
 }
