@@ -29,6 +29,7 @@
   let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
+  const runningToolbarOperations = new Set();
 
   // Save state helper
   function saveState() {
@@ -50,9 +51,42 @@
     vscode.postMessage({ type, payload });
   }
 
+  function setToolbarOperationState(operation, state, message) {
+    const button = document.querySelector(`[data-operation="${operation}"]`);
+    if (!button) return;
+    button.classList.remove('is-busy', 'is-success', 'is-error');
+    if (state === 'running') {
+      runningToolbarOperations.add(operation);
+      button.classList.add('is-busy');
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+    } else {
+      runningToolbarOperations.delete(operation);
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      if (state === 'success') button.classList.add('is-success');
+      if (state === 'error') button.classList.add('is-error');
+      window.setTimeout(function () {
+        button.classList.remove('is-success', 'is-error');
+      }, 900);
+    }
+    if (message) button.title = message;
+  }
+
+  function runToolbarOperation(operation, type) {
+    if (runningToolbarOperations.has(operation)) return;
+    setToolbarOperationState(operation, 'running');
+    postMessage(type, { submodule: activeDashboardRepository });
+  }
+
+  function reloadActiveDashboardData() {
+    requestDashboardHistory(0, false);
+    postMessage('getRepositoryRefs', { repositoryPath: activeDashboardRepository });
+  }
+
   // Action handlers
   const actions = {
-    refresh: () => postMessage('refresh'),
+    refresh: () => runToolbarOperation('refresh', 'refresh'),
     initAll: () => postMessage('initSubmodules'),
     updateAll: () => postMessage('updateSubmodules'),
 
@@ -61,9 +95,9 @@
       if (repository) activateDashboardRepository(repository);
     },
 
-    pullActiveRepository: () => postMessage('pullChanges', { submodule: activeDashboardRepository }),
-    pushActiveRepository: () => postMessage('pushChanges', { submodule: activeDashboardRepository }),
-    fetchActiveRepository: () => postMessage('fetchUpdates', { submodule: activeDashboardRepository }),
+    pullActiveRepository: () => runToolbarOperation('pull', 'pullChanges'),
+    pushActiveRepository: () => runToolbarOperation('push', 'pushChanges'),
+    fetchActiveRepository: () => runToolbarOperation('fetch', 'fetchUpdates'),
     openActiveRepository: () => postMessage('openSubmodule', { submodule: activeDashboardRepository }),
 
     loadMoreHistory: () => {
@@ -738,7 +772,7 @@
 
   function renderGraphCell(commit, layout) {
     const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
-    return `<span class="history-graph-cell"><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 12}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button></span>`;
+    return `<span class="history-graph-cell"><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="--graph-node-x:${currentX}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button></span>`;
   }
 
   function renderHistoryPage(payload) {
@@ -1207,6 +1241,13 @@
           repositoryData = message.payload.submodules;
           saveState();
           updateRepositoryRows(repositoryData);
+          break;
+        }
+
+        case 'repositoryOperationResult': {
+          const payload = message.payload || {};
+          setToolbarOperationState(payload.operation, payload.success ? 'success' : 'error', payload.message);
+          if (payload.success) reloadActiveDashboardData();
           break;
         }
 

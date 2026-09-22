@@ -349,6 +349,10 @@ export async function handlePullChanges(
   const result = await ctx.gitOps.pullChanges(payload.submodule);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
+  });
 }
 
 /**
@@ -361,6 +365,10 @@ export async function handlePushChanges(
   const result = await ctx.gitOps.pushChanges(payload.submodule);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
+  });
 }
 
 /**
@@ -373,6 +381,10 @@ export async function handleFetchUpdates(
   const result = await ctx.gitOps.fetchUpdates(payload.submodule);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'repositoryOperationResult',
+    payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
+  });
 }
 
 /**

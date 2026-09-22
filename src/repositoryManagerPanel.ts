@@ -154,7 +154,20 @@ export class RepositoryManagerPanel {
     try {
       // Handle refresh separately as it's not in the handler map
       if (message.type === 'refresh') {
-        await this.refresh();
+        try {
+          await this.refresh();
+          await this._panel.webview.postMessage({
+            type: 'repositoryOperationResult',
+            payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' }
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          await this._panel.webview.postMessage({
+            type: 'repositoryOperationResult',
+            payload: { operation: 'refresh', success: false, message: `Refresh failed: ${errorMessage}` }
+          });
+          throw error;
+        }
         return;
       }
 

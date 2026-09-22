@@ -1839,6 +1839,9 @@ body {
   color: var(--text-primary);
   background: transparent;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform 120ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease;
   white-space: nowrap;
 }
 
@@ -1856,6 +1859,12 @@ body {
   line-height: 1;
 }
 
+.dashboard-command > .command-label {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .dashboard-command small {
   margin-left: 6px;
   padding: 0 6px;
@@ -1870,6 +1879,54 @@ body {
 .dashboard-icon-command:hover {
   border-color: #3a414d;
   background: #1c1f26;
+}
+
+.dashboard-command:active:not(:disabled),
+.dashboard-icon-command:active:not(:disabled) {
+  transform: translateY(1px) scale(.96);
+}
+
+.dashboard-command:focus-visible,
+.dashboard-icon-command:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, var(--accent));
+  outline-offset: 2px;
+}
+
+.dashboard-command:disabled,
+.dashboard-icon-command:disabled {
+  cursor: wait;
+  opacity: .78;
+}
+
+.dashboard-command.is-busy > svg,
+.dashboard-icon-command.is-busy > svg {
+  animation: dashboard-command-spin 850ms linear infinite;
+}
+
+.dashboard-command.is-success,
+.dashboard-icon-command.is-success {
+  border-color: var(--success);
+  animation: dashboard-command-success 500ms ease-out;
+}
+
+.dashboard-command.is-error,
+.dashboard-icon-command.is-error {
+  border-color: var(--error);
+  animation: dashboard-command-error 360ms ease-out;
+}
+
+@keyframes dashboard-command-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes dashboard-command-success {
+  45% { background: color-mix(in srgb, var(--success) 22%, transparent); }
+}
+
+@keyframes dashboard-command-error {
+  25% { transform: translateX(-2px); }
+  50% { transform: translateX(2px); }
+  75% { transform: translateX(-1px); }
 }
 
 .dashboard-command-primary {
@@ -2401,9 +2458,10 @@ button.reference-detail-item:hover { background: #222730; }
 .graph-node-button {
   position: absolute;
   z-index: 3;
-  top: 4px;
-  width: 24px;
-  height: 24px;
+  top: 5px;
+  left: calc(var(--graph-node-x) - 11px);
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -2418,16 +2476,17 @@ button.reference-detail-item:hover { background: #222730; }
 .graph-node-button[data-marker="B"]::after,
 .graph-node-button[data-marker="T"]::after {
   position: absolute;
-  inset: 4px;
+  inset: 0;
   display: grid;
   place-items: center;
-  border: 1px solid currentColor;
+  border: 2px solid currentColor;
   border-radius: 50%;
   color: #0b1512;
   content: attr(data-marker);
   font-family: var(--vscode-editor-font-family), Consolas, monospace;
   font-size: 9px;
   font-weight: 800;
+  box-shadow: 0 0 0 2px var(--bg-primary);
 }
 
 .graph-node-button[data-marker="B"]::after { background: var(--info); }
@@ -2440,6 +2499,17 @@ body.vscode-high-contrast .graph-node-button[data-marker="B"],
 body.vscode-high-contrast .graph-node-button[data-marker="T"] {
   outline: 2px solid var(--vscode-focusBorder);
   outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-command,
+  .dashboard-icon-command { transition: none; }
+  .dashboard-command.is-busy > svg,
+  .dashboard-icon-command.is-busy > svg,
+  .dashboard-command.is-success,
+  .dashboard-icon-command.is-success,
+  .dashboard-command.is-error,
+  .dashboard-icon-command.is-error { animation: none; }
 }
 
 .history-ref {

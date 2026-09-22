@@ -325,13 +325,13 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <span class="context-branch">⑂ ${escapeHtml(activeRepository?.currentBranch || '(detached)')}</span>
         </div>
         <div class="command-cluster command-cluster-right">
-          <button class="dashboard-icon-command" data-action="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
-          <button class="dashboard-command" data-action="fetchActiveRepository"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg>Fetch</button>
-          <button class="dashboard-command" data-action="pullActiveRepository"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg>Pull<small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
-          <button class="dashboard-command" data-action="pushActiveRepository"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg>Push<small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
+          <button class="dashboard-icon-command" data-action="refresh" data-operation="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
+          <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg><span class="command-label">Fetch</span></button>
+          <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><span class="command-label">Pull</span><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
+          <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><span class="command-label">Push</span><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
           <span class="command-separator" aria-hidden="true"></span>
           <button class="dashboard-command dashboard-command-sync" data-action="syncAll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"></path><path d="M20 4v5h-5"></path><path d="M20 12a8 8 0 0 1-14 5.3L4 15"></path><path d="M4 20v-5h5"></path></svg>Sync versions</button>
-          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Branch across repos</button>
+          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg><span class="command-label">New Branch</span></button>
         </div>
       </header>
       <div class="dashboard-body">
