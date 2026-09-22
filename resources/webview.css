@@ -2703,3 +2703,95 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   overflow: visible;
   text-overflow: clip;
 }
+
+
+/* Commit selected working-tree files */
+.commit-changes-modal {
+  width: min(680px, calc(100vw - 48px));
+}
+
+.commit-changes-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.commit-changes-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.commit-changes-list {
+  max-height: min(42vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.commit-change-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.commit-change-row:last-child {
+  border-bottom: 0;
+}
+
+.commit-change-row:hover {
+  background: var(--bg-hover);
+}
+
+.commit-change-row.conflicted {
+  color: var(--error);
+  cursor: not-allowed;
+}
+
+.commit-change-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-change-path small {
+  display: block;
+  color: var(--text-secondary);
+}
+
+.commit-change-state {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.commit-message-group {
+  margin-top: 14px;
+}
+
+.commit-message-input {
+  resize: vertical;
+  min-height: 72px;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.commit-result {
+  min-height: 18px;
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}

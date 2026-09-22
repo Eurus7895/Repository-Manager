@@ -254,6 +254,52 @@
       updateSelectionUI();
     },
 
+    openCommitChangesModal: () => {
+      const repository = getRepository(activeDashboardRepository);
+      const modal = document.getElementById('commitChangesModal');
+      const repositoryLabel = document.getElementById('commitChangesRepository');
+      const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+      const changesList = document.getElementById('commitChangesList');
+      const message = document.getElementById('commitMessage');
+      const result = document.getElementById('commitChangesResult');
+      const selectAll = document.getElementById('commitSelectAll');
+      const commitButton = document.getElementById('commitSelectedFilesButton');
+
+      if (repositoryLabel) repositoryLabel.textContent = repository ? repository.name : activeDashboardRepository;
+      if (repositoryPath) repositoryPath.value = activeDashboardRepository;
+      if (changesList) changesList.innerHTML = '<div class="dashboard-loading">Loading changed files…</div>';
+      if (message) message.value = '';
+      if (result) result.textContent = '';
+      if (selectAll) selectAll.checked = true;
+      if (commitButton) commitButton.disabled = false;
+      if (modal) modal.classList.add('active');
+
+      postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository });
+    },
+
+    commitSelectedChanges: () => {
+      const repositoryPath = document.getElementById('commitChangesRepositoryPath').value;
+      const message = document.getElementById('commitMessage').value.trim();
+      const files = Array.from(document.querySelectorAll('.commit-change-checkbox:checked'))
+        .map(checkbox => checkbox.dataset.path)
+        .filter(Boolean);
+      const result = document.getElementById('commitChangesResult');
+      const commitButton = document.getElementById('commitSelectedFilesButton');
+
+      if (files.length === 0) {
+        if (result) result.textContent = 'Select at least one changed file.';
+        return;
+      }
+      if (!message) {
+        if (result) result.textContent = 'Enter a commit message.';
+        return;
+      }
+
+      if (result) result.textContent = 'Creating commit…';
+      if (commitButton) commitButton.disabled = true;
+      postMessage('commitFiles', { repositoryPath, files, message });
+    },
+
     openCreateBranchModal: () => {
       // Reset form fields
       document.getElementById('ticketId').value = '';
@@ -492,6 +538,48 @@
       postMessage('deleteBranch', { submodule: repository, branch, deleteRemote });
     }
   };
+
+  function updateCommitSelectionCount() {
+    const selected = document.querySelectorAll('.commit-change-checkbox:checked').length;
+    const count = document.getElementById('commitSelectionCount');
+    if (count) count.textContent = selected + ' selected';
+  }
+
+  function renderWorkingTreeChanges(payload) {
+    const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+    if (!repositoryPath || repositoryPath.value !== payload.repositoryPath) return;
+
+    const changes = Array.isArray(payload.changes) ? payload.changes : [];
+    const list = document.getElementById('commitChangesList');
+    if (!list) return;
+    if (changes.length === 0) {
+      list.innerHTML = '<div class="dashboard-empty">Working tree is clean.</div>';
+      updateCommitSelectionCount();
+      return;
+    }
+
+    list.innerHTML = changes.map(change => {
+      const state = change.conflicted
+        ? 'conflict'
+        : change.untracked
+          ? 'untracked'
+          : change.staged && change.unstaged
+            ? 'staged + modified'
+            : change.staged
+              ? 'staged'
+              : 'modified';
+      const rename = change.originalPath
+        ? '<small>' + escapeHtml(change.originalPath) + ' →</small>'
+        : '';
+      return '<label class="commit-change-row' + (change.conflicted ? ' conflicted' : '') + '">' +
+        '<input type="checkbox" class="commit-change-checkbox" data-path="' + escapeHtml(change.path) + '"' +
+          (change.conflicted ? ' disabled' : ' checked') + '>' +
+        '<span class="commit-change-path">' + rename + '<strong>' + escapeHtml(change.path) + '</strong></span>' +
+        '<span class="commit-change-state">' + state + '</span>' +
+      '</label>';
+    }).join('');
+    updateCommitSelectionCount();
+  }
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -1196,6 +1284,23 @@
 
     try {
       switch (message.type) {
+        case 'workingTreeChangesLoaded':
+          renderWorkingTreeChanges(message.payload);
+          break;
+
+        case 'commitFilesResult': {
+          const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+          if (!repositoryPath || repositoryPath.value !== message.payload.repositoryPath) break;
+          const result = document.getElementById('commitChangesResult');
+          const commitButton = document.getElementById('commitSelectedFilesButton');
+          if (result) result.textContent = message.payload.message || '';
+          if (commitButton) commitButton.disabled = false;
+          if (message.payload.success) {
+            document.getElementById('commitChangesModal').classList.remove('active');
+          }
+          break;
+        }
+
         case 'branches': {
           const branchSelect = document.getElementById('branchSelect');
           const branches = (message.payload && message.payload.branches) || [];
@@ -1737,6 +1842,28 @@
       historySearchTimer = setTimeout(function () {
         requestDashboardHistory(0, false);
       }, 250);
+    });
+  }
+
+  const commitSelectAll = document.getElementById('commitSelectAll');
+  if (commitSelectAll) {
+    commitSelectAll.addEventListener('change', function () {
+      document.querySelectorAll('.commit-change-checkbox:not(:disabled)').forEach(checkbox => {
+        checkbox.checked = commitSelectAll.checked;
+      });
+      updateCommitSelectionCount();
+    });
+  }
+
+  const commitChangesList = document.getElementById('commitChangesList');
+  if (commitChangesList) {
+    commitChangesList.addEventListener('change', function (event) {
+      if (!event.target.classList.contains('commit-change-checkbox')) return;
+      const selectable = Array.from(document.querySelectorAll('.commit-change-checkbox:not(:disabled)'));
+      if (commitSelectAll) {
+        commitSelectAll.checked = selectable.length > 0 && selectable.every(checkbox => checkbox.checked);
+      }
+      updateCommitSelectionCount();
     });
   }
 

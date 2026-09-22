@@ -29,7 +29,8 @@ import {
   FileDiff,
   HistoryPage,
   HistoryQuery,
-  RepositoryRefs
+  RepositoryRefs,
+  WorkingTreeChange
 } from './types';
 
 export class GitOperations {
@@ -248,6 +249,14 @@ export class GitOperations {
   }
 
   // ==================== Commit Methods ====================
+
+  async getWorkingTreeChanges(repositoryPath: string): Promise<WorkingTreeChange[]> {
+    return this.commitService.getWorkingTreeChanges(repositoryPath);
+  }
+
+  async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {
+    return this.commitService.commitFiles(repositoryPath, filePaths, message);
+  }
 
   /**
    * Get recent commits for a submodule

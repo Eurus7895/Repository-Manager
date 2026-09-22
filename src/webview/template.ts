@@ -155,6 +155,38 @@ function renderModals(repositories: RepositoryInfo[]): string {
       </div>
     </div>
 
+    <!-- Commit Changes Modal -->
+    <div class="modal-overlay" id="commitChangesModal">
+      <div class="modal commit-changes-modal">
+        <div class="modal-header">
+          <div class="modal-heading">
+            <span class="modal-title">Create Commit</span>
+            <span id="commitChangesRepository">Repository</span>
+          </div>
+          <button class="modal-close" data-action="closeModal" data-modal="commitChangesModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="commitChangesRepositoryPath">
+          <div class="commit-changes-toolbar">
+            <label><input type="checkbox" id="commitSelectAll" checked> Select all</label>
+            <span id="commitSelectionCount">0 selected</span>
+          </div>
+          <div class="commit-changes-list" id="commitChangesList">
+            <div class="dashboard-loading">Loading changed files…</div>
+          </div>
+          <div class="form-group commit-message-group">
+            <label class="form-label" for="commitMessage">Commit message</label>
+            <textarea class="form-input commit-message-input" id="commitMessage" rows="3" placeholder="Describe the changes"></textarea>
+          </div>
+          <div class="commit-result" id="commitChangesResult" role="status" aria-live="polite"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" data-action="closeModal" data-modal="commitChangesModal">Cancel</button>
+          <button class="btn btn-primary" id="commitSelectedFilesButton" data-action="commitSelectedChanges">Commit selected</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Checkout Branch Modal -->
     <div class="modal-overlay" id="checkoutModal">
       <div class="modal">
@@ -309,6 +341,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch" title="Fetch" aria-label="Fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg></button>
           <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull" title="Pull" aria-label="Pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
           <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push" title="Push" aria-label="Push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
+          <button class="dashboard-command dashboard-command-sync" data-action="openCommitChangesModal" title="Commit selected files" aria-label="Commit selected files">Commit</button>
           <span class="command-separator" aria-hidden="true"></span>
           <button class="dashboard-command dashboard-command-sync" data-action="syncAll" title="Sync versions" aria-label="Sync versions">Sync</button>
           <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal" title="New Branch" aria-label="New Branch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>

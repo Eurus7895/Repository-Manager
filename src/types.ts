@@ -48,6 +48,17 @@ export interface GitStatus {
   hasChanges: boolean;
 }
 
+export interface WorkingTreeChange {
+  path: string;
+  originalPath?: string;
+  indexStatus: string;
+  workTreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+}
+
 export interface PullRequestInfo {
   title: string;
   body: string;
@@ -198,4 +209,6 @@ export type DashboardRequest =
   | { type: 'getHistory'; payload: HistoryQuery }
   | { type: 'getCommitDetail'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string } }
   | { type: 'getFileDiff'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string; path: string } }
-  | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } };
+  | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } }
+  | { type: 'getWorkingTreeChanges'; payload: { repositoryPath: string } }
+  | { type: 'commitFiles'; payload: { repositoryPath: string; files: string[]; message: string } };

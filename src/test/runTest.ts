@@ -1,6 +1,6 @@
 import * as assert from 'assert/strict';
 import { BranchService } from '../services/branchService';
-import { CommitService } from '../services/commitService';
+import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
@@ -45,6 +45,35 @@ function testParsers(): void {
   ]);
   assert.deepEqual(parseStashesOutput('stash@{0}\x1fWIP on main\x1f2026-09-21T10:00:00Z\x1e'), [
     { index: 0, ref: 'stash@{0}', subject: 'WIP on main', createdAt: '2026-09-21T10:00:00Z' }
+  ]);
+
+  assert.deepEqual(parseWorkingTreeStatus(
+    ' M src/modified.ts\0M  src/staged.ts\0MM src/both.ts\0?? src/new.ts\0R  src/new-name.ts\0src/old-name.ts\0UU src/conflict.ts\0'
+  ), [
+    {
+      path: 'src/modified.ts', indexStatus: ' ', workTreeStatus: 'M',
+      staged: false, unstaged: true, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/staged.ts', indexStatus: 'M', workTreeStatus: ' ',
+      staged: true, unstaged: false, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/both.ts', indexStatus: 'M', workTreeStatus: 'M',
+      staged: true, unstaged: true, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/new.ts', indexStatus: '?', workTreeStatus: '?',
+      staged: false, unstaged: false, untracked: true, conflicted: false
+    },
+    {
+      path: 'src/new-name.ts', originalPath: 'src/old-name.ts', indexStatus: 'R', workTreeStatus: ' ',
+      staged: true, unstaged: false, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/conflict.ts', indexStatus: 'U', workTreeStatus: 'U',
+      staged: true, unstaged: true, untracked: false, conflicted: true
+    }
   ]);
 }
 
