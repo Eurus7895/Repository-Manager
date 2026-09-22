@@ -25,16 +25,19 @@ export function parseWorkingTreeStatus(output: string): WorkingTreeChange[] {
     const originalPath = renamedOrCopied ? records[index++] : undefined;
     const untracked = indexStatus === '?' && workTreeStatus === '?';
 
-    changes.push({
+    const change: WorkingTreeChange = {
       path,
-      originalPath: originalPath || undefined,
       indexStatus,
       workTreeStatus,
       staged: !untracked && indexStatus !== ' ',
       unstaged: !untracked && workTreeStatus !== ' ',
       untracked,
       conflicted: CONFLICT_STATUSES.has(indexStatus + workTreeStatus)
-    });
+    };
+    if (originalPath) {
+      change.originalPath = originalPath;
+    }
+    changes.push(change);
   }
 
   return changes;
@@ -78,7 +81,9 @@ export class CommitService {
       }
 
       const pathspecs = Array.from(new Set(selectedChanges.flatMap(change => {
-        if (!change) return [];
+        if (!change) {
+          return [];
+        }
         return [change.path, ...(change.originalPath ? [change.originalPath] : [])]
           .map(filePath => this.gitCmd.resolveFilePath(filePath));
       })));
