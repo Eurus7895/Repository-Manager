@@ -1884,6 +1884,8 @@ body {
   min-height: 0;
   max-height: none;
   overflow: auto;
+  align-content: start;
+  grid-auto-rows: max-content;
   scrollbar-width: thin;
 }
 
