@@ -4,6 +4,7 @@
 
 import { RepositoryInfo } from '../types';
 import * as vscode from 'vscode';
+import { renderDashboardToolbar } from './toolbar';
 
 /**
  * URIs for external webview resources
@@ -336,16 +337,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <strong>Repository Manager</strong>
         </div>
         ${renderWorkspaceFolderSelector(workspaceFolders)}
-        <div class="command-cluster command-cluster-right">
-          <button class="dashboard-icon-command" data-action="refresh" data-operation="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
-          <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch" title="Fetch" aria-label="Fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg></button>
-          <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull" title="Pull" aria-label="Pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
-          <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push" title="Push" aria-label="Push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
-          <button class="dashboard-command dashboard-command-sync" data-action="openCommitChangesModal" title="Commit selected files" aria-label="Commit selected files">Commit</button>
-          <span class="command-separator" aria-hidden="true"></span>
-          <button class="dashboard-command dashboard-command-sync" data-action="syncAll" title="Sync versions" aria-label="Sync versions">Sync</button>
-          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal" title="New Branch" aria-label="New Branch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
-        </div>
+        ${renderDashboardToolbar(activeRepository)}
       </header>
       <div class="dashboard-body">
         ${renderDashboardSidebar()}

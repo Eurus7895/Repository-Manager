@@ -1,10 +1,12 @@
 import * as assert from 'assert/strict';
+import * as path from 'path';
 import { BranchService } from '../services/branchService';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
+import { renderDashboardToolbar } from '../webview/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const historyGraph = require('../../resources/historyGraph.js') as {
@@ -78,9 +80,10 @@ function testParsers(): void {
 }
 
 function testPathBoundary(): void {
-  const git = new GitCommandService('/workspace/project');
-  assert.equal(git.resolveRepositoryPath('.'), '/workspace/project');
-  assert.equal(git.resolveRepositoryPath('packages/app'), '/workspace/project/packages/app');
+  const workspaceRoot = path.resolve('/workspace/project');
+  const git = new GitCommandService(workspaceRoot);
+  assert.equal(git.resolveRepositoryPath('.'), workspaceRoot);
+  assert.equal(git.resolveRepositoryPath('packages/app'), path.join(workspaceRoot, 'packages', 'app'));
   assert.throws(() => git.resolveRepositoryPath('../outside'));
   assert.throws(() => git.resolveRepositoryPath('/tmp/outside'));
   assert.equal(git.resolveFilePath('src/index.ts'), 'src/index.ts');
@@ -148,6 +151,18 @@ function testHistoryGraph(): void {
   });
 }
 
+function testDashboardToolbarHierarchy(): void {
+  const toolbar = renderDashboardToolbar({ ahead: 2, behind: 3 });
+
+  assert.match(toolbar, /class="dashboard-remote-actions"[^>]*role="group"/);
+  assert.match(toolbar, /class="dashboard-command dashboard-command-secondary"[^>]*data-action="openCreateBranchModal"/);
+  assert.match(toolbar, /class="dashboard-command dashboard-command-commit"[^>]*data-action="openCommitChangesModal"/);
+  assert.match(toolbar, /dashboard-command-commit[^>]*>[\s\S]*?<svg[\s\S]*?Commit/);
+  assert.ok(toolbar.indexOf('data-action="openCreateBranchModal"') < toolbar.indexOf('data-action="openCommitChangesModal"'));
+  assert.match(toolbar, /id="dashboardAheadCount"[^>]*>2<\/small>/);
+  assert.match(toolbar, /id="dashboardBehindCount"[^>]*>3<\/small>/);
+}
+
 async function testRepositoryIntegration(): Promise<void> {
   const git = new GitCommandService(process.cwd());
   assert.equal(await git.isGitRepository(), true);
@@ -202,6 +217,7 @@ async function main(): Promise<void> {
   testParsers();
   testPathBoundary();
   testHistoryGraph();
+  testDashboardToolbarHierarchy();
   await testRepositoryIntegration();
   console.log('Repository Manager backend tests passed');
 }

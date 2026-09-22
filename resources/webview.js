@@ -1019,7 +1019,7 @@
     if (branchList) {
       branchList.innerHTML = branches.map(branch => {
         const useOrigin = branch.hasRemote
-          ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Replace local branch with origin/${escapeHtml(branch.name)}">Use origin</button>`
+          ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Reset local branch to origin/${escapeHtml(branch.name)}">Reset to origin</button>`
           : '';
         const deleteBranch = !branch.isCurrent && !branch.isRemote
           ? `<button class="sidebar-ref-delete-action" type="button" data-action="deleteDashboardBranch" data-branch="${escapeHtml(branch.name)}" data-has-remote="${branch.hasRemote ? 'true' : 'false'}" title="Delete local branch ${escapeHtml(branch.name)}" aria-label="Delete local branch ${escapeHtml(branch.name)}">×</button>`
@@ -1027,7 +1027,7 @@
         const branchActions = useOrigin || deleteBranch
           ? `<span class="sidebar-ref-actions">${useOrigin}${deleteBranch}</span>`
           : '';
-        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
+        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" title="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
       }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
