@@ -1718,6 +1718,8 @@ body {
 .dashboard-command,
 .dashboard-icon-command {
   display: inline-flex;
+  flex-direction: row;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -1767,7 +1769,7 @@ body {
 .dashboard-command > .command-label {
   margin: 0;
   font-size: inherit;
-  line-height: inherit;
+  line-height: 1;
 }
 
 .dashboard-command small {
