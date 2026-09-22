@@ -343,7 +343,6 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <button class="alignment-action" id="workspaceAlignmentAction" type="button" data-action="openCreateBranchModal" hidden>Align repositories</button>
           </section>
           <div class="history-controls">
-            <select id="dashboardBranchFilter" aria-label="History branch"><option value="">HEAD</option></select>
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>

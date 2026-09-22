@@ -337,6 +337,15 @@ export async function handleCheckoutBranch(
   const result = await ctx.gitOps.checkoutBranch(payload.submodule, payload.branch);
   showResult(result.success, result.message);
   await ctx.refresh();
+  await sendToWebview(ctx, {
+    type: 'branchCheckoutResult',
+    payload: {
+      repositoryPath: payload.submodule,
+      branch: payload.branch,
+      success: result.success,
+      message: result.message
+    }
+  });
 }
 
 /**
