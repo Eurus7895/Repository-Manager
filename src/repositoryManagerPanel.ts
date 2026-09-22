@@ -104,6 +104,13 @@ export class RepositoryManagerPanel {
     await this._update(fullRefresh);
   }
 
+  public async reloadDashboardHistory(repositoryPaths: string[]): Promise<void> {
+    await this._panel.webview.postMessage({
+      type: 'reloadDashboardHistory',
+      payload: { repositoryPaths }
+    });
+  }
+
   private _getResourceUris(): WebviewResourceUris {
     const graphScriptUri = this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', 'historyGraph.js')
@@ -146,7 +153,8 @@ export class RepositoryManagerPanel {
       gitOps: this._gitOps,
       prManager: this._prManager,
       workspaceRoot: this._workspaceRoot,
-      refresh: () => this.refresh()
+      refresh: () => this.refresh(),
+      reloadDashboardHistory: (repositoryPaths) => this.reloadDashboardHistory(repositoryPaths)
     };
   }
 

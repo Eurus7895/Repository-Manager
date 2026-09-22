@@ -15,6 +15,7 @@ export interface MessageHandlerContext {
   prManager: PRManager;
   workspaceRoot: string;
   refresh: () => Promise<void>;
+  reloadDashboardHistory: (repositoryPaths: string[]) => Promise<void>;
 }
 
 export type MessagePayload = {
@@ -191,10 +192,12 @@ export async function handleCreateBranch(
 
   let successCount = 0;
   let failCount = 0;
+  const successfulPaths: string[] = [];
 
-  results.forEach((result) => {
+  results.forEach((result, repositoryPath) => {
     if (result.success) {
       successCount++;
+      successfulPaths.push(repositoryPath);
     } else {
       failCount++;
     }
@@ -210,6 +213,9 @@ export async function handleCreateBranch(
     );
   }
 
+  if (successfulPaths.length > 0) {
+    await ctx.reloadDashboardHistory(successfulPaths);
+  }
   await ctx.refresh();
 }
 
@@ -246,6 +252,12 @@ export async function handleCreateBranchWithReview(
     }
   });
 
+  const successfulPaths = resultsArray
+    .filter(result => result.success)
+    .map(result => result.repository);
+  if (successfulPaths.length > 0) {
+    await ctx.reloadDashboardHistory(successfulPaths);
+  }
   await ctx.refresh();
 }
 
@@ -598,24 +610,18 @@ export async function handleDeleteBranch(
   const result = await ctx.gitOps.deleteBranch(payload.submodule, payload.branch, payload.deleteRemote);
   showResult(result.success, result.message);
 
-  // Refresh both branch surfaces after a successful deletion.
+  // Refresh the inline branch list plus the active dashboard refs and history.
   if (result.success) {
     try {
-      const [branches, refs] = await Promise.all([
-        ctx.gitOps.getBranches(payload.submodule),
-        ctx.gitOps.getRepositoryRefs(payload.submodule)
-      ]);
+      const branches = await ctx.gitOps.getBranches(payload.submodule);
       await sendToWebview(ctx, {
         type: 'branches',
         payload: { submodule: payload.submodule, branches }
       });
-      await sendToWebview(ctx, {
-        type: 'repositoryRefsLoaded',
-        payload: refs
-      });
     } catch {
       // The regular repository refresh below remains as a fallback.
     }
+    await ctx.reloadDashboardHistory([payload.submodule]);
   }
 
   await ctx.refresh();

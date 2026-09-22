@@ -1339,6 +1339,16 @@
           break;
         }
 
+        case 'reloadDashboardHistory': {
+          const repositoryPaths = Array.isArray(message.payload && message.payload.repositoryPaths)
+            ? message.payload.repositoryPaths
+            : [];
+          if (repositoryPaths.length === 0 || repositoryPaths.includes(activeDashboardRepository)) {
+            reloadActiveDashboardData();
+          }
+          break;
+        }
+
         case 'historyLoaded':
           renderHistoryPage(message.payload);
           break;

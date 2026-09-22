@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { GitOperations } from '../gitOperations';
 import { RepositoryTreeProvider } from '../repositoryTreeProvider';
+import { RepositoryManagerPanel } from '../repositoryManagerPanel';
 
 // Branch hierarchy rules
 const branchHierarchy: Record<string, { prefixes: string[]; hint: string }> = {
@@ -120,9 +121,10 @@ export function registerCreateBranchCommand(
       const branchType = getBaseBranchType(baseBranch);
       const rules = branchHierarchy[branchType] || { prefixes: ['bugfix', 'feature', 'task', 'release', 'dev'], hint: 'Select branch prefix' };
 
-      const prefixItems = rules.prefixes.map(p => ({
-        label: `${p}/`,
-        description: rules.hint
+      const prefixItems = [...rules.prefixes, 'none'].map(p => ({
+        label: p === 'none' ? 'None' : `${p}/`,
+        description: p === 'none' ? 'Create branch without a prefix' : rules.hint,
+        prefix: p
       }));
 
       const selectedPrefix = await vscode.window.showQuickPick(prefixItems, {
@@ -134,12 +136,12 @@ export function registerCreateBranchCommand(
         return;
       }
 
-      const prefix = selectedPrefix.label;
+      const prefix = selectedPrefix.prefix;
 
       // Step 4: Get branch details based on prefix
       let branchName = '';
 
-      if (prefix === 'release/') {
+      if (prefix === 'release') {
         const productName = await vscode.window.showInputBox({
           prompt: 'Enter product name',
           placeHolder: 'HexOGen',
@@ -158,7 +160,7 @@ export function registerCreateBranchCommand(
         }
 
         branchName = `release/${productName}_${version}`;
-      } else if (prefix === 'dev/') {
+      } else if (prefix === 'dev') {
         const devName = await vscode.window.showInputBox({
           prompt: 'Enter development branch name',
           placeHolder: 'sprint-42',
@@ -170,7 +172,7 @@ export function registerCreateBranchCommand(
 
         branchName = `dev/${toKebabCase(devName)}`;
       } else {
-        // bugfix, feature, task
+        // bugfix, feature, task, or no prefix
         const ticketId = await vscode.window.showInputBox({
           prompt: 'Enter ticket ID (optional)',
           placeHolder: 'ECPT-15474',
@@ -187,9 +189,10 @@ export function registerCreateBranchCommand(
 
         const kebabTitle = toKebabCase(taskTitle);
 
+        const prefixString = prefix === 'none' ? '' : `${prefix}/`;
         branchName = ticketId
-          ? `${prefix}${ticketId}-${kebabTitle}`
-          : `${prefix}${kebabTitle}`;
+          ? `${prefixString}${ticketId}-${kebabTitle}`
+          : `${prefixString}${kebabTitle}`;
       }
 
       // Create branches
@@ -260,6 +263,9 @@ export function registerCreateBranchCommand(
       }
 
       repositoryTreeProvider.refresh();
+      if (successfulPaths.length > 0) {
+        await RepositoryManagerPanel.currentPanel?.reloadDashboardHistory(successfulPaths);
+      }
     })
   );
 }
