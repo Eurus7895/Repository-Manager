@@ -1780,9 +1780,13 @@ body {
   white-space: nowrap;
 }
 
-.dashboard-command[data-operation] { min-width: 80px; }
-.dashboard-command-sync { min-width: 124px; }
-.dashboard-command-primary { min-width: 128px; }
+.dashboard-command[data-operation],
+.dashboard-command-sync,
+.dashboard-command-primary {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+}
 
 .dashboard-icon-command {
   width: 36px;
@@ -1805,13 +1809,19 @@ body {
 }
 
 .dashboard-command small {
-  margin-left: 6px;
-  padding: 0 6px;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  margin: 0;
+  padding: 0 4px;
   border-radius: 10px;
   color: var(--text-secondary);
   background: var(--border);
   font-family: var(--vscode-editor-font-family), Consolas, monospace;
   font-size: 10px;
+  line-height: 14px;
+  text-align: center;
 }
 
 .dashboard-command:hover,
@@ -2283,11 +2293,12 @@ button.reference-detail-item:hover { background: #222730; }
 
 .graph-node-button {
   position: absolute;
-  width: 22px;
-  height: 22px;
-  transform: translate(-50%, -50%);
+  z-index: 3;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
   padding: 0;
-  border: 0;
+  border: 2px solid transparent;
   border-radius: 50%;
   outline: 0;
   background: transparent;
@@ -2314,7 +2325,10 @@ button.reference-detail-item:hover { background: #222730; }
 }
 
 .graph-node-button:hover,
-.graph-node-button:focus-visible { box-shadow: inset 0 0 0 2px rgba(229, 165, 71, .62); }
+.graph-node-button:focus-visible {
+  border-color: rgba(229, 165, 71, .78);
+  background: rgba(229, 165, 71, .08);
+}
 
 .graph-node-button[data-marker="B"]::after,
 .graph-node-button[data-marker="T"]::after {
