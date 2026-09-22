@@ -598,16 +598,23 @@ export async function handleDeleteBranch(
   const result = await ctx.gitOps.deleteBranch(payload.submodule, payload.branch, payload.deleteRemote);
   showResult(result.success, result.message);
 
-  // Refresh the branches panel by sending updated branches
+  // Refresh both branch surfaces after a successful deletion.
   if (result.success) {
     try {
-      const branches = await ctx.gitOps.getBranches(payload.submodule);
+      const [branches, refs] = await Promise.all([
+        ctx.gitOps.getBranches(payload.submodule),
+        ctx.gitOps.getRepositoryRefs(payload.submodule)
+      ]);
       await sendToWebview(ctx, {
         type: 'branches',
         payload: { submodule: payload.submodule, branches }
       });
+      await sendToWebview(ctx, {
+        type: 'repositoryRefsLoaded',
+        payload: refs
+      });
     } catch {
-      // Ignore branch refresh errors
+      // The regular repository refresh below remains as a fallback.
     }
   }
 

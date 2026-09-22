@@ -156,6 +156,18 @@
       requestBranchCheckout(el.dataset.branch, true);
     },
 
+    deleteDashboardBranch: (el) => {
+      const branch = el.dataset.branch;
+      if (!branch || !activeDashboardRepository) return;
+      const deleteRemote = el.dataset.hasRemote === 'true'
+        && confirm(`Also delete 'origin/${branch}'?\n\nChoose Cancel to delete the local branch only.`);
+      postMessage('deleteBranch', {
+        submodule: activeDashboardRepository,
+        branch,
+        deleteRemote
+      });
+    },
+
     openBranchCompareModal: () => {
       const modal = document.getElementById('branchCompareModal');
       const base = document.getElementById('compareBaseBranch');
@@ -909,7 +921,13 @@
         const useOrigin = branch.hasRemote
           ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Replace local branch with origin/${escapeHtml(branch.name)}">Use origin</button>`
           : '';
-        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${useOrigin}</div>`;
+        const deleteBranch = !branch.isCurrent && !branch.isRemote
+          ? `<button class="sidebar-ref-delete-action" type="button" data-action="deleteDashboardBranch" data-branch="${escapeHtml(branch.name)}" data-has-remote="${branch.hasRemote ? 'true' : 'false'}" title="Delete local branch ${escapeHtml(branch.name)}" aria-label="Delete local branch ${escapeHtml(branch.name)}">×</button>`
+          : '';
+        const branchActions = useOrigin || deleteBranch
+          ? `<span class="sidebar-ref-actions">${useOrigin}${deleteBranch}</span>`
+          : '';
+        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
       }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
@@ -1491,20 +1509,21 @@
 
     let prefixes;
     if (rules) {
-      prefixes = rules.prefixes;
+      prefixes = [...rules.prefixes, 'none'];
       // Update hints only for known branch types
       document.getElementById('baseBranchHint').textContent = 'Type: ' + branchType;
-      document.getElementById('prefixRuleHint').textContent = rules.hint;
+      document.getElementById('prefixRuleHint').textContent = rules.hint + '. None creates a branch without a prefix';
     } else {
       // Unknown branch type - don't show type hint, show all prefix options
-      prefixes = ['bugfix', 'feature', 'task', 'release', 'dev'];
+      prefixes = ['bugfix', 'feature', 'task', 'release', 'dev', 'none'];
       document.getElementById('baseBranchHint').textContent = '';
-      document.getElementById('prefixRuleHint').textContent = '';
+      document.getElementById('prefixRuleHint').textContent = 'None creates a branch without a prefix';
     }
 
     // Update options based on rules
     prefixSelect.innerHTML = prefixes.map(p => {
-      return `<option value="${p}">${p}/</option>`;
+      const label = p === 'none' ? 'None' : p + '/';
+      return `<option value="${p}">${label}</option>`;
     }).join('');
 
     // Try to keep current selection if valid, otherwise use first option
@@ -1545,12 +1564,12 @@
       const ticketId = document.getElementById('ticketId').value.trim();
       const taskTitle = document.getElementById('taskTitle').value.trim();
       const kebabTitle = toKebabCase(taskTitle);
+      const prefixStr = prefix === 'none' ? '' : prefix + '/';
 
-      const prefixStr = prefix + '/';
       if (ticketId && kebabTitle) {
         branchName = prefixStr + ticketId + '-' + kebabTitle;
       } else if (ticketId) {
-        branchName = prefixStr + ticketId + '-';
+        branchName = prefix === 'none' ? ticketId : prefixStr + ticketId + '-';
       } else if (kebabTitle) {
         branchName = prefixStr + kebabTitle;
       } else {
@@ -1583,7 +1602,7 @@
     } else if (prefix === 'dev') {
       devBranchGroup.style.display = 'block';
     } else {
-      // feature, task, bugfix
+      // feature, task, bugfix, or no prefix
       ticketIdGroup.style.display = 'block';
       taskTitleGroup.style.display = 'block';
     }

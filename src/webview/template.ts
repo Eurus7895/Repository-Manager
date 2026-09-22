@@ -88,6 +88,7 @@ function renderModals(repositories: RepositoryInfo[]): string {
                 <option value="bugfix">bugfix</option>
                 <option value="release">release</option>
                 <option value="dev">dev</option>
+                <option value="none">None</option>
               </select>
               <div id="prefixRuleHint" class="form-hint"></div>
             </div>
