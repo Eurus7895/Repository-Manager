@@ -149,7 +149,11 @@
     },
 
     selectDashboardBranch: (el) => {
-      requestBranchCheckout(el.dataset.branch, el);
+      requestBranchCheckout(el.dataset.branch);
+    },
+
+    replaceLocalBranchFromRemote: (el) => {
+      requestBranchCheckout(el.dataset.branch, true);
     },
 
     openBranchCompareModal: () => {
@@ -516,17 +520,21 @@
     });
   }
 
-  function requestBranchCheckout(branch) {
+  function requestBranchCheckout(branch, replaceWithRemote = false) {
     if (!branch || pendingBranchCheckout) return;
     const current = getRepository(activeDashboardRepository);
-    if (current && current.currentBranch === branch) {
+    if (current && current.currentBranch === branch && !replaceWithRemote) {
       setHistoryRevision('');
       requestDashboardHistory(0, false);
       return;
     }
-    pendingBranchCheckout = { repositoryPath: activeDashboardRepository, branch };
+    pendingBranchCheckout = { repositoryPath: activeDashboardRepository, branch, replaceWithRemote };
     setBranchCheckoutPending(true);
-    postMessage('checkoutBranch', { submodule: activeDashboardRepository, branch });
+    postMessage('checkoutBranch', {
+      submodule: activeDashboardRepository,
+      branch,
+      replaceWithRemote
+    });
   }
 
   function updateCommitCompareUI() {
@@ -723,6 +731,7 @@
     saveState();
     requestDashboardHistory(0, false);
     postMessage('getRepositoryRefs', { repositoryPath });
+    postMessage('refresh', { repositoryPath });
   }
 
   function captureHistoryViewport(history) {
@@ -897,7 +906,10 @@
 
     if (branchList) {
       branchList.innerHTML = branches.map(branch => {
-        return `<button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>`;
+        const useOrigin = branch.hasRemote
+          ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Replace local branch with origin/${escapeHtml(branch.name)}">Use origin</button>`
+          : '';
+        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${useOrigin}</div>`;
       }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {

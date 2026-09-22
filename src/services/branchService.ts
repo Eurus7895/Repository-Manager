@@ -140,15 +140,43 @@ export class BranchService {
   /**
    * Checkout a branch in a submodule
    */
-  async checkoutBranch(submodulePath: string, branchName: string): Promise<CommandResult> {
+  async checkoutBranch(
+    submodulePath: string,
+    branchName: string,
+    replaceWithRemote: boolean = false
+  ): Promise<CommandResult> {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
+      if (replaceWithRemote) {
+        const workingTree = await this.gitCmd.execGit(['status', '--porcelain'], fullPath);
+        if (workingTree.trim()) {
+          return {
+            success: false,
+            message: 'Cannot replace the local branch while the working tree has uncommitted changes'
+          };
+        }
+
+        const remoteBranch = `origin/${branchName}`;
+        await this.gitCmd.execGit(['rev-parse', '--verify', `refs/remotes/${remoteBranch}`], fullPath);
+        await this.gitCmd.execGit(['checkout', '-B', branchName, remoteBranch], fullPath);
+        await this.gitCmd.execGit(['branch', '--set-upstream-to', remoteBranch, branchName], fullPath);
+        return {
+          success: true,
+          message: `Replaced local '${branchName}' with '${remoteBranch}'`
+        };
+      }
+
       await this.gitCmd.execGit(['checkout', branchName], fullPath);
       return { success: true, message: `Checked out '${branchName}'` };
     } catch (error: unknown) {
       const err = error as Error;
-      return { success: false, message: `Failed to checkout: ${err.message}` };
+      return {
+        success: false,
+        message: replaceWithRemote
+          ? `Failed to replace local branch from origin: ${err.message}`
+          : `Failed to checkout: ${err.message}`
+      };
     }
   }
 

@@ -332,9 +332,34 @@ export async function handlePushCreatedBranches(
  */
 export async function handleCheckoutBranch(
   ctx: MessageHandlerContext,
-  payload: { submodule: string; branch: string }
+  payload: { submodule: string; branch: string; replaceWithRemote?: boolean }
 ): Promise<void> {
-  const result = await ctx.gitOps.checkoutBranch(payload.submodule, payload.branch);
+  if (payload.replaceWithRemote) {
+    const confirm = await vscode.window.showWarningMessage(
+      `Replace local branch '${payload.branch}' with 'origin/${payload.branch}'? Local-only commits will be discarded.`,
+      { modal: true },
+      'Use origin'
+    );
+    if (confirm !== 'Use origin') {
+      await sendToWebview(ctx, {
+        type: 'branchCheckoutResult',
+        payload: {
+          repositoryPath: payload.submodule,
+          branch: payload.branch,
+          success: false,
+          cancelled: true,
+          message: 'Branch replacement cancelled'
+        }
+      });
+      return;
+    }
+  }
+
+  const result = await ctx.gitOps.checkoutBranch(
+    payload.submodule,
+    payload.branch,
+    payload.replaceWithRemote === true
+  );
   showResult(result.success, result.message);
   await ctx.refresh();
   await sendToWebview(ctx, {
@@ -616,7 +641,10 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'createBranchWithReview': (ctx, payload) => handleCreateBranchWithReview(ctx, payload as { submodules: string[]; branchName: string; baseBranch: string }),
   'getBaseBranchesForCreate': (ctx) => handleGetBaseBranchesForCreate(ctx),
   'pushCreatedBranches': (ctx, payload) => handlePushCreatedBranches(ctx, payload as { submodules: string[]; branchName: string }),
-  'checkoutBranch': (ctx, payload) => handleCheckoutBranch(ctx, payload as { submodule: string; branch: string }),
+  'checkoutBranch': (ctx, payload) => handleCheckoutBranch(
+    ctx,
+    payload as { submodule: string; branch: string; replaceWithRemote?: boolean }
+  ),
   'pullChanges': (ctx, payload) => handlePullChanges(ctx, payload as { submodule: string }),
   'pushChanges': (ctx, payload) => handlePushChanges(ctx, payload as { submodule: string }),
   'fetchUpdates': (ctx, payload) => handleFetchUpdates(ctx, payload as { submodule: string }),
