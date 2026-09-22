@@ -320,10 +320,6 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <strong>Repository Manager</strong>
         </div>
         ${renderWorkspaceFolderSelector(workspaceFolders)}
-        <div class="command-context" id="dashboardCommandContext">
-          <span class="context-path">${escapeHtml(activeRepository?.path === '.' ? activeRepository?.name : activeRepository?.path || 'No repository')}</span>
-          <span class="context-branch">⑂ ${escapeHtml(activeRepository?.currentBranch || '(detached)')}</span>
-        </div>
         <div class="command-cluster command-cluster-right">
           <button class="dashboard-icon-command" data-action="refresh" data-operation="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
           <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg><span class="command-label">Fetch</span></button>
@@ -337,11 +333,6 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
       <div class="dashboard-body">
         ${renderDashboardSidebar(repositories)}
         <main class="dashboard-main">
-          <section class="workspace-alignment" id="workspaceAlignment">
-            <div class="alignment-heading"><span>Workspace alignment</span><strong id="workspaceAlignmentSummary">Checking repositories…</strong></div>
-            <div class="alignment-cards" id="workspaceAlignmentCards"></div>
-            <button class="alignment-action" id="workspaceAlignmentAction" type="button" data-action="openCreateBranchModal" hidden>Align repositories</button>
-          </section>
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>

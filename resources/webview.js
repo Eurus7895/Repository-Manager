@@ -707,10 +707,6 @@
       item.classList.toggle('active', item.dataset.repository === repositoryPath);
     });
 
-    const context = document.getElementById('dashboardCommandContext');
-    if (context) {
-      context.innerHTML = `<span class="context-path">${escapeHtml(repository.path === '.' ? repository.name : repository.path)}</span><span class="context-branch">⑂ ${escapeHtml(repository.currentBranch || '(detached)')}</span>`;
-    }
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -725,7 +721,6 @@
     const history = document.getElementById('dashboardHistory');
     if (history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
     clearCommitDetail();
-    renderWorkspaceAlignment();
     saveState();
     requestDashboardHistory(0, false);
     postMessage('getRepositoryRefs', { repositoryPath });
@@ -902,37 +897,6 @@
       item.classList.toggle('selected', selected);
       item.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
-  }
-
-  function renderWorkspaceAlignment() {
-    const active = getRepository(activeDashboardRepository);
-    const summary = document.getElementById('workspaceAlignmentSummary');
-    const cards = document.getElementById('workspaceAlignmentCards');
-    const action = document.getElementById('workspaceAlignmentAction');
-    if (!active || !summary || !cards || !action) return;
-
-    const targetBranch = active.currentBranch || '';
-    const aligned = repositoryData.filter(repository => targetBranch && repository.currentBranch === targetBranch);
-    const needsAlignment = repositoryData.filter(repository => !targetBranch || repository.currentBranch !== targetBranch);
-    summary.textContent = targetBranch
-      ? `${aligned.length} of ${repositoryData.length} on target branch`
-      : 'Active repository is detached';
-
-    cards.innerHTML = repositoryData.map(repository => {
-      const isConflict = repository.status === 'conflict';
-      const isDetached = !repository.currentBranch || repository.status === 'detached';
-      const isAligned = Boolean(targetBranch) && repository.currentBranch === targetBranch;
-      const tone = isConflict ? 'error' : isAligned ? 'good' : 'warning';
-      let detail = 'on target';
-      if (isConflict) detail = `on ${repository.currentBranch || 'detached'} · conflict`;
-      else if (isDetached) detail = `pointer drift · ${repository.currentCommit || 'detached'}`;
-      else if (!isAligned) detail = `on ${repository.currentBranch}`;
-      else if (repository.hasChanges) detail = 'on target · uncommitted changes';
-      return `<button class="alignment-card alignment-${tone}" type="button" data-action="selectDashboardRepository" data-repository="${escapeHtml(repository.path)}"><strong><i></i>${escapeHtml(repository.name)}</strong><span>${escapeHtml(detail)}</span></button>`;
-    }).join('');
-
-    action.hidden = needsAlignment.length === 0;
-    action.textContent = `Align ${needsAlignment.length} ${needsAlignment.length === 1 ? 'repo' : 'repos'}`;
   }
 
   function clearCommitDetail() {
@@ -1397,8 +1361,6 @@
         if (branch) branch.textContent = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`;
         if (sync) sync.textContent = `${repository.behind > 0 ? `↓${repository.behind}` : ''}${repository.behind > 0 && repository.ahead > 0 ? ' ' : ''}${repository.ahead > 0 ? `↑${repository.ahead}` : ''}`;
         if (repository.path === activeDashboardRepository) {
-          const context = document.getElementById('dashboardCommandContext');
-          if (context) context.innerHTML = `<span class="context-path">${escapeHtml(repository.path === '.' ? repository.name : repository.path)}</span><span class="context-branch">⑂ ${escapeHtml(repository.currentBranch || '(detached)')}</span>`;
           const behindCount = document.getElementById('dashboardBehindCount');
           const aheadCount = document.getElementById('dashboardAheadCount');
           if (behindCount) {
@@ -1434,7 +1396,6 @@
         }
       }
     });
-    renderWorkspaceAlignment();
   }
 
   function getStatusIcon(status) {
@@ -1736,12 +1697,11 @@
 
   function applyHistoryPanelHeight(height) {
     const main = document.querySelector('.dashboard-main');
-    const alignment = document.getElementById('workspaceAlignment');
     const controls = document.querySelector('.history-controls');
-    if (!main || !alignment || !controls) return;
-    const max = main.clientHeight - alignment.offsetHeight - controls.offsetHeight - 6 - 120;
+    if (!main || !controls) return;
+    const max = main.clientHeight - controls.offsetHeight - 6 - 120;
     historyPanelHeight = clampPanelSize(height, 120, Math.max(120, max));
-    main.style.gridTemplateRows = `${alignment.offsetHeight}px ${controls.offsetHeight}px ${historyPanelHeight}px 6px minmax(120px, 1fr)`;
+    main.style.gridTemplateRows = `${controls.offsetHeight}px ${historyPanelHeight}px 6px minmax(120px, 1fr)`;
   }
 
   function applyFilesPanelWidth(width) {
