@@ -324,7 +324,13 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
           <section class="history-region">
-            <div class="history-table-header"><span class="graph-column">Graph</span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
+            <div class="history-table-header" id="historyTableHeader">
+              <span class="history-column-header graph-column">Graph<span class="history-column-resizer" data-column-index="0" role="separator" aria-label="Resize Graph column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Message<span class="history-column-resizer" data-column-index="1" role="separator" aria-label="Resize Message column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Author<span class="history-column-resizer" data-column-index="2" role="separator" aria-label="Resize Author column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Date<span class="history-column-resizer" data-column-index="3" role="separator" aria-label="Resize Date column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Commit<span class="history-column-resizer" data-column-index="4" role="separator" aria-label="Resize Commit column" aria-orientation="vertical" tabindex="0"></span></span>
+            </div>
             <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
             <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
           </section>

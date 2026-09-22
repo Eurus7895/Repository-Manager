@@ -31,6 +31,12 @@
   let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
+  const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
+  let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
+    && previousState.historyColumnWidths.length === defaultHistoryColumnWidths.length
+    ? previousState.historyColumnWidths.map(Number)
+    : [];
+  let historyMessageMinimum = 260;
   const runningToolbarOperations = new Set();
 
   // Save state helper
@@ -45,7 +51,8 @@
       comparisonRepository,
       dashboardHistoryState,
       historyPanelHeight,
-      filesPanelWidth
+      filesPanelWidth,
+      historyColumnWidths
     });
   }
 
@@ -853,6 +860,9 @@
     const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
     const historyRegion = history.closest('.history-region');
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
+    if (historyColumnWidths.length > 0 && historyColumnWidths[0] < graphModel.width) {
+      historyColumnWidths[0] = graphModel.width;
+    }
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = renderHistoryRefs(commit.refs, true);
       return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
@@ -868,6 +878,8 @@
     history.innerHTML = rows
       ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
       : '<div class="dashboard-empty">No commits match this view.</div>';
+    updateHistoryMessageMinimum(history);
+    applyHistoryColumnWidths(historyColumnWidths);
     const viewport = pendingHistoryViewport;
     if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
       const anchor = viewport.commit
@@ -1731,6 +1743,92 @@
     return Math.max(min, Math.min(max, value));
   }
 
+  function getHistoryColumnMinimum(index) {
+    return [52, historyMessageMinimum, 90, 80, 70][index] || 70;
+  }
+
+  function applyHistoryColumnWidths(widths) {
+    const region = document.querySelector('.history-region');
+    if (!region) return;
+    if (!Array.isArray(widths) || widths.length !== defaultHistoryColumnWidths.length) {
+      const reservedWidth = 76 + 150 + 110 + 80 + 48 + 40;
+      const messageWidth = Math.max(historyMessageMinimum, region.clientWidth - reservedWidth);
+      historyColumnWidths = [76, messageWidth, 150, 110, 80];
+    } else {
+      historyColumnWidths = widths.map((width, index) => {
+        const normalized = Number.isFinite(width) ? width : defaultHistoryColumnWidths[index];
+        return Math.round(Math.max(getHistoryColumnMinimum(index), normalized));
+      });
+    }
+
+    region.style.setProperty('--history-graph-column-width', `${historyColumnWidths[0]}px`);
+    region.style.setProperty('--history-message-column-width', `${historyColumnWidths[1]}px`);
+    region.style.setProperty('--history-author-column-width', `${historyColumnWidths[2]}px`);
+    region.style.setProperty('--history-date-column-width', `${historyColumnWidths[3]}px`);
+    region.style.setProperty('--history-commit-column-width', `${historyColumnWidths[4]}px`);
+  }
+
+  function updateHistoryMessageMinimum(history) {
+    if (!history) return;
+    const refGroups = Array.from(history.querySelectorAll('.history-refs'));
+    const widestRefs = refGroups.reduce((width, refs) => Math.max(width, refs.scrollWidth), 0);
+    historyMessageMinimum = Math.max(260, Math.ceil(widestRefs + 140));
+    if (historyColumnWidths.length > 0 && historyColumnWidths[1] < historyMessageMinimum) {
+      historyColumnWidths[1] = historyMessageMinimum;
+    }
+  }
+
+  function setupHistoryColumnResizers() {
+    const header = document.getElementById('historyTableHeader');
+    const history = document.getElementById('dashboardHistory');
+    if (!header || !history) return;
+
+    applyHistoryColumnWidths(historyColumnWidths);
+
+    history.addEventListener('scroll', function () {
+      header.style.transform = `translateX(-${history.scrollLeft}px)`;
+    });
+
+    header.querySelectorAll('.history-column-resizer').forEach(handle => {
+      const columnIndex = Number(handle.dataset.columnIndex);
+      let startX = 0;
+      let startWidth = 0;
+
+      handle.addEventListener('pointerdown', function (event) {
+        event.preventDefault();
+        startX = event.clientX;
+        startWidth = historyColumnWidths[columnIndex];
+        handle.classList.add('dragging');
+        handle.setPointerCapture(event.pointerId);
+      });
+
+      handle.addEventListener('pointermove', function (event) {
+        if (!handle.hasPointerCapture(event.pointerId)) return;
+        const nextWidth = startWidth + event.clientX - startX;
+        historyColumnWidths[columnIndex] = Math.max(getHistoryColumnMinimum(columnIndex), nextWidth);
+        applyHistoryColumnWidths(historyColumnWidths);
+      });
+
+      handle.addEventListener('pointerup', function (event) {
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+        handle.classList.remove('dragging');
+        saveState();
+      });
+
+      handle.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        const delta = event.key === 'ArrowRight' ? 16 : -16;
+        historyColumnWidths[columnIndex] = Math.max(
+          getHistoryColumnMinimum(columnIndex),
+          historyColumnWidths[columnIndex] + delta
+        );
+        applyHistoryColumnWidths(historyColumnWidths);
+        saveState();
+      });
+    });
+  }
+
   function applyHistoryPanelHeight(height) {
     const main = document.querySelector('.dashboard-main');
     const controls = document.querySelector('.history-controls');
@@ -1810,6 +1908,7 @@
   }
 
   // Initialize UI on load
+  setupHistoryColumnResizers();
   setupDashboardSplitters();
   updateSelectionUI();
   updateRebaseUI();

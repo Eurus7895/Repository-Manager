@@ -2610,3 +2610,96 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   .branch-repository-row { grid-template-columns: 18px minmax(90px, 1fr) auto; }
   .branch-repository-row code { display: none; }
 }
+
+
+/* Resizable history columns */
+.history-region {
+  --history-graph-column-width: 76px;
+  --history-message-column-width: 420px;
+  --history-author-column-width: 150px;
+  --history-date-column-width: 110px;
+  --history-commit-column-width: 80px;
+  --history-table-width: calc(
+    var(--history-graph-column-width)
+    + var(--history-message-column-width)
+    + var(--history-author-column-width)
+    + var(--history-date-column-width)
+    + var(--history-commit-column-width)
+    + 48px
+    + (2 * var(--history-horizontal-padding))
+  );
+}
+
+.history-table-header,
+.history-row {
+  grid-template-columns:
+    var(--history-graph-column-width)
+    var(--history-message-column-width)
+    var(--history-author-column-width)
+    var(--history-date-column-width)
+    var(--history-commit-column-width);
+  width: var(--history-table-width);
+  min-width: 100%;
+}
+
+.history-table-header {
+  position: relative;
+  z-index: 4;
+  will-change: transform;
+}
+
+.history-table-content {
+  width: var(--history-table-width);
+  min-width: 100%;
+}
+
+.history-column-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.history-column-resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: -8px;
+  bottom: 0;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.history-column-resizer::after {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  bottom: 5px;
+  width: 1px;
+  content: '';
+  background: transparent;
+}
+
+.history-column-resizer:hover::after,
+.history-column-resizer:focus-visible::after,
+.history-column-resizer.dragging::after {
+  background: var(--accent);
+}
+
+.history-column-resizer:focus-visible {
+  outline: 0;
+}
+
+.history-refs {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.history-ref {
+  max-width: none;
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
