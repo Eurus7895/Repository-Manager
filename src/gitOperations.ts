@@ -218,8 +218,12 @@ export class GitOperations {
   /**
    * Checkout a branch in a submodule
    */
-  async checkoutBranch(submodulePath: string, branchName: string): Promise<CommandResult> {
-    return this.branchService.checkoutBranch(submodulePath, branchName);
+  async checkoutBranch(
+    submodulePath: string,
+    branchName: string,
+    replaceWithRemote: boolean = false
+  ): Promise<CommandResult> {
+    return this.branchService.checkoutBranch(submodulePath, branchName, replaceWithRemote);
   }
 
   /**
