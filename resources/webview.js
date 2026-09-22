@@ -514,16 +514,20 @@
           : '';
       row.classList.toggle('compare-base', marker === 'B');
       row.classList.toggle('compare-target', marker === 'T');
-      const node = row.querySelector('.graph-node-button');
-      if (node) {
-        node.dataset.marker = marker;
-        node.setAttribute('aria-pressed', marker ? 'true' : 'false');
-        const accessibleLabel = marker
-          ? `${marker === 'B' ? 'Base' : 'Target'} commit ${shortRevision(row.dataset.commit)}. Press to remove from comparison.`
-          : `Select commit ${shortRevision(row.dataset.commit)} for comparison.`;
-        node.setAttribute('aria-label', accessibleLabel);
-        node.title = accessibleLabel;
-      }
+    });
+    document.querySelectorAll('.graph-node-button').forEach(node => {
+      const marker = commitCompareSelection[0] === node.dataset.commit
+        ? 'B'
+        : commitCompareSelection[1] === node.dataset.commit
+          ? 'T'
+          : '';
+      node.dataset.marker = marker;
+      node.setAttribute('aria-pressed', marker ? 'true' : 'false');
+      const accessibleLabel = marker
+        ? `${marker === 'B' ? 'Base' : 'Target'} commit ${shortRevision(node.dataset.commit)}. Press to remove from comparison.`
+        : `Select commit ${shortRevision(node.dataset.commit)} for comparison.`;
+      node.setAttribute('aria-label', accessibleLabel);
+      node.title = accessibleLabel;
     });
     const status = document.getElementById('commitCompareStatus');
     if (!status) return;
@@ -738,6 +742,7 @@
   function renderHistoryGraph(commits, graphModel) {
     const paths = [];
     const nodes = [];
+    const controls = [];
     graphModel.rows.forEach((layout, index) => {
       const commit = commits[index];
       const top = layout.rowIndex * graphModel.rowHeight;
@@ -766,13 +771,13 @@
       nodes.push(decorated
         ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
         : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
+      controls.push(`<button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="left:${currentX - 11}px;top:${top + 5}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button>`);
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}" aria-hidden="true">${paths.join('')}${nodes.join('')}</svg>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}" aria-hidden="true">${paths.join('')}${nodes.join('')}</svg><div class="history-graph-controls" style="width:${graphModel.width}px;height:${graphModel.height}px">${controls.join('')}</div>`;
   }
 
-  function renderGraphCell(commit, layout) {
-    const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
-    return `<span class="history-graph-cell"><button class="graph-node-button" type="button" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" style="--graph-node-x:${currentX}px" title="Select ${escapeHtml(commit.shortHash)} for comparison" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""></button></span>`;
+  function renderGraphCell() {
+    return '<span class="history-graph-cell" aria-hidden="true"></span>';
   }
 
   function renderHistoryPage(payload) {
@@ -793,7 +798,7 @@
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = (commit.refs || []).map(ref => `<span class="history-ref ref-${escapeHtml(ref.kind)}">${escapeHtml(ref.name)}</span>`).join('');
       return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
-        ${renderGraphCell(commit, graphModel.rows[index])}
+        ${renderGraphCell()}
         <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<button class="history-subject" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">${escapeHtml(commit.subject)}</button></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
         <span class="history-date">${escapeHtml(formatHistoryDate(commit.authoredAt))}</span>

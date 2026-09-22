@@ -1845,6 +1845,10 @@ body {
   white-space: nowrap;
 }
 
+.dashboard-command[data-operation] { min-width: 64px; }
+.dashboard-command-sync { min-width: 110px; }
+.dashboard-command-primary { min-width: 112px; }
+
 .dashboard-icon-command {
   width: 36px;
   padding: 0;
@@ -2414,6 +2418,14 @@ button.reference-detail-item:hover { background: #222730; }
   pointer-events: none;
 }
 
+.history-graph-controls {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: var(--history-horizontal-padding);
+  pointer-events: none;
+}
+
 .graph-edge { fill: none; stroke-width: 2; stroke-linecap: round; }
 .graph-lane-0 { stroke: var(--warning); }
 .graph-lane-1 { stroke: var(--accent); }
@@ -2457,9 +2469,6 @@ button.reference-detail-item:hover { background: #222730; }
 
 .graph-node-button {
   position: absolute;
-  z-index: 3;
-  top: 5px;
-  left: calc(var(--graph-node-x) - 11px);
   width: 22px;
   height: 22px;
   padding: 0;
@@ -2468,6 +2477,7 @@ button.reference-detail-item:hover { background: #222730; }
   outline: 0;
   background: transparent;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .graph-node-button:hover,
@@ -2491,8 +2501,8 @@ button.reference-detail-item:hover { background: #222730; }
 
 .graph-node-button[data-marker="B"]::after { background: var(--info); }
 .graph-node-button[data-marker="T"]::after { background: var(--accent); }
-.history-row.compare-base .graph-node-button { box-shadow: inset 0 0 0 2px rgba(139, 167, 240, .55); }
-.history-row.compare-target .graph-node-button { box-shadow: inset 0 0 0 2px rgba(60, 199, 166, .55); }
+.graph-node-button[data-marker="B"] { box-shadow: inset 0 0 0 2px rgba(139, 167, 240, .55); }
+.graph-node-button[data-marker="T"] { box-shadow: inset 0 0 0 2px rgba(60, 199, 166, .55); }
 
 body.vscode-high-contrast .graph-node-button:focus-visible,
 body.vscode-high-contrast .graph-node-button[data-marker="B"],
@@ -2782,7 +2792,7 @@ body.vscode-high-contrast .graph-node-button[data-marker="T"] {
 @media (max-width: 1050px) {
   .dashboard-command-bar { gap: 8px; padding: 0 10px; }
   .dashboard-brand strong { display: none; }
-  .dashboard-command { padding: 0 9px; }
+  .dashboard-command { padding: 0 11px; }
   .dashboard-command-sync { display: none; }
   .command-separator { display: none; }
   .dashboard-body { grid-template-columns: 248px minmax(0, 1fr); }
