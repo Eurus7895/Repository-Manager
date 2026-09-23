@@ -31,7 +31,7 @@ export class GitCommandService {
         timeout: timeoutMs,
         windowsHide: true
       }, (error, stdout, stderr) => {
-        if (!error || (allowDiffExitCode && error.code === 1 && !error.killed)) {
+        if (!error || (allowDiffExitCode && error.code === 1 && !error.killed && !stderr.trim())) {
           resolve(stdout);
           return;
         }

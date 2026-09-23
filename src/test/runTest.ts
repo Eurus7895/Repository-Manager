@@ -1,6 +1,6 @@
 import * as assert from 'assert/strict';
 import * as path from 'path';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
@@ -244,6 +244,27 @@ async function testWorkingTreePreview(): Promise<void> {
 
     const untracked = await service.getWorkingTreePreview('.', 'new file.txt', 'unstaged', 3);
     assert.match(untracked.patch, /\+untracked content/);
+
+    const nestedRoot = path.join(repositoryRoot, 'nested');
+    mkdirSync(nestedRoot);
+    const nestedGit = new GitCommandService(nestedRoot);
+    await nestedGit.execGit(['init', '-q']);
+    await nestedGit.execGit(['config', 'user.name', 'Nested Preview Test']);
+    await nestedGit.execGit(['config', 'user.email', 'nested@example.com']);
+    writeFileSync(path.join(nestedRoot, 'inner.txt'), 'committed content\n');
+    await nestedGit.execGit(['add', '--', 'inner.txt']);
+    await nestedGit.execGit(['commit', '-m', 'nested initial']);
+    const nestedHead = await nestedGit.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(nestedRoot, 'inner.txt'), 'uncommitted nested change\n');
+
+    const nestedStatus = await service.getWorkingTreeChanges('.');
+    assert.ok(nestedStatus.some(change => change.path === 'nested/' && change.untracked));
+    const nested = await service.getWorkingTreePreview('.', 'nested/', 'unstaged', 6);
+    assert.match(nested.patch, new RegExp('Subproject commit ' + nestedHead));
+    assert.match(nested.patch, /Only the HEAD commit is included/);
+    assert.doesNotMatch(nested.patch, /uncommitted nested change/);
+    assert.notEqual(nested.patch, '');
+    await assert.rejects(service.getWorkingTreePreview('.', 'nested/', 'staged', 7));
     await assert.rejects(service.getWorkingTreePreview('.', 'new file.txt', 'staged', 4));
     await assert.rejects(service.getWorkingTreePreview('.', '../outside', 'unstaged', 5));
   } finally {
