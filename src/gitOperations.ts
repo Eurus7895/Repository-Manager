@@ -30,7 +30,8 @@ import {
   HistoryPage,
   HistoryQuery,
   RepositoryRefs,
-  WorkingTreeChange
+  WorkingTreeChange,
+  WorkingTreePreview
 } from './types';
 
 export class GitOperations {
@@ -252,6 +253,12 @@ export class GitOperations {
 
   async getWorkingTreeChanges(repositoryPath: string): Promise<WorkingTreeChange[]> {
     return this.commitService.getWorkingTreeChanges(repositoryPath);
+  }
+
+  async getWorkingTreePreview(
+    repositoryPath: string, filePath: string, mode: 'staged' | 'unstaged', requestId: number
+  ): Promise<WorkingTreePreview> {
+    return this.commitService.getWorkingTreePreview(repositoryPath, filePath, mode, requestId);
   }
 
   async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {

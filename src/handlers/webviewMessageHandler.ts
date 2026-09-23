@@ -173,6 +173,33 @@ export async function handleGetWorkingTreeChanges(ctx: MessageHandlerContext, pa
   }
 }
 
+export async function handleGetWorkingTreePreview(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const filePath = requireString(request, 'path');
+  const mode = request.mode;
+  const requestId = typeof request.requestId === 'number' ? request.requestId : 0;
+
+  try {
+    if (mode !== 'staged' && mode !== 'unstaged') {
+      throw new Error('Invalid preview mode');
+    }
+    const preview = await ctx.gitOps.getWorkingTreePreview(repositoryPath, filePath, mode, requestId);
+    await sendToWebview(ctx, { type: 'workingTreePreviewLoaded', payload: preview });
+  } catch (error) {
+    await sendToWebview(ctx, {
+      type: 'workingTreePreviewError',
+      payload: {
+        repositoryPath,
+        path: filePath,
+        mode,
+        requestId,
+        message: error instanceof Error ? error.message : 'Unable to load diff'
+      }
+    });
+  }
+}
+
 export async function handleCommitFiles(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
   const request = requireRecord(payload);
   const repositoryPath = requireString(request, 'repositoryPath');
@@ -685,6 +712,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'getFileDiff': (ctx, payload) => handleGetFileDiff(ctx, payload),
   'getRepositoryRefs': (ctx, payload) => handleGetRepositoryRefs(ctx, payload),
   'getWorkingTreeChanges': (ctx, payload) => handleGetWorkingTreeChanges(ctx, payload),
+  'getWorkingTreePreview': (ctx, payload) => handleGetWorkingTreePreview(ctx, payload),
   'commitFiles': (ctx, payload) => handleCommitFiles(ctx, payload),
   'initSubmodules': (ctx) => handleInitSubmodules(ctx),
   'updateSubmodules': (ctx) => handleUpdateSubmodules(ctx),

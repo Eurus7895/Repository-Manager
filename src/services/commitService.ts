@@ -3,10 +3,13 @@
  * Handles commit-related operations
  */
 
+import * as path from 'path';
+import { realpathSync } from 'fs';
 import { GitCommandService } from './gitCommandService';
-import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange } from '../types';
+import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange, WorkingTreePreview } from '../types';
 
 const CONFLICT_STATUSES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
+const MAX_PREVIEW_LENGTH = 1024 * 1024;
 
 export function parseWorkingTreeStatus(output: string): WorkingTreeChange[] {
   const records = output.split('\0');
@@ -54,6 +57,103 @@ export class CommitService {
       10000
     );
     return parseWorkingTreeStatus(output);
+  }
+
+  private async getUntrackedRepositoryPreview(
+    repositoryPath: string,
+    repositoryRoot: string,
+    safePath: string,
+    requestId: number
+  ): Promise<WorkingTreePreview> {
+    const nestedRoot = path.resolve(repositoryRoot, safePath);
+    const topLevel = await this.gitCmd.execGit(['rev-parse', '--show-toplevel'], nestedRoot, 5000);
+    if (path.relative(realpathSync(nestedRoot), realpathSync(topLevel)) !== '') {
+      throw new Error('Untracked directory is not a nested Git repository');
+    }
+
+    let head: string | null = null;
+    try {
+      head = await this.gitCmd.execGit(['rev-parse', '--verify', 'HEAD'], nestedRoot, 5000);
+    } catch {
+      // An unborn nested repository cannot be staged as a gitlink.
+    }
+
+    let branch = 'detached HEAD';
+    try {
+      branch = await this.gitCmd.execGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], nestedRoot, 5000);
+    } catch {
+      // Keep the detached HEAD label.
+    }
+    const status = await this.gitCmd.execGitRaw(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'], nestedRoot, 10000
+    );
+    const pendingFiles = status.split('\0').filter(Boolean).length;
+    const patch = head
+      ? [
+        `diff --git a/${safePath} b/${safePath}`,
+        'new file mode 160000',
+        '--- /dev/null',
+        `+++ b/${safePath}`,
+        '@@ -0,0 +1 @@',
+        `+Subproject commit ${head}`,
+        '',
+        `Nested Git repository: ${safePath} (${branch})`,
+        pendingFiles
+          ? `Nested working tree has ${pendingFiles} change(s). Only the HEAD commit is included in the parent commit.`
+          : 'Nested working tree is clean. The parent commit includes the HEAD gitlink.'
+      ].join('\n')
+      : [
+        `Nested Git repository: ${safePath} (${branch})`,
+        'No commit at HEAD. Commit inside this repository before adding it to the parent repository.'
+      ].join('\n');
+
+    return { repositoryPath, path: safePath, mode: 'unstaged', patch, truncated: false, requestId };
+  }
+
+  async getWorkingTreePreview(
+    repositoryPath: string,
+    filePath: string,
+    mode: 'staged' | 'unstaged',
+    requestId: number
+  ): Promise<WorkingTreePreview> {
+    const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);
+    const safePath = this.gitCmd.resolveFilePath(filePath);
+    const change = (await this.getWorkingTreeChanges(repositoryPath))
+      .find(item => item.path === safePath);
+
+    if (!change) {
+      throw new Error('File is no longer changed. Reopen Commit to refresh the list.');
+    }
+    if (mode !== 'staged' && mode !== 'unstaged') {
+      throw new Error('Invalid preview mode');
+    }
+    if (mode === 'staged' && !change.staged) {
+      throw new Error('No staged changes for this file');
+    }
+    if (mode === 'unstaged' && !change.unstaged && !change.untracked) {
+      throw new Error('No unstaged changes for this file');
+    }
+
+    if (change.untracked && safePath.endsWith('/')) {
+      return this.getUntrackedRepositoryPreview(repositoryPath, repositoryRoot, safePath, requestId);
+    }
+
+    const paths = [safePath, ...(change.originalPath ? [this.gitCmd.resolveFilePath(change.originalPath)] : [])];
+    const args = change.untracked
+      ? ['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--unified=5', '--', '/dev/null', safePath]
+      : ['diff', ...(mode === 'staged' ? ['--cached'] : []),
+        '--no-ext-diff', '--no-textconv', '--find-renames', '--unified=5', '--', ...paths];
+    const output = await this.gitCmd.execGitRaw(args, repositoryRoot, 15000, change.untracked);
+    const truncated = output.length > MAX_PREVIEW_LENGTH;
+
+    return {
+      repositoryPath,
+      path: safePath,
+      mode,
+      patch: truncated ? output.slice(0, MAX_PREVIEW_LENGTH) : output,
+      truncated,
+      requestId
+    };
   }
 
   async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {
