@@ -15,6 +15,7 @@ export interface MessageHandlerContext {
   prManager: PRManager;
   workspaceRoot: string;
   refresh: () => Promise<void>;
+  reloadDashboardHistory: (repositoryPaths: string[]) => Promise<void>;
 }
 
 export type MessagePayload = {
@@ -157,6 +158,42 @@ export async function handleGetRepositoryRefs(ctx: MessageHandlerContext, payloa
   }
 }
 
+export async function handleGetWorkingTreeChanges(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+
+  try {
+    const changes = await ctx.gitOps.getWorkingTreeChanges(repositoryPath);
+    await sendToWebview(ctx, {
+      type: 'workingTreeChangesLoaded',
+      payload: { repositoryPath, changes }
+    });
+  } catch (error) {
+    await sendDashboardError(ctx, 'getWorkingTreeChanges', repositoryPath, error);
+  }
+}
+
+export async function handleCommitFiles(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = requireRecord(payload);
+  const repositoryPath = requireString(request, 'repositoryPath');
+  const message = requireString(request, 'message');
+  const files = Array.isArray(request.files)
+    ? request.files.filter((file): file is string => typeof file === 'string' && file.length > 0)
+    : [];
+
+  const result = await ctx.gitOps.commitFiles(repositoryPath, files, message);
+  showResult(result.success, result.message);
+  await sendToWebview(ctx, {
+    type: 'commitFilesResult',
+    payload: { repositoryPath, success: result.success, message: result.message }
+  });
+
+  if (result.success) {
+    await ctx.reloadDashboardHistory([repositoryPath]);
+    await ctx.refresh();
+  }
+}
+
 /**
  * Handler for initializing submodules
  */
@@ -191,10 +228,12 @@ export async function handleCreateBranch(
 
   let successCount = 0;
   let failCount = 0;
+  const successfulPaths: string[] = [];
 
-  results.forEach((result) => {
+  results.forEach((result, repositoryPath) => {
     if (result.success) {
       successCount++;
+      successfulPaths.push(repositoryPath);
     } else {
       failCount++;
     }
@@ -210,6 +249,9 @@ export async function handleCreateBranch(
     );
   }
 
+  if (successfulPaths.length > 0) {
+    await ctx.reloadDashboardHistory(successfulPaths);
+  }
   await ctx.refresh();
 }
 
@@ -246,6 +288,12 @@ export async function handleCreateBranchWithReview(
     }
   });
 
+  const successfulPaths = resultsArray
+    .filter(result => result.success)
+    .map(result => result.repository);
+  if (successfulPaths.length > 0) {
+    await ctx.reloadDashboardHistory(successfulPaths);
+  }
   await ctx.refresh();
 }
 
@@ -598,7 +646,7 @@ export async function handleDeleteBranch(
   const result = await ctx.gitOps.deleteBranch(payload.submodule, payload.branch, payload.deleteRemote);
   showResult(result.success, result.message);
 
-  // Refresh the branches panel by sending updated branches
+  // Refresh the inline branch list plus the active dashboard refs and history.
   if (result.success) {
     try {
       const branches = await ctx.gitOps.getBranches(payload.submodule);
@@ -607,8 +655,9 @@ export async function handleDeleteBranch(
         payload: { submodule: payload.submodule, branches }
       });
     } catch {
-      // Ignore branch refresh errors
+      // The regular repository refresh below remains as a fallback.
     }
+    await ctx.reloadDashboardHistory([payload.submodule]);
   }
 
   await ctx.refresh();
@@ -635,6 +684,8 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'getCommitDetail': (ctx, payload) => handleGetCommitDetail(ctx, payload),
   'getFileDiff': (ctx, payload) => handleGetFileDiff(ctx, payload),
   'getRepositoryRefs': (ctx, payload) => handleGetRepositoryRefs(ctx, payload),
+  'getWorkingTreeChanges': (ctx, payload) => handleGetWorkingTreeChanges(ctx, payload),
+  'commitFiles': (ctx, payload) => handleCommitFiles(ctx, payload),
   'initSubmodules': (ctx) => handleInitSubmodules(ctx),
   'updateSubmodules': (ctx) => handleUpdateSubmodules(ctx),
   'createBranch': (ctx, payload) => handleCreateBranch(ctx, payload as { submodules: string[]; branchName: string; baseBranch: string }),

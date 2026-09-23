@@ -4,10 +4,99 @@
  */
 
 import { GitCommandService } from './gitCommandService';
-import { CommitInfo, RemoteInfo, CommandResult } from '../types';
+import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange } from '../types';
+
+const CONFLICT_STATUSES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
+
+export function parseWorkingTreeStatus(output: string): WorkingTreeChange[] {
+  const records = output.split('\0');
+  const changes: WorkingTreeChange[] = [];
+
+  for (let index = 0; index < records.length;) {
+    const record = records[index++];
+    if (!record || record.length < 3) {
+      continue;
+    }
+
+    const indexStatus = record[0];
+    const workTreeStatus = record[1];
+    const path = record.slice(3);
+    const renamedOrCopied = indexStatus === 'R' || indexStatus === 'C';
+    const originalPath = renamedOrCopied ? records[index++] : undefined;
+    const untracked = indexStatus === '?' && workTreeStatus === '?';
+
+    const change: WorkingTreeChange = {
+      path,
+      indexStatus,
+      workTreeStatus,
+      staged: !untracked && indexStatus !== ' ',
+      unstaged: !untracked && workTreeStatus !== ' ',
+      untracked,
+      conflicted: CONFLICT_STATUSES.has(indexStatus + workTreeStatus)
+    };
+    if (originalPath) {
+      change.originalPath = originalPath;
+    }
+    changes.push(change);
+  }
+
+  return changes;
+}
 
 export class CommitService {
   constructor(private gitCmd: GitCommandService) {}
+
+  async getWorkingTreeChanges(repositoryPath: string): Promise<WorkingTreeChange[]> {
+    const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);
+    const output = await this.gitCmd.execGitRaw(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      repositoryRoot,
+      10000
+    );
+    return parseWorkingTreeStatus(output);
+  }
+
+  async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {
+    const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);
+    const commitMessage = message.trim();
+    if (!commitMessage || commitMessage.includes('\0')) {
+      return { success: false, message: 'Commit message is required' };
+    }
+
+    const requestedPaths = Array.from(new Set(filePaths.map(filePath => this.gitCmd.resolveFilePath(filePath))));
+    if (requestedPaths.length === 0) {
+      return { success: false, message: 'Select at least one changed file' };
+    }
+
+    try {
+      const changes = await this.getWorkingTreeChanges(repositoryPath);
+      const changesByPath = new Map(changes.map(change => [change.path, change]));
+      const selectedChanges = requestedPaths.map(filePath => changesByPath.get(filePath));
+
+      if (selectedChanges.some(change => !change)) {
+        return { success: false, message: 'One or more selected files are no longer changed' };
+      }
+      if (selectedChanges.some(change => change?.conflicted)) {
+        return { success: false, message: 'Resolve conflicted files before committing' };
+      }
+
+      const pathspecs = Array.from(new Set(selectedChanges.flatMap(change => {
+        if (!change) {
+          return [];
+        }
+        return [change.path, ...(change.originalPath ? [change.originalPath] : [])]
+          .map(filePath => this.gitCmd.resolveFilePath(filePath));
+      })));
+
+      await this.gitCmd.execGit(['add', '-A', '--', ...pathspecs], repositoryRoot);
+      await this.gitCmd.execGit(['commit', '--only', '-m', commitMessage, '--', ...pathspecs], repositoryRoot, 60000);
+      const shortHash = await this.gitCmd.execGit(['rev-parse', '--short', 'HEAD'], repositoryRoot);
+      return { success: true, message: `Created commit ${shortHash}` };
+    } catch (error: unknown) {
+      const err = error as Error;
+      return { success: false, message: `Failed to commit: ${err.message}` };
+    }
+  }
 
   /**
    * Get recent commits for a submodule

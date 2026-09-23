@@ -4,6 +4,7 @@
 
 import { RepositoryInfo } from '../types';
 import * as vscode from 'vscode';
+import { renderDashboardToolbar } from './toolbar';
 
 /**
  * URIs for external webview resources
@@ -88,6 +89,7 @@ function renderModals(repositories: RepositoryInfo[]): string {
                 <option value="bugfix">bugfix</option>
                 <option value="release">release</option>
                 <option value="dev">dev</option>
+                <option value="none">None</option>
               </select>
               <div id="prefixRuleHint" class="form-hint"></div>
             </div>
@@ -150,6 +152,38 @@ function renderModals(repositories: RepositoryInfo[]): string {
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="reviewBranchModal">Close</button>
           <button class="btn btn-primary" data-action="confirmAndPush">Confirm & Push</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commit Changes Modal -->
+    <div class="modal-overlay" id="commitChangesModal">
+      <div class="modal commit-changes-modal">
+        <div class="modal-header">
+          <div class="modal-heading">
+            <span class="modal-title">Create Commit</span>
+            <span id="commitChangesRepository">Repository</span>
+          </div>
+          <button class="modal-close" data-action="closeModal" data-modal="commitChangesModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="commitChangesRepositoryPath">
+          <div class="commit-changes-toolbar">
+            <label><input type="checkbox" id="commitSelectAll" checked> Select all</label>
+            <span id="commitSelectionCount">0 selected</span>
+          </div>
+          <div class="commit-changes-list" id="commitChangesList">
+            <div class="dashboard-loading">Loading changed files…</div>
+          </div>
+          <div class="form-group commit-message-group">
+            <label class="form-label" for="commitMessage">Commit message</label>
+            <textarea class="form-input commit-message-input" id="commitMessage" rows="3" placeholder="Describe the changes"></textarea>
+          </div>
+          <div class="commit-result" id="commitChangesResult" role="status" aria-live="polite"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" data-action="closeModal" data-modal="commitChangesModal">Cancel</button>
+          <button class="btn btn-primary" id="commitSelectedFilesButton" data-action="commitSelectedChanges">Commit selected</button>
         </div>
       </div>
     </div>
@@ -303,15 +337,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <strong>Repository Manager</strong>
         </div>
         ${renderWorkspaceFolderSelector(workspaceFolders)}
-        <div class="command-cluster command-cluster-right">
-          <button class="dashboard-icon-command" data-action="refresh" data-operation="refresh" title="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg></button>
-          <button class="dashboard-command" data-action="fetchActiveRepository" data-operation="fetch" title="Fetch" aria-label="Fetch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1 0 9"></path><path d="M12 12v8M9 17l3 3 3-3"></path></svg></button>
-          <button class="dashboard-command" data-action="pullActiveRepository" data-operation="pull" title="Pull" aria-label="Pull"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15M6 13l6 6 6-6"></path></svg><small id="dashboardBehindCount" ${activeRepository?.behind ? '' : 'hidden'}>${activeRepository?.behind || ''}</small></button>
-          <button class="dashboard-command" data-action="pushActiveRepository" data-operation="push" title="Push" aria-label="Push"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V5M6 11l6-6 6 6"></path></svg><small id="dashboardAheadCount" ${activeRepository?.ahead ? '' : 'hidden'}>${activeRepository?.ahead || ''}</small></button>
-          <span class="command-separator" aria-hidden="true"></span>
-          <button class="dashboard-command dashboard-command-sync" data-action="syncAll" title="Sync versions" aria-label="Sync versions">Sync</button>
-          <button class="dashboard-command dashboard-command-primary" data-action="openCreateBranchModal" title="New Branch" aria-label="New Branch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
-        </div>
+        ${renderDashboardToolbar(activeRepository)}
       </header>
       <div class="dashboard-body">
         ${renderDashboardSidebar()}
@@ -323,7 +349,13 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
           <section class="history-region">
-            <div class="history-table-header"><span class="graph-column">Graph</span><span>Message</span><span>Author</span><span>Date</span><span>Commit</span></div>
+            <div class="history-table-header" id="historyTableHeader">
+              <span class="history-column-header graph-column">Graph<span class="history-column-resizer" data-column-index="0" role="separator" aria-label="Resize Graph column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Message<span class="history-column-resizer" data-column-index="1" role="separator" aria-label="Resize Message column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Author<span class="history-column-resizer" data-column-index="2" role="separator" aria-label="Resize Author column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Date<span class="history-column-resizer" data-column-index="3" role="separator" aria-label="Resize Date column" aria-orientation="vertical" tabindex="0"></span></span>
+              <span class="history-column-header">Commit<span class="history-column-resizer" data-column-index="4" role="separator" aria-label="Resize Commit column" aria-orientation="vertical" tabindex="0"></span></span>
+            </div>
             <div class="history-table" id="dashboardHistory"><div class="dashboard-loading">Loading history…</div></div>
             <button class="load-more-button" id="loadMoreHistory" data-action="loadMoreHistory" type="button" hidden>Load more commits</button>
           </section>

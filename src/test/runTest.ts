@@ -1,10 +1,12 @@
 import * as assert from 'assert/strict';
+import * as path from 'path';
 import { BranchService } from '../services/branchService';
-import { CommitService } from '../services/commitService';
+import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
+import { renderDashboardToolbar } from '../webview/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const historyGraph = require('../../resources/historyGraph.js') as {
@@ -46,12 +48,42 @@ function testParsers(): void {
   assert.deepEqual(parseStashesOutput('stash@{0}\x1fWIP on main\x1f2026-09-21T10:00:00Z\x1e'), [
     { index: 0, ref: 'stash@{0}', subject: 'WIP on main', createdAt: '2026-09-21T10:00:00Z' }
   ]);
+
+  assert.deepEqual(parseWorkingTreeStatus(
+    ' M src/modified.ts\0M  src/staged.ts\0MM src/both.ts\0?? src/new.ts\0R  src/new-name.ts\0src/old-name.ts\0UU src/conflict.ts\0'
+  ), [
+    {
+      path: 'src/modified.ts', indexStatus: ' ', workTreeStatus: 'M',
+      staged: false, unstaged: true, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/staged.ts', indexStatus: 'M', workTreeStatus: ' ',
+      staged: true, unstaged: false, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/both.ts', indexStatus: 'M', workTreeStatus: 'M',
+      staged: true, unstaged: true, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/new.ts', indexStatus: '?', workTreeStatus: '?',
+      staged: false, unstaged: false, untracked: true, conflicted: false
+    },
+    {
+      path: 'src/new-name.ts', originalPath: 'src/old-name.ts', indexStatus: 'R', workTreeStatus: ' ',
+      staged: true, unstaged: false, untracked: false, conflicted: false
+    },
+    {
+      path: 'src/conflict.ts', indexStatus: 'U', workTreeStatus: 'U',
+      staged: true, unstaged: true, untracked: false, conflicted: true
+    }
+  ]);
 }
 
 function testPathBoundary(): void {
-  const git = new GitCommandService('/workspace/project');
-  assert.equal(git.resolveRepositoryPath('.'), '/workspace/project');
-  assert.equal(git.resolveRepositoryPath('packages/app'), '/workspace/project/packages/app');
+  const workspaceRoot = path.resolve('/workspace/project');
+  const git = new GitCommandService(workspaceRoot);
+  assert.equal(git.resolveRepositoryPath('.'), workspaceRoot);
+  assert.equal(git.resolveRepositoryPath('packages/app'), path.join(workspaceRoot, 'packages', 'app'));
   assert.throws(() => git.resolveRepositoryPath('../outside'));
   assert.throws(() => git.resolveRepositoryPath('/tmp/outside'));
   assert.equal(git.resolveFilePath('src/index.ts'), 'src/index.ts');
@@ -119,6 +151,18 @@ function testHistoryGraph(): void {
   });
 }
 
+function testDashboardToolbarHierarchy(): void {
+  const toolbar = renderDashboardToolbar({ ahead: 2, behind: 3 });
+
+  assert.match(toolbar, /class="dashboard-remote-actions"[^>]*role="group"/);
+  assert.match(toolbar, /class="dashboard-command dashboard-command-secondary"[^>]*data-action="openCreateBranchModal"/);
+  assert.match(toolbar, /class="dashboard-command dashboard-command-commit"[^>]*data-action="openCommitChangesModal"/);
+  assert.match(toolbar, /dashboard-command-commit[^>]*>[\s\S]*?<svg[\s\S]*?Commit/);
+  assert.ok(toolbar.indexOf('data-action="openCreateBranchModal"') < toolbar.indexOf('data-action="openCommitChangesModal"'));
+  assert.match(toolbar, /id="dashboardAheadCount"[^>]*>2<\/small>/);
+  assert.match(toolbar, /id="dashboardBehindCount"[^>]*>3<\/small>/);
+}
+
 async function testRepositoryIntegration(): Promise<void> {
   const git = new GitCommandService(process.cwd());
   assert.equal(await git.isGitRepository(), true);
@@ -173,6 +217,7 @@ async function main(): Promise<void> {
   testParsers();
   testPathBoundary();
   testHistoryGraph();
+  testDashboardToolbarHierarchy();
   await testRepositoryIntegration();
   console.log('Repository Manager backend tests passed');
 }

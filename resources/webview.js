@@ -31,6 +31,12 @@
   let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
+  const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
+  let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
+    && previousState.historyColumnWidths.length === defaultHistoryColumnWidths.length
+    ? previousState.historyColumnWidths.map(Number)
+    : [];
+  let historyMessageMinimum = 260;
   const runningToolbarOperations = new Set();
 
   // Save state helper
@@ -45,7 +51,8 @@
       comparisonRepository,
       dashboardHistoryState,
       historyPanelHeight,
-      filesPanelWidth
+      filesPanelWidth,
+      historyColumnWidths
     });
   }
 
@@ -156,6 +163,18 @@
       requestBranchCheckout(el.dataset.branch, true);
     },
 
+    deleteDashboardBranch: (el) => {
+      const branch = el.dataset.branch;
+      if (!branch || !activeDashboardRepository) return;
+      const deleteRemote = el.dataset.hasRemote === 'true'
+        && confirm(`Also delete 'origin/${branch}'?\n\nChoose Cancel to delete the local branch only.`);
+      postMessage('deleteBranch', {
+        submodule: activeDashboardRepository,
+        branch,
+        deleteRemote
+      });
+    },
+
     openBranchCompareModal: () => {
       const modal = document.getElementById('branchCompareModal');
       const base = document.getElementById('compareBaseBranch');
@@ -233,6 +252,52 @@
 
       saveState();
       updateSelectionUI();
+    },
+
+    openCommitChangesModal: () => {
+      const repository = getRepository(activeDashboardRepository);
+      const modal = document.getElementById('commitChangesModal');
+      const repositoryLabel = document.getElementById('commitChangesRepository');
+      const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+      const changesList = document.getElementById('commitChangesList');
+      const message = document.getElementById('commitMessage');
+      const result = document.getElementById('commitChangesResult');
+      const selectAll = document.getElementById('commitSelectAll');
+      const commitButton = document.getElementById('commitSelectedFilesButton');
+
+      if (repositoryLabel) repositoryLabel.textContent = repository ? repository.name : activeDashboardRepository;
+      if (repositoryPath) repositoryPath.value = activeDashboardRepository;
+      if (changesList) changesList.innerHTML = '<div class="dashboard-loading">Loading changed files…</div>';
+      if (message) message.value = '';
+      if (result) result.textContent = '';
+      if (selectAll) selectAll.checked = true;
+      if (commitButton) commitButton.disabled = false;
+      if (modal) modal.classList.add('active');
+
+      postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository });
+    },
+
+    commitSelectedChanges: () => {
+      const repositoryPath = document.getElementById('commitChangesRepositoryPath').value;
+      const message = document.getElementById('commitMessage').value.trim();
+      const files = Array.from(document.querySelectorAll('.commit-change-checkbox:checked'))
+        .map(checkbox => checkbox.dataset.path)
+        .filter(Boolean);
+      const result = document.getElementById('commitChangesResult');
+      const commitButton = document.getElementById('commitSelectedFilesButton');
+
+      if (files.length === 0) {
+        if (result) result.textContent = 'Select at least one changed file.';
+        return;
+      }
+      if (!message) {
+        if (result) result.textContent = 'Enter a commit message.';
+        return;
+      }
+
+      if (result) result.textContent = 'Creating commit…';
+      if (commitButton) commitButton.disabled = true;
+      postMessage('commitFiles', { repositoryPath, files, message });
     },
 
     openCreateBranchModal: () => {
@@ -473,6 +538,48 @@
       postMessage('deleteBranch', { submodule: repository, branch, deleteRemote });
     }
   };
+
+  function updateCommitSelectionCount() {
+    const selected = document.querySelectorAll('.commit-change-checkbox:checked').length;
+    const count = document.getElementById('commitSelectionCount');
+    if (count) count.textContent = selected + ' selected';
+  }
+
+  function renderWorkingTreeChanges(payload) {
+    const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+    if (!repositoryPath || repositoryPath.value !== payload.repositoryPath) return;
+
+    const changes = Array.isArray(payload.changes) ? payload.changes : [];
+    const list = document.getElementById('commitChangesList');
+    if (!list) return;
+    if (changes.length === 0) {
+      list.innerHTML = '<div class="dashboard-empty">Working tree is clean.</div>';
+      updateCommitSelectionCount();
+      return;
+    }
+
+    list.innerHTML = changes.map(change => {
+      const state = change.conflicted
+        ? 'conflict'
+        : change.untracked
+          ? 'untracked'
+          : change.staged && change.unstaged
+            ? 'staged + modified'
+            : change.staged
+              ? 'staged'
+              : 'modified';
+      const rename = change.originalPath
+        ? '<small>' + escapeHtml(change.originalPath) + ' →</small>'
+        : '';
+      return '<label class="commit-change-row' + (change.conflicted ? ' conflicted' : '') + '">' +
+        '<input type="checkbox" class="commit-change-checkbox" data-path="' + escapeHtml(change.path) + '"' +
+          (change.conflicted ? ' disabled' : ' checked') + '>' +
+        '<span class="commit-change-path">' + rename + '<strong>' + escapeHtml(change.path) + '</strong></span>' +
+        '<span class="commit-change-state">' + state + '</span>' +
+      '</label>';
+    }).join('');
+    updateCommitSelectionCount();
+  }
 
   function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -841,6 +948,9 @@
     const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
     const historyRegion = history.closest('.history-region');
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
+    if (historyColumnWidths.length > 0 && historyColumnWidths[0] < graphModel.width) {
+      historyColumnWidths[0] = graphModel.width;
+    }
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = renderHistoryRefs(commit.refs, true);
       return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
@@ -856,6 +966,8 @@
     history.innerHTML = rows
       ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
       : '<div class="dashboard-empty">No commits match this view.</div>';
+    updateHistoryMessageMinimum(history);
+    applyHistoryColumnWidths(historyColumnWidths);
     const viewport = pendingHistoryViewport;
     if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
       const anchor = viewport.commit
@@ -907,9 +1019,15 @@
     if (branchList) {
       branchList.innerHTML = branches.map(branch => {
         const useOrigin = branch.hasRemote
-          ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Replace local branch with origin/${escapeHtml(branch.name)}">Use origin</button>`
+          ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Reset local branch to origin/${escapeHtml(branch.name)}">Reset to origin</button>`
           : '';
-        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${useOrigin}</div>`;
+        const deleteBranch = !branch.isCurrent && !branch.isRemote
+          ? `<button class="sidebar-ref-delete-action" type="button" data-action="deleteDashboardBranch" data-branch="${escapeHtml(branch.name)}" data-has-remote="${branch.hasRemote ? 'true' : 'false'}" title="Delete local branch ${escapeHtml(branch.name)}" aria-label="Delete local branch ${escapeHtml(branch.name)}">×</button>`
+          : '';
+        const branchActions = useOrigin || deleteBranch
+          ? `<span class="sidebar-ref-actions">${useOrigin}${deleteBranch}</span>`
+          : '';
+        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" title="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
       }).join('') || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
@@ -1166,6 +1284,23 @@
 
     try {
       switch (message.type) {
+        case 'workingTreeChangesLoaded':
+          renderWorkingTreeChanges(message.payload);
+          break;
+
+        case 'commitFilesResult': {
+          const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+          if (!repositoryPath || repositoryPath.value !== message.payload.repositoryPath) break;
+          const result = document.getElementById('commitChangesResult');
+          const commitButton = document.getElementById('commitSelectedFilesButton');
+          if (result) result.textContent = message.payload.message || '';
+          if (commitButton) commitButton.disabled = false;
+          if (message.payload.success) {
+            document.getElementById('commitChangesModal').classList.remove('active');
+          }
+          break;
+        }
+
         case 'branches': {
           const branchSelect = document.getElementById('branchSelect');
           const branches = (message.payload && message.payload.branches) || [];
@@ -1305,6 +1440,16 @@
             saveState();
             requestDashboardHistory(0, false, { preserveViewport: true });
             postMessage('getRepositoryRefs', { repositoryPath: activeDashboardRepository });
+          }
+          break;
+        }
+
+        case 'reloadDashboardHistory': {
+          const repositoryPaths = Array.isArray(message.payload && message.payload.repositoryPaths)
+            ? message.payload.repositoryPaths
+            : [];
+          if (repositoryPaths.length === 0 || repositoryPaths.includes(activeDashboardRepository)) {
+            reloadActiveDashboardData();
           }
           break;
         }
@@ -1491,20 +1636,21 @@
 
     let prefixes;
     if (rules) {
-      prefixes = rules.prefixes;
+      prefixes = [...rules.prefixes, 'none'];
       // Update hints only for known branch types
       document.getElementById('baseBranchHint').textContent = 'Type: ' + branchType;
-      document.getElementById('prefixRuleHint').textContent = rules.hint;
+      document.getElementById('prefixRuleHint').textContent = rules.hint + '. None creates a branch without a prefix';
     } else {
       // Unknown branch type - don't show type hint, show all prefix options
-      prefixes = ['bugfix', 'feature', 'task', 'release', 'dev'];
+      prefixes = ['bugfix', 'feature', 'task', 'release', 'dev', 'none'];
       document.getElementById('baseBranchHint').textContent = '';
-      document.getElementById('prefixRuleHint').textContent = '';
+      document.getElementById('prefixRuleHint').textContent = 'None creates a branch without a prefix';
     }
 
     // Update options based on rules
     prefixSelect.innerHTML = prefixes.map(p => {
-      return `<option value="${p}">${p}/</option>`;
+      const label = p === 'none' ? 'None' : p + '/';
+      return `<option value="${p}">${label}</option>`;
     }).join('');
 
     // Try to keep current selection if valid, otherwise use first option
@@ -1545,12 +1691,12 @@
       const ticketId = document.getElementById('ticketId').value.trim();
       const taskTitle = document.getElementById('taskTitle').value.trim();
       const kebabTitle = toKebabCase(taskTitle);
+      const prefixStr = prefix === 'none' ? '' : prefix + '/';
 
-      const prefixStr = prefix + '/';
       if (ticketId && kebabTitle) {
         branchName = prefixStr + ticketId + '-' + kebabTitle;
       } else if (ticketId) {
-        branchName = prefixStr + ticketId + '-';
+        branchName = prefix === 'none' ? ticketId : prefixStr + ticketId + '-';
       } else if (kebabTitle) {
         branchName = prefixStr + kebabTitle;
       } else {
@@ -1583,7 +1729,7 @@
     } else if (prefix === 'dev') {
       devBranchGroup.style.display = 'block';
     } else {
-      // feature, task, bugfix
+      // feature, task, bugfix, or no prefix
       ticketIdGroup.style.display = 'block';
       taskTitleGroup.style.display = 'block';
     }
@@ -1699,6 +1845,28 @@
     });
   }
 
+  const commitSelectAll = document.getElementById('commitSelectAll');
+  if (commitSelectAll) {
+    commitSelectAll.addEventListener('change', function () {
+      document.querySelectorAll('.commit-change-checkbox:not(:disabled)').forEach(checkbox => {
+        checkbox.checked = commitSelectAll.checked;
+      });
+      updateCommitSelectionCount();
+    });
+  }
+
+  const commitChangesList = document.getElementById('commitChangesList');
+  if (commitChangesList) {
+    commitChangesList.addEventListener('change', function (event) {
+      if (!event.target.classList.contains('commit-change-checkbox')) return;
+      const selectable = Array.from(document.querySelectorAll('.commit-change-checkbox:not(:disabled)'));
+      if (commitSelectAll) {
+        commitSelectAll.checked = selectable.length > 0 && selectable.every(checkbox => checkbox.checked);
+      }
+      updateCommitSelectionCount();
+    });
+  }
+
   const dashboardIncludeRemotes = document.getElementById('dashboardIncludeRemotes');
   if (dashboardIncludeRemotes) {
     dashboardIncludeRemotes.addEventListener('change', function () {
@@ -1710,6 +1878,92 @@
 
   function clampPanelSize(value, min, max) {
     return Math.max(min, Math.min(max, value));
+  }
+
+  function getHistoryColumnMinimum(index) {
+    return [52, historyMessageMinimum, 90, 80, 70][index] || 70;
+  }
+
+  function applyHistoryColumnWidths(widths) {
+    const region = document.querySelector('.history-region');
+    if (!region) return;
+    if (!Array.isArray(widths) || widths.length !== defaultHistoryColumnWidths.length) {
+      const reservedWidth = 76 + 150 + 110 + 80 + 48 + 40;
+      const messageWidth = Math.max(historyMessageMinimum, region.clientWidth - reservedWidth);
+      historyColumnWidths = [76, messageWidth, 150, 110, 80];
+    } else {
+      historyColumnWidths = widths.map((width, index) => {
+        const normalized = Number.isFinite(width) ? width : defaultHistoryColumnWidths[index];
+        return Math.round(Math.max(getHistoryColumnMinimum(index), normalized));
+      });
+    }
+
+    region.style.setProperty('--history-graph-column-width', `${historyColumnWidths[0]}px`);
+    region.style.setProperty('--history-message-column-width', `${historyColumnWidths[1]}px`);
+    region.style.setProperty('--history-author-column-width', `${historyColumnWidths[2]}px`);
+    region.style.setProperty('--history-date-column-width', `${historyColumnWidths[3]}px`);
+    region.style.setProperty('--history-commit-column-width', `${historyColumnWidths[4]}px`);
+  }
+
+  function updateHistoryMessageMinimum(history) {
+    if (!history) return;
+    const refGroups = Array.from(history.querySelectorAll('.history-refs'));
+    const widestRefs = refGroups.reduce((width, refs) => Math.max(width, refs.scrollWidth), 0);
+    historyMessageMinimum = Math.max(260, Math.ceil(widestRefs + 140));
+    if (historyColumnWidths.length > 0 && historyColumnWidths[1] < historyMessageMinimum) {
+      historyColumnWidths[1] = historyMessageMinimum;
+    }
+  }
+
+  function setupHistoryColumnResizers() {
+    const header = document.getElementById('historyTableHeader');
+    const history = document.getElementById('dashboardHistory');
+    if (!header || !history) return;
+
+    applyHistoryColumnWidths(historyColumnWidths);
+
+    history.addEventListener('scroll', function () {
+      header.style.transform = `translateX(-${history.scrollLeft}px)`;
+    });
+
+    header.querySelectorAll('.history-column-resizer').forEach(handle => {
+      const columnIndex = Number(handle.dataset.columnIndex);
+      let startX = 0;
+      let startWidth = 0;
+
+      handle.addEventListener('pointerdown', function (event) {
+        event.preventDefault();
+        startX = event.clientX;
+        startWidth = historyColumnWidths[columnIndex];
+        handle.classList.add('dragging');
+        handle.setPointerCapture(event.pointerId);
+      });
+
+      handle.addEventListener('pointermove', function (event) {
+        if (!handle.hasPointerCapture(event.pointerId)) return;
+        const nextWidth = startWidth + event.clientX - startX;
+        historyColumnWidths[columnIndex] = Math.max(getHistoryColumnMinimum(columnIndex), nextWidth);
+        applyHistoryColumnWidths(historyColumnWidths);
+      });
+
+      handle.addEventListener('pointerup', function (event) {
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+        handle.classList.remove('dragging');
+        saveState();
+      });
+
+      handle.addEventListener('keydown', function (event) {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        const delta = event.key === 'ArrowRight' ? 16 : -16;
+        historyColumnWidths[columnIndex] = Math.max(
+          getHistoryColumnMinimum(columnIndex),
+          historyColumnWidths[columnIndex] + delta
+        );
+        applyHistoryColumnWidths(historyColumnWidths);
+        saveState();
+      });
+    });
   }
 
   function applyHistoryPanelHeight(height) {
@@ -1791,6 +2045,7 @@
   }
 
   // Initialize UI on load
+  setupHistoryColumnResizers();
   setupDashboardSplitters();
   updateSelectionUI();
   updateRebaseUI();
