@@ -1,5 +1,7 @@
 import * as assert from 'assert/strict';
 import * as path from 'path';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
@@ -213,11 +215,48 @@ async function testRepositoryIntegration(): Promise<void> {
   assert.ok(refs.branches.length > 0);
 }
 
+async function testWorkingTreePreview(): Promise<void> {
+  const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
+  const git = new GitCommandService(repositoryRoot);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Preview Test']);
+    await git.execGit(['config', 'user.email', 'preview@example.com']);
+    writeFileSync(path.join(repositoryRoot, 'example file.txt'), 'original\n');
+    await git.execGit(['add', '--', 'example file.txt']);
+    await git.execGit(['commit', '-m', 'initial']);
+
+    writeFileSync(path.join(repositoryRoot, 'example file.txt'), 'staged change\n');
+    await git.execGit(['add', '--', 'example file.txt']);
+    writeFileSync(path.join(repositoryRoot, 'example file.txt'), 'unstaged change\n');
+    writeFileSync(path.join(repositoryRoot, 'new file.txt'), 'untracked content\n');
+
+    const service = new CommitService(git);
+    const staged = await service.getWorkingTreePreview('.', 'example file.txt', 'staged', 1);
+    assert.equal(staged.mode, 'staged');
+    assert.equal(staged.requestId, 1);
+    assert.match(staged.patch, /\+staged change/);
+    assert.doesNotMatch(staged.patch, /unstaged change/);
+
+    const unstaged = await service.getWorkingTreePreview('.', 'example file.txt', 'unstaged', 2);
+    assert.match(unstaged.patch, /\+unstaged change/);
+    assert.match(unstaged.patch, /-staged change/);
+
+    const untracked = await service.getWorkingTreePreview('.', 'new file.txt', 'unstaged', 3);
+    assert.match(untracked.patch, /\+untracked content/);
+    await assert.rejects(service.getWorkingTreePreview('.', 'new file.txt', 'staged', 4));
+    await assert.rejects(service.getWorkingTreePreview('.', '../outside', 'unstaged', 5));
+  } finally {
+    rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   testParsers();
   testPathBoundary();
   testHistoryGraph();
   testDashboardToolbarHierarchy();
+  await testWorkingTreePreview();
   await testRepositoryIntegration();
   console.log('Repository Manager backend tests passed');
 }

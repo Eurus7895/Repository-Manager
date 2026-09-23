@@ -2890,3 +2890,115 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   color: var(--text-secondary);
   font-size: 12px;
 }
+
+
+/* Preview changes while selecting files for a commit */
+.commit-changes-modal {
+  width: min(1100px, calc(100vw - 48px));
+}
+
+.commit-preview-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 35%) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 240px;
+}
+
+.commit-preview-layout .commit-changes-list {
+  max-height: min(48vh, 480px);
+}
+
+.commit-change-preview-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 4px 0;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.commit-change-preview-button.active {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.commit-change-preview-button .commit-change-path {
+  flex: 1;
+}
+
+.commit-preview-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 240px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.commit-preview-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+#commitPreviewPath {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.commit-preview-modes {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.commit-preview-modes[hidden] {
+  display: none;
+}
+
+.commit-preview-modes button {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 7px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.commit-preview-modes button.active {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.commit-preview-diff {
+  flex: 1;
+  max-height: min(43vh, 430px);
+}
+
+.commit-preview-truncated {
+  padding: 3px 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .commit-preview-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .commit-preview-layout .commit-changes-list {
+    max-height: 180px;
+  }
+  .commit-preview-diff {
+    max-height: 240px;
+  }
+}

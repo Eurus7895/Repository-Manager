@@ -4,9 +4,10 @@
  */
 
 import { GitCommandService } from './gitCommandService';
-import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange } from '../types';
+import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange, WorkingTreePreview } from '../types';
 
 const CONFLICT_STATUSES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
+const MAX_PREVIEW_LENGTH = 1024 * 1024;
 
 export function parseWorkingTreeStatus(output: string): WorkingTreeChange[] {
   const records = output.split('\0');
@@ -54,6 +55,48 @@ export class CommitService {
       10000
     );
     return parseWorkingTreeStatus(output);
+  }
+
+  async getWorkingTreePreview(
+    repositoryPath: string,
+    filePath: string,
+    mode: 'staged' | 'unstaged',
+    requestId: number
+  ): Promise<WorkingTreePreview> {
+    const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);
+    const safePath = this.gitCmd.resolveFilePath(filePath);
+    const change = (await this.getWorkingTreeChanges(repositoryPath))
+      .find(item => item.path === safePath);
+
+    if (!change) {
+      throw new Error('File is no longer changed. Reopen Commit to refresh the list.');
+    }
+    if (mode !== 'staged' && mode !== 'unstaged') {
+      throw new Error('Invalid preview mode');
+    }
+    if (mode === 'staged' && !change.staged) {
+      throw new Error('No staged changes for this file');
+    }
+    if (mode === 'unstaged' && !change.unstaged && !change.untracked) {
+      throw new Error('No unstaged changes for this file');
+    }
+
+    const paths = [safePath, ...(change.originalPath ? [this.gitCmd.resolveFilePath(change.originalPath)] : [])];
+    const args = change.untracked
+      ? ['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--unified=5', '--', '/dev/null', safePath]
+      : ['diff', ...(mode === 'staged' ? ['--cached'] : []),
+        '--no-ext-diff', '--no-textconv', '--find-renames', '--unified=5', '--', ...paths];
+    const output = await this.gitCmd.execGitRaw(args, repositoryRoot, 15000, change.untracked);
+    const truncated = output.length > MAX_PREVIEW_LENGTH;
+
+    return {
+      repositoryPath,
+      path: safePath,
+      mode,
+      patch: truncated ? output.slice(0, MAX_PREVIEW_LENGTH) : output,
+      truncated,
+      requestId
+    };
   }
 
   async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {

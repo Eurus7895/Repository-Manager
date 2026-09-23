@@ -59,6 +59,15 @@ export interface WorkingTreeChange {
   conflicted: boolean;
 }
 
+export interface WorkingTreePreview {
+  repositoryPath: string;
+  path: string;
+  mode: 'staged' | 'unstaged';
+  patch: string;
+  truncated: boolean;
+  requestId: number;
+}
+
 export interface PullRequestInfo {
   title: string;
   body: string;
@@ -211,4 +220,5 @@ export type DashboardRequest =
   | { type: 'getFileDiff'; payload: { repositoryPath: string; commitHash: string; baseRevision?: string; path: string } }
   | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } }
   | { type: 'getWorkingTreeChanges'; payload: { repositoryPath: string } }
+  | { type: 'getWorkingTreePreview'; payload: { repositoryPath: string; path: string; mode: 'staged' | 'unstaged'; requestId: number } }
   | { type: 'commitFiles'; payload: { repositoryPath: string; files: string[]; message: string } };

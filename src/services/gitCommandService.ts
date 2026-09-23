@@ -20,7 +20,7 @@ export class GitCommandService {
   /**
    * Execute Git without a shell and preserve separators/whitespace for parsers.
    */
-  async execGitRaw(args: string[], cwd?: string, timeoutMs: number = 30000): Promise<string> {
+  async execGitRaw(args: string[], cwd?: string, timeoutMs: number = 30000, allowDiffExitCode = false): Promise<string> {
     const workDir = cwd || this.workspaceRoot;
 
     return new Promise((resolve, reject) => {
@@ -31,7 +31,7 @@ export class GitCommandService {
         timeout: timeoutMs,
         windowsHide: true
       }, (error, stdout, stderr) => {
-        if (!error) {
+        if (!error || (allowDiffExitCode && error.code === 1 && !error.killed)) {
           resolve(stdout);
           return;
         }

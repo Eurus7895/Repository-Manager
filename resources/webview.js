@@ -38,6 +38,10 @@
     : [];
   let historyMessageMinimum = 260;
   const runningToolbarOperations = new Set();
+  let workingTreeChanges = [];
+  let previewedWorkingTreeFile = null;
+  let workingTreePreviewMode = 'unstaged';
+  let workingTreePreviewRequestId = 0;
 
   // Save state helper
   function saveState() {
@@ -254,6 +258,14 @@
       updateSelectionUI();
     },
 
+    previewWorkingTreeFile: (el) => {
+      selectWorkingTreePreview(el.dataset.path);
+    },
+
+    previewWorkingTreeMode: (el) => {
+      requestWorkingTreePreview(el.dataset.mode);
+    },
+
     openCommitChangesModal: () => {
       const repository = getRepository(activeDashboardRepository);
       const modal = document.getElementById('commitChangesModal');
@@ -268,6 +280,17 @@
       if (repositoryLabel) repositoryLabel.textContent = repository ? repository.name : activeDashboardRepository;
       if (repositoryPath) repositoryPath.value = activeDashboardRepository;
       if (changesList) changesList.innerHTML = '<div class="dashboard-loading">Loading changed files…</div>';
+      workingTreeChanges = [];
+      previewedWorkingTreeFile = null;
+      workingTreePreviewRequestId++;
+      const previewPath = document.getElementById('commitPreviewPath');
+      const previewModes = document.getElementById('commitPreviewModes');
+      const previewDiff = document.getElementById('commitPreviewDiff');
+      const truncated = document.getElementById('commitPreviewTruncated');
+      if (previewPath) previewPath.textContent = 'Select a file to preview its changes';
+      if (previewModes) previewModes.hidden = true;
+      if (previewDiff) previewDiff.innerHTML = '<span class="diff-placeholder">Select a file to preview its changes.</span>';
+      if (truncated) truncated.textContent = '';
       if (message) message.value = '';
       if (result) result.textContent = '';
       if (selectAll) selectAll.checked = true;
@@ -545,11 +568,77 @@
     if (count) count.textContent = selected + ' selected';
   }
 
+  function renderPatchLines(patch) {
+    return String(patch || '').split('\n').map(line => {
+      let className = 'diff-context';
+      if (line.startsWith('+') && !line.startsWith('+++')) className = 'diff-addition';
+      else if (line.startsWith('-') && !line.startsWith('---')) className = 'diff-deletion';
+      else if (line.startsWith('@@')) className = 'diff-hunk';
+      else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) className = 'diff-meta';
+      return `<span class="${className}">${escapeHtml(line) || ' '}</span>`;
+    }).join('');
+  }
+
+  function selectWorkingTreePreview(filePath) {
+    const change = workingTreeChanges.find(item => item.path === filePath);
+    if (!change) return;
+    previewedWorkingTreeFile = filePath;
+    document.querySelectorAll('.commit-change-preview-button').forEach(button => {
+      button.classList.toggle('active', button.dataset.path === filePath);
+    });
+    const heading = document.getElementById('commitPreviewPath');
+    const modes = document.getElementById('commitPreviewModes');
+    if (heading) heading.textContent = filePath;
+    if (modes) {
+      modes.hidden = false;
+      modes.querySelectorAll('button').forEach(button => {
+        button.hidden = button.dataset.mode === 'staged'
+          ? !change.staged
+          : !change.unstaged && !change.untracked;
+      });
+    }
+    requestWorkingTreePreview(change.unstaged || change.untracked ? 'unstaged' : 'staged');
+  }
+
+  function requestWorkingTreePreview(mode) {
+    const change = workingTreeChanges.find(item => item.path === previewedWorkingTreeFile);
+    if (!change || (mode === 'staged' && !change.staged)
+      || (mode === 'unstaged' && !change.unstaged && !change.untracked)) return;
+    workingTreePreviewMode = mode;
+    workingTreePreviewRequestId++;
+    const modes = document.getElementById('commitPreviewModes');
+    if (modes) modes.querySelectorAll('button').forEach(button => {
+      button.classList.toggle('active', button.dataset.mode === mode);
+      button.setAttribute('aria-pressed', button.dataset.mode === mode ? 'true' : 'false');
+    });
+    const diff = document.getElementById('commitPreviewDiff');
+    const truncated = document.getElementById('commitPreviewTruncated');
+    if (diff) diff.innerHTML = '<span class="diff-placeholder">Loading diff…</span>';
+    if (truncated) truncated.textContent = '';
+    postMessage('getWorkingTreePreview', {
+      repositoryPath: document.getElementById('commitChangesRepositoryPath').value,
+      path: previewedWorkingTreeFile,
+      mode,
+      requestId: workingTreePreviewRequestId
+    });
+  }
+
+  function isCurrentWorkingTreePreview(payload) {
+    const modal = document.getElementById('commitChangesModal');
+    const repositoryPath = document.getElementById('commitChangesRepositoryPath');
+    return modal && modal.classList.contains('active') && repositoryPath
+      && payload.repositoryPath === repositoryPath.value
+      && payload.path === previewedWorkingTreeFile
+      && payload.mode === workingTreePreviewMode
+      && payload.requestId === workingTreePreviewRequestId;
+  }
+
   function renderWorkingTreeChanges(payload) {
     const repositoryPath = document.getElementById('commitChangesRepositoryPath');
     if (!repositoryPath || repositoryPath.value !== payload.repositoryPath) return;
 
     const changes = Array.isArray(payload.changes) ? payload.changes : [];
+    workingTreeChanges = changes;
     const list = document.getElementById('commitChangesList');
     if (!list) return;
     if (changes.length === 0) {
@@ -571,14 +660,19 @@
       const rename = change.originalPath
         ? '<small>' + escapeHtml(change.originalPath) + ' →</small>'
         : '';
-      return '<label class="commit-change-row' + (change.conflicted ? ' conflicted' : '') + '">' +
+      return '<div class="commit-change-row' + (change.conflicted ? ' conflicted' : '') + '">' +
         '<input type="checkbox" class="commit-change-checkbox" data-path="' + escapeHtml(change.path) + '"' +
+          ' aria-label="Include ' + escapeHtml(change.path) + ' in commit"' +
           (change.conflicted ? ' disabled' : ' checked') + '>' +
-        '<span class="commit-change-path">' + rename + '<strong>' + escapeHtml(change.path) + '</strong></span>' +
-        '<span class="commit-change-state">' + state + '</span>' +
-      '</label>';
+        '<button type="button" class="commit-change-preview-button" data-action="previewWorkingTreeFile"' +
+          ' data-path="' + escapeHtml(change.path) + '" title="' + escapeHtml(change.path) + '">' +
+          '<span class="commit-change-path">' + rename + '<strong>' + escapeHtml(change.path) + '</strong></span>' +
+          '<span class="commit-change-state">' + state + '</span>' +
+        '</button>' +
+      '</div>';
     }).join('');
     updateCommitSelectionCount();
+    selectWorkingTreePreview(changes[0].path);
   }
 
   function escapeHtml(value) {
@@ -1111,15 +1205,7 @@
     const diff = document.getElementById('dashboardDiff');
     const truncated = document.getElementById('diffTruncated');
     if (!diff) return;
-    const lines = String(payload.patch || '').split('\n');
-    diff.innerHTML = lines.map(line => {
-      let className = 'diff-context';
-      if (line.startsWith('+') && !line.startsWith('+++')) className = 'diff-addition';
-      else if (line.startsWith('-') && !line.startsWith('---')) className = 'diff-deletion';
-      else if (line.startsWith('@@')) className = 'diff-hunk';
-      else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) className = 'diff-meta';
-      return `<span class="${className}">${escapeHtml(line) || ' '}</span>`;
-    }).join('');
+    diff.innerHTML = renderPatchLines(payload.patch);
     if (truncated) truncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
   }
 
@@ -1287,6 +1373,26 @@
         case 'workingTreeChangesLoaded':
           renderWorkingTreeChanges(message.payload);
           break;
+
+        case 'workingTreePreviewLoaded': {
+          const payload = message.payload;
+          if (!isCurrentWorkingTreePreview(payload)) break;
+          const diff = document.getElementById('commitPreviewDiff');
+          const truncated = document.getElementById('commitPreviewTruncated');
+          if (diff) diff.innerHTML = payload.patch
+            ? renderPatchLines(payload.patch)
+            : '<span class="diff-placeholder">No changes in this view.</span>';
+          if (truncated) truncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
+          break;
+        }
+
+        case 'workingTreePreviewError': {
+          const payload = message.payload;
+          if (!isCurrentWorkingTreePreview(payload)) break;
+          const diff = document.getElementById('commitPreviewDiff');
+          if (diff) diff.innerHTML = '<span class="dashboard-error">' + escapeHtml(payload.message) + '</span>';
+          break;
+        }
 
         case 'commitFilesResult': {
           const repositoryPath = document.getElementById('commitChangesRepositoryPath');

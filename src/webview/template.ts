@@ -172,8 +172,21 @@ function renderModals(repositories: RepositoryInfo[]): string {
             <label><input type="checkbox" id="commitSelectAll" checked> Select all</label>
             <span id="commitSelectionCount">0 selected</span>
           </div>
-          <div class="commit-changes-list" id="commitChangesList">
-            <div class="dashboard-loading">Loading changed files…</div>
+          <div class="commit-preview-layout">
+            <div class="commit-changes-list" id="commitChangesList">
+              <div class="dashboard-loading">Loading changed files…</div>
+            </div>
+            <div class="commit-preview-panel">
+              <div class="commit-preview-heading">
+                <span id="commitPreviewPath">Select a file to preview its changes</span>
+                <div class="commit-preview-modes" id="commitPreviewModes" hidden>
+                  <button type="button" data-action="previewWorkingTreeMode" data-mode="staged">Staged</button>
+                  <button type="button" data-action="previewWorkingTreeMode" data-mode="unstaged">Unstaged</button>
+                </div>
+              </div>
+              <pre class="diff-viewer commit-preview-diff" id="commitPreviewDiff"><span class="diff-placeholder">Select a file to preview its changes.</span></pre>
+              <span class="commit-preview-truncated" id="commitPreviewTruncated"></span>
+            </div>
           </div>
           <div class="form-group commit-message-group">
             <label class="form-label" for="commitMessage">Commit message</label>
