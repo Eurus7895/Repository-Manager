@@ -2895,6 +2895,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 /* Preview changes while selecting files for a commit */
 .commit-changes-modal {
   width: min(1100px, calc(100vw - 48px));
+  max-width: 1100px;
 }
 
 .commit-preview-layout {
