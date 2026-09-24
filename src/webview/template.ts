@@ -377,6 +377,10 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="commit-summary" id="dashboardCommitSummary">
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
+            <div class="change-summary" id="changeSummary" hidden>
+              <div class="change-summary-toolbar"><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-result" id="changeSummaryResult"></div>
+            </div>
             <div class="commit-content">
               <div class="changed-files-panel">
                 <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>

@@ -47,6 +47,68 @@
   let previewedWorkingTreeFile = null;
   let workingTreePreviewMode = 'unstaged';
   let workingTreePreviewRequestId = 0;
+  let changeSummaryRequestId = 0;
+  let changeSummaryPending = false;
+  let changeSummarySelection = null;
+
+  function resetChangeSummary() {
+    if (changeSummaryPending) postMessage('cancelChangeSummary', {});
+    changeSummaryRequestId++;
+    changeSummaryPending = false;
+    changeSummarySelection = null;
+    const area = document.getElementById('changeSummary');
+    const result = document.getElementById('changeSummaryResult');
+    const status = document.getElementById('changeSummaryStatus');
+    const cancel = document.getElementById('cancelChangeSummaryButton');
+    const start = document.getElementById('summarizeChangesButton');
+    if (area) area.hidden = true;
+    if (result) result.innerHTML = '';
+    if (status) status.textContent = '';
+    if (cancel) cancel.hidden = true;
+    if (start) start.disabled = false;
+  }
+
+  function isCurrentChangeSummary(payload) {
+    return payload && changeSummarySelection && payload.requestId === changeSummaryRequestId &&
+      payload.repositoryPath === activeDashboardRepository &&
+      changeSummarySelection.targetSha === selectedDashboardCommit &&
+      changeSummarySelection.baseSha === comparisonBaseHash;
+  }
+
+  function finishChangeSummary() {
+    changeSummaryPending = false;
+    document.getElementById('cancelChangeSummaryButton').hidden = true;
+    document.getElementById('summarizeChangesButton').disabled = false;
+  }
+
+  function renderChangeSummary(payload) {
+    if (!isCurrentChangeSummary(payload)) return;
+    const data = payload.summary;
+    if (!data || data.targetSha !== changeSummarySelection.targetSha ||
+        data.baseSha !== (changeSummarySelection.baseSha || '4b825dc642cb6eb9a060e54bf8d69288fbee4904')) return;
+    finishChangeSummary();
+    document.getElementById('changeSummaryStatus').textContent = `Completed · ${payload.model}`;
+    const changed = new Set(changeSummarySelection.files.map(file => file.path));
+    function claim(item) {
+      const refs = (item.evidence || []).map(ref => changed.has(ref)
+        ? `<button class="change-summary-evidence" type="button" data-action="selectChangedFile" data-path="${escapeHtml(ref)}">${escapeHtml(ref)}</button>`
+        : `<button class="change-summary-evidence" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(ref)}">${escapeHtml(ref.slice(0, 12))}</button>`).join('');
+      return `<li>${escapeHtml(item.text)}${refs ? `<div>${refs}</div>` : ''}</li>`;
+    }
+    function section(title, items) {
+      return `<section><h4>${title}</h4>${items.length ? `<ul>${items.map(claim).join('')}</ul>` : '<p>None identified from the provided context.</p>'}</section>`;
+    }
+    const limitations = [...(data.limitations || []), ...(data.coverage.omitted || []),
+      ...(data.coverage.truncatedCommits ? ['Commit history was truncated.'] : [])];
+    document.getElementById('changeSummaryResult').innerHTML =
+      `<p class="change-summary-revisions">${escapeHtml(data.repositoryPath)} · ${data.root ? 'Empty tree' : escapeHtml(data.baseSha)} → ${escapeHtml(data.targetSha)}</p>` +
+      `<p>Coverage: ${data.coverage.includedFiles}/${data.coverage.totalFiles} file patches.</p>` +
+      section('Summary', [data.intent, ...data.behaviorChanges]) + section('Affected areas', data.affectedAreas) +
+      section('Dependency / config', data.dependencyConfigChanges) +
+      section('Possible breaking changes', data.possibleBreakingChanges) + section('Risk hints', data.riskHints) +
+      section('Suggested tests', data.suggestedTests) +
+      `<section><h4>Coverage limitations</h4><ul>${limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('') || '<li>None reported.</li>'}</ul></section>`;
+  }
 
   // Save state helper
   function saveState() {
@@ -104,6 +166,22 @@
 
   // Action handlers
   const actions = {
+    summarizeChanges: () => {
+      if (changeSummaryPending || !changeSummarySelection) return;
+      changeSummaryPending = true;
+      document.getElementById('summarizeChangesButton').disabled = true;
+      document.getElementById('cancelChangeSummaryButton').hidden = false;
+      document.getElementById('changeSummaryResult').innerHTML = '';
+      document.getElementById('changeSummaryStatus').textContent = 'Collecting context…';
+      postMessage('summarizeChanges', { repositoryPath: activeDashboardRepository,
+        baseSha: changeSummarySelection.baseSha, targetSha: changeSummarySelection.targetSha,
+        requestId: changeSummaryRequestId });
+    },
+    cancelChangeSummary: () => {
+      resetChangeSummary();
+      document.getElementById('changeSummary').hidden = false;
+      document.getElementById('changeSummaryStatus').textContent = 'Summary cancelled.';
+    },
     refresh: () => runToolbarOperation('refresh', 'refresh'),
     initAll: () => postMessage('initSubmodules'),
     updateAll: () => postMessage('updateSubmodules'),
@@ -785,6 +863,7 @@
 
   function loadParentCommitDetail(commitHash) {
     if (!commitHash) return;
+    resetChangeSummary();
     selectedDashboardCommit = commitHash;
     activeComparisonTarget = commitHash;
     comparisonBaseHash = null;
@@ -830,6 +909,7 @@
   }
 
   function loadComparison(baseRevision, targetRevision, source) {
+    resetChangeSummary();
     selectedDashboardCommit = targetRevision;
     activeComparisonTarget = targetRevision;
     comparisonBaseHash = baseRevision;
@@ -904,6 +984,7 @@
 
     if (dashboardActivated) captureDashboardFilters();
     activeDashboardRepository = repositoryPath;
+    resetChangeSummary();
     const canRestoreComparison = !dashboardActivated && comparisonRepository === repositoryPath;
     if (!canRestoreComparison) {
       selectedDashboardCommit = null;
@@ -1206,6 +1287,9 @@
     selectedDashboardCommit = detail.hash;
     activeComparisonTarget = detail.hash;
     comparisonBaseHash = detail.comparisonBaseHash || null;
+    resetChangeSummary();
+    changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
+    document.getElementById('changeSummary').hidden = false;
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
@@ -1395,6 +1479,18 @@
 
     try {
       switch (message.type) {
+        case 'changeSummaryProgress':
+          if (isCurrentChangeSummary(message.payload)) document.getElementById('changeSummaryStatus').textContent = message.payload.status;
+          break;
+        case 'changeSummaryLoaded':
+          renderChangeSummary(message.payload);
+          break;
+        case 'changeSummaryError':
+          if (isCurrentChangeSummary(message.payload)) {
+            finishChangeSummary();
+            document.getElementById('changeSummaryStatus').textContent = message.payload.message;
+          }
+          break;
         case 'workingTreeChangesLoaded':
           renderWorkingTreeChanges(message.payload);
           break;
