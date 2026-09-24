@@ -81,4 +81,4 @@ jobs:
             exit 1
           fi
 
-          gh release upload "$RELEASE_TAG" "$asset"
+          gh release upload "$RELEASE_TAG" "$asset" --clobber
