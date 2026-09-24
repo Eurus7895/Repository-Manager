@@ -48,13 +48,27 @@
   let workingTreePreviewMode = 'unstaged';
   let workingTreePreviewRequestId = 0;
   let changeSummaryRequestId = 0;
-  let changeSummaryPending = false;
   let changeSummarySelection = null;
+  const changeSummaries = new Map();
+  let activeChangeSummaryKey = null;
 
-  function resetChangeSummary() {
-    if (changeSummaryPending) postMessage('cancelChangeSummary', {});
-    changeSummaryRequestId++;
-    changeSummaryPending = false;
+  function changeSummaryKey(selection, repositoryPath = activeDashboardRepository) {
+    return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha]);
+  }
+
+  function cancelPendingChangeSummary() {
+    if (!activeChangeSummaryKey) return;
+    const record = changeSummaries.get(activeChangeSummaryKey);
+    if (record && record.pending) {
+      record.pending = false;
+      record.status = 'Summary cancelled.';
+      postMessage('cancelChangeSummary', {});
+    }
+    activeChangeSummaryKey = null;
+  }
+
+  function resetChangeSummary(cancelPending = false) {
+    if (cancelPending) cancelPendingChangeSummary();
     changeSummarySelection = null;
     const area = document.getElementById('changeSummary');
     const result = document.getElementById('changeSummaryResult');
@@ -68,15 +82,27 @@
     if (start) start.disabled = false;
   }
 
+  function restoreChangeSummary() {
+    if (!changeSummarySelection) return;
+    const record = changeSummaries.get(changeSummaryKey(changeSummarySelection));
+    document.getElementById('changeSummary').hidden = false;
+    document.getElementById('changeSummaryStatus').textContent = record ? record.status : '';
+    document.getElementById('summarizeChangesButton').disabled = Boolean(record && record.pending);
+    document.getElementById('cancelChangeSummaryButton').hidden = !record || !record.pending;
+    if (record && record.summary) {
+      renderChangeSummary({ requestId: record.requestId, repositoryPath: record.repositoryPath,
+        summary: record.summary, model: record.model });
+    }
+  }
+
   function isCurrentChangeSummary(payload) {
-    return payload && changeSummarySelection && payload.requestId === changeSummaryRequestId &&
-      payload.repositoryPath === activeDashboardRepository &&
+    return payload && changeSummarySelection && payload.repositoryPath === activeDashboardRepository &&
       changeSummarySelection.targetSha === selectedDashboardCommit &&
-      changeSummarySelection.baseSha === comparisonBaseHash;
+      changeSummarySelection.baseSha === comparisonBaseHash &&
+      changeSummaries.get(changeSummaryKey(changeSummarySelection))?.requestId === payload.requestId;
   }
 
   function finishChangeSummary() {
-    changeSummaryPending = false;
     document.getElementById('cancelChangeSummaryButton').hidden = true;
     document.getElementById('summarizeChangesButton').disabled = false;
   }
@@ -167,20 +193,23 @@
   // Action handlers
   const actions = {
     summarizeChanges: () => {
-      if (changeSummaryPending || !changeSummarySelection) return;
-      changeSummaryPending = true;
-      document.getElementById('summarizeChangesButton').disabled = true;
-      document.getElementById('cancelChangeSummaryButton').hidden = false;
+      if (!changeSummarySelection) return;
+      const key = changeSummaryKey(changeSummarySelection);
+      if (changeSummaries.get(key)?.pending) return;
+      cancelPendingChangeSummary();
+      const requestId = ++changeSummaryRequestId;
+      changeSummaries.set(key, { requestId, repositoryPath: activeDashboardRepository,
+        pending: true, status: 'Collecting context…', summary: null, model: null });
+      activeChangeSummaryKey = key;
       document.getElementById('changeSummaryResult').innerHTML = '';
-      document.getElementById('changeSummaryStatus').textContent = 'Collecting context…';
+      restoreChangeSummary();
       postMessage('summarizeChanges', { repositoryPath: activeDashboardRepository,
         baseSha: changeSummarySelection.baseSha, targetSha: changeSummarySelection.targetSha,
-        requestId: changeSummaryRequestId });
+        requestId });
     },
     cancelChangeSummary: () => {
-      resetChangeSummary();
-      document.getElementById('changeSummary').hidden = false;
-      document.getElementById('changeSummaryStatus').textContent = 'Summary cancelled.';
+      cancelPendingChangeSummary();
+      restoreChangeSummary();
     },
     refresh: () => runToolbarOperation('refresh', 'refresh'),
     initAll: () => postMessage('initSubmodules'),
@@ -983,6 +1012,10 @@
     if (!repository) return;
 
     if (dashboardActivated) captureDashboardFilters();
+    if (repositoryPath !== activeDashboardRepository) {
+      cancelPendingChangeSummary();
+      changeSummaries.clear();
+    }
     activeDashboardRepository = repositoryPath;
     resetChangeSummary();
     const canRestoreComparison = !dashboardActivated && comparisonRepository === repositoryPath;
@@ -1289,7 +1322,7 @@
     comparisonBaseHash = detail.comparisonBaseHash || null;
     resetChangeSummary();
     changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
-    document.getElementById('changeSummary').hidden = false;
+    restoreChangeSummary();
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
@@ -1480,17 +1513,32 @@
     try {
       switch (message.type) {
         case 'changeSummaryProgress':
-          if (isCurrentChangeSummary(message.payload)) document.getElementById('changeSummaryStatus').textContent = message.payload.status;
-          break;
         case 'changeSummaryLoaded':
-          renderChangeSummary(message.payload);
-          break;
-        case 'changeSummaryError':
-          if (isCurrentChangeSummary(message.payload)) {
-            finishChangeSummary();
-            document.getElementById('changeSummaryStatus').textContent = message.payload.message;
+        case 'changeSummaryError': {
+          const payload = message.payload;
+          const entry = Array.from(changeSummaries.entries()).find(([, record]) =>
+            record.requestId === payload?.requestId && record.repositoryPath === payload.repositoryPath);
+          if (!entry || !entry[1].pending) break;
+          const [key, record] = entry;
+          if (message.type === 'changeSummaryProgress') {
+            record.status = payload.status;
+          } else {
+            record.pending = false;
+            if (activeChangeSummaryKey === key) activeChangeSummaryKey = null;
+            if (message.type === 'changeSummaryLoaded') {
+              record.summary = payload.summary;
+              record.model = payload.model;
+              record.status = `Completed · ${payload.model}`;
+            } else {
+              record.status = payload.message;
+            }
+          }
+          if (isCurrentChangeSummary(payload)) {
+            if (record.summary) renderChangeSummary(payload);
+            else restoreChangeSummary();
           }
           break;
+        }
         case 'workingTreeChangesLoaded':
           renderWorkingTreeChanges(message.payload);
           break;

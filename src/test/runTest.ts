@@ -311,7 +311,18 @@ async function testChangeSummaryContext(): Promise<void> {
     };
     assert.equal(validateSummary(JSON.stringify(reply), packet).intent.text, 'Rename');
     assert.throws(() => validateSummary(JSON.stringify({ ...reply, targetSha: first }), packet));
-    assert.throws(() => validateSummary(JSON.stringify({ ...reply, intent: { text: 'Wrong', evidence: ['outside.txt'] } }), packet));
+    const partial = validateSummary(JSON.stringify({ ...reply,
+      intent: { text: 'Wrong', evidence: ['outside.txt'] },
+      behaviorChanges: [{ text: 'New path', evidence: ['b/new.txt:3'] },
+        { text: 'Unsupported', evidence: ['missing.txt'] }]
+    }), packet);
+    assert.match(partial.intent.text, /AI intent could not be verified/);
+    assert.deepEqual(partial.behaviorChanges, [{ text: 'New path', evidence: ['new.txt'] }]);
+    assert.equal(partial.limitations.length, 1);
+    const shortCommit = validateSummary(JSON.stringify({ ...reply,
+      intent: { text: 'Rename', evidence: [second.slice(0, 10)] }
+    }), packet);
+    assert.deepEqual(shortCommit.intent.evidence, [second]);
     writeFileSync(path.join(root, 'large.txt'), Array.from({ length: 1000 }, (_, index) => `line ${index} ${'x'.repeat(40)}`).join('\n'));
     await git.execGit(['add', 'large.txt']);
     await git.execGit(['commit', '-m', 'large file']);
