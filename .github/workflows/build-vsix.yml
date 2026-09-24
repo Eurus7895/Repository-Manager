@@ -34,11 +34,19 @@ jobs:
       - name: Package VSIX
         run: npm run package
 
+      - name: Select packaged version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          asset="repository-manager-$version.vsix"
+          test -f "$asset"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
           name: repository-manager-vsix
-          path: repository-manager-*.vsix
+          path: ${{ steps.version.outputs.asset }}
           if-no-files-found: error
           retention-days: 14
 
