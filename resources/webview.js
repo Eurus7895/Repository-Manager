@@ -37,6 +37,9 @@
     ? previousState.historyColumnWidths.map(Number)
     : [];
   let historyGraphWidth = 76;
+  let loadedHistoryGraphModel = null;
+  let historyGraphGeometryFrame = 0;
+  let historyGraphGeometrySignature = '';
   let historyColumnMinimums = [52, 80, 58, 54, 52];
   const runningToolbarOperations = new Set();
   let workingTreeChanges = [];
@@ -987,15 +990,16 @@
     }).format(date);
   }
 
-  function renderHistoryGraph(commits, graphModel) {
+  function renderHistoryGraph(commits, graphModel, rowHeights = []) {
     const paths = [];
     const nodes = [];
     const controls = [];
+    let top = 0;
     graphModel.rows.forEach((layout, index) => {
       const commit = commits[index];
-      const top = layout.rowIndex * graphModel.rowHeight;
-      const middle = top + (graphModel.rowHeight / 2);
-      const bottom = top + graphModel.rowHeight;
+      const rowHeight = rowHeights[index] || graphModel.rowHeight;
+      const middle = top + (rowHeight / 2);
+      const bottom = top + rowHeight;
       const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
       const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
       for (let lane = 0; lane < continuingLaneCount; lane += 1) {
@@ -1020,12 +1024,32 @@
         ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
         : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
       controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
+      top = bottom;
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}" preserveAspectRatio="none">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}" preserveAspectRatio="none">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
   }
 
   function renderGraphCell() {
     return '<span class="history-graph-cell" aria-hidden="true"></span>';
+  }
+
+  function scheduleHistoryGraphGeometry() {
+    if (historyGraphGeometryFrame) return;
+    historyGraphGeometryFrame = requestAnimationFrame(() => {
+      historyGraphGeometryFrame = 0;
+      const history = document.getElementById('dashboardHistory');
+      if (!history || !loadedHistoryGraphModel) return;
+      const rows = Array.from(history.querySelectorAll('.history-row'));
+      if (!rows.length || rows.length !== loadedHistoryCommits.length) return;
+      const heights = rows.map(row => row.offsetHeight);
+      const signature = heights.join(',');
+      if (signature === historyGraphGeometrySignature) return;
+      const overlay = history.querySelector('.history-graph-overlay');
+      if (!overlay) return;
+      overlay.outerHTML = renderHistoryGraph(loadedHistoryCommits, loadedHistoryGraphModel, heights);
+      historyGraphGeometrySignature = signature;
+      updateCommitCompareUI();
+    });
   }
 
   function renderHistoryPage(payload) {
@@ -1041,6 +1065,8 @@
       loadedHistoryCommits = payload.commits || [];
     }
     const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
+    loadedHistoryGraphModel = graphModel;
+    historyGraphGeometrySignature = '';
     const historyRegion = history.closest('.history-region');
     historyGraphWidth = graphModel.width;
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
@@ -2026,6 +2052,7 @@
     ['graph', 'message', 'author', 'date', 'commit'].forEach((name, index) => {
       region.style.setProperty(`--history-${name}-column-width`, `${next[index]}px`);
     });
+    scheduleHistoryGraphGeometry();
   }
 
   function setupHistoryColumnResizers() {

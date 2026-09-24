@@ -2783,6 +2783,13 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   outline: 0;
 }
 
+.history-row {
+  height: auto;
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 .history-message {
   flex-direction: column;
   align-items: stretch;
@@ -2793,20 +2800,20 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 
 .history-refs {
   flex: 0 0 auto;
+  flex-wrap: wrap;
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scrollbar-width: none;
 }
 
 .history-ref {
-  max-width: none;
+  max-width: 100%;
   flex: 0 0 auto;
   overflow: visible;
+  overflow-wrap: anywhere;
+  text-align: left;
   text-overflow: clip;
+  white-space: normal;
 }
 
 .history-message .history-subject {
