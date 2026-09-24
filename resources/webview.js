@@ -36,6 +36,7 @@
     && previousState.historyColumnWidths.length === defaultHistoryColumnWidths.length
     ? previousState.historyColumnWidths.map(Number)
     : [];
+  let renderedHistoryColumnWidths = defaultHistoryColumnWidths.slice();
   let historyGraphWidth = 76;
   let loadedHistoryGraphModel = null;
   let historyGraphGeometryFrame = 0;
@@ -2047,7 +2048,7 @@
     } else {
       next[1] += remaining;
     }
-    historyColumnWidths = next;
+    renderedHistoryColumnWidths = next;
     region.style.setProperty('--history-content-width', `${contentWidth}px`);
     ['graph', 'message', 'author', 'date', 'commit'].forEach((name, index) => {
       region.style.setProperty(`--history-${name}-column-width`, `${next[index]}px`);
@@ -2068,16 +2069,20 @@
 
     header.querySelectorAll('.history-column-resizer').forEach(handle => {
       const columnIndex = Number(handle.dataset.columnIndex);
+      if (columnIndex === 4) {
+        handle.remove();
+        return;
+      }
       let startX = 0;
       let startWidth = 0;
       let adjacentWidth = 0;
-      const adjacentIndex = columnIndex === 4 ? 3 : columnIndex + 1;
+      const adjacentIndex = columnIndex + 1;
 
       handle.addEventListener('pointerdown', function (event) {
         event.preventDefault();
         startX = event.clientX;
-        startWidth = historyColumnWidths[columnIndex];
-        adjacentWidth = historyColumnWidths[adjacentIndex];
+        startWidth = renderedHistoryColumnWidths[columnIndex];
+        adjacentWidth = renderedHistoryColumnWidths[adjacentIndex];
         handle.classList.add('dragging');
         handle.setPointerCapture(event.pointerId);
       });
@@ -2090,6 +2095,7 @@
           getHistoryColumnMinimum(columnIndex),
           pairWidth - getHistoryColumnMinimum(adjacentIndex)
         );
+        historyColumnWidths = (historyColumnWidths.length ? historyColumnWidths : defaultHistoryColumnWidths).slice();
         historyColumnWidths[columnIndex] = nextWidth;
         historyColumnWidths[adjacentIndex] = pairWidth - nextWidth;
         applyHistoryColumnWidths(historyColumnWidths);
@@ -2105,9 +2111,10 @@
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
         event.preventDefault();
         const delta = event.key === 'ArrowRight' ? 16 : -16;
-        const pairWidth = historyColumnWidths[columnIndex] + historyColumnWidths[adjacentIndex];
+        const pairWidth = renderedHistoryColumnWidths[columnIndex] + renderedHistoryColumnWidths[adjacentIndex];
+        historyColumnWidths = (historyColumnWidths.length ? historyColumnWidths : defaultHistoryColumnWidths).slice();
         historyColumnWidths[columnIndex] = clampPanelSize(
-          historyColumnWidths[columnIndex] + delta,
+          renderedHistoryColumnWidths[columnIndex] + delta,
           getHistoryColumnMinimum(columnIndex),
           pairWidth - getHistoryColumnMinimum(adjacentIndex)
         );

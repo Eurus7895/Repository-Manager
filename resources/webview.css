@@ -2821,9 +2821,13 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   width: 100%;
 }
 
-.history-graph-cell,
-.history-graph-overlay {
+.history-graph-cell {
   width: var(--history-graph-column-width);
+  max-width: var(--history-graph-column-width);
+}
+
+.history-graph-overlay {
+  width: min(var(--graph-width), var(--history-graph-column-width));
   max-width: var(--history-graph-column-width);
 }
 
