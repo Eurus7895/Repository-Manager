@@ -36,7 +36,12 @@
     && previousState.historyColumnWidths.length === defaultHistoryColumnWidths.length
     ? previousState.historyColumnWidths.map(Number)
     : [];
-  let historyMessageMinimum = 260;
+  let renderedHistoryColumnWidths = defaultHistoryColumnWidths.slice();
+  let historyGraphWidth = 76;
+  let loadedHistoryGraphModel = null;
+  let historyGraphGeometryFrame = 0;
+  let historyGraphGeometrySignature = '';
+  let historyColumnMinimums = [52, 80, 58, 54, 52];
   const runningToolbarOperations = new Set();
   let workingTreeChanges = [];
   let previewedWorkingTreeFile = null;
@@ -707,7 +712,7 @@
     return (refs || []).map(ref => {
       const className = `history-ref ref-${escapeHtml(ref.kind)}`;
       const branch = interactive ? checkoutBranchFromRef(ref) : '';
-      if (!branch) return `<span class="${className}">${escapeHtml(ref.name)}</span>`;
+      if (!branch) return `<span class="${className}" title="${escapeHtml(ref.name)}">${escapeHtml(ref.name)}</span>`;
       return `<button class="${className}" type="button" data-branch="${escapeHtml(branch)}" title="Double-click to checkout ${escapeHtml(branch)}">${escapeHtml(ref.name)}</button>`;
     }).join('');
   }
@@ -986,15 +991,16 @@
     }).format(date);
   }
 
-  function renderHistoryGraph(commits, graphModel) {
+  function renderHistoryGraph(commits, graphModel, rowHeights = []) {
     const paths = [];
     const nodes = [];
     const controls = [];
+    let top = 0;
     graphModel.rows.forEach((layout, index) => {
       const commit = commits[index];
-      const top = layout.rowIndex * graphModel.rowHeight;
-      const middle = top + (graphModel.rowHeight / 2);
-      const bottom = top + graphModel.rowHeight;
+      const rowHeight = rowHeights[index] || graphModel.rowHeight;
+      const middle = top + (rowHeight / 2);
+      const bottom = top + rowHeight;
       const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
       const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
       for (let lane = 0; lane < continuingLaneCount; lane += 1) {
@@ -1019,12 +1025,32 @@
         ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
         : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
       controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
+      top = bottom;
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${graphModel.height}" viewBox="0 0 ${graphModel.width} ${graphModel.height}">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}" preserveAspectRatio="none">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
   }
 
   function renderGraphCell() {
     return '<span class="history-graph-cell" aria-hidden="true"></span>';
+  }
+
+  function scheduleHistoryGraphGeometry() {
+    if (historyGraphGeometryFrame) return;
+    historyGraphGeometryFrame = requestAnimationFrame(() => {
+      historyGraphGeometryFrame = 0;
+      const history = document.getElementById('dashboardHistory');
+      if (!history || !loadedHistoryGraphModel) return;
+      const rows = Array.from(history.querySelectorAll('.history-row'));
+      if (!rows.length || rows.length !== loadedHistoryCommits.length) return;
+      const heights = rows.map(row => row.offsetHeight);
+      const signature = heights.join(',');
+      if (signature === historyGraphGeometrySignature) return;
+      const overlay = history.querySelector('.history-graph-overlay');
+      if (!overlay) return;
+      overlay.outerHTML = renderHistoryGraph(loadedHistoryCommits, loadedHistoryGraphModel, heights);
+      historyGraphGeometrySignature = signature;
+      updateCommitCompareUI();
+    });
   }
 
   function renderHistoryPage(payload) {
@@ -1040,11 +1066,11 @@
       loadedHistoryCommits = payload.commits || [];
     }
     const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
+    loadedHistoryGraphModel = graphModel;
+    historyGraphGeometrySignature = '';
     const historyRegion = history.closest('.history-region');
+    historyGraphWidth = graphModel.width;
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
-    if (historyColumnWidths.length > 0 && historyColumnWidths[0] < graphModel.width) {
-      historyColumnWidths[0] = graphModel.width;
-    }
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = renderHistoryRefs(commit.refs, true);
       return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
@@ -1060,7 +1086,6 @@
     history.innerHTML = rows
       ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
       : '<div class="dashboard-empty">No commits match this view.</div>';
-    updateHistoryMessageMinimum(history);
     applyHistoryColumnWidths(historyColumnWidths);
     const viewport = pendingHistoryViewport;
     if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
@@ -1987,38 +2012,48 @@
   }
 
   function getHistoryColumnMinimum(index) {
-    return [52, historyMessageMinimum, 90, 80, 70][index] || 70;
+    return historyColumnMinimums[index] || 1;
   }
 
   function applyHistoryColumnWidths(widths) {
     const region = document.querySelector('.history-region');
-    if (!region) return;
-    if (!Array.isArray(widths) || widths.length !== defaultHistoryColumnWidths.length) {
-      const reservedWidth = 76 + 150 + 110 + 80 + 48 + 40;
-      const messageWidth = Math.max(historyMessageMinimum, region.clientWidth - reservedWidth);
-      historyColumnWidths = [76, messageWidth, 150, 110, 80];
+    const history = document.getElementById('dashboardHistory');
+    if (!region || !history) return;
+
+    const contentWidth = history.clientWidth || region.clientWidth;
+    const padding = parseFloat(getComputedStyle(region).getPropertyValue('--history-horizontal-padding')) || 12;
+    const available = Math.max(1, contentWidth - 2 * padding - 4 * 8);
+    const baseMinimums = [
+      Math.min(historyGraphWidth, Math.max(34, Math.floor(available * .24))),
+      80, 58, 54, 52
+    ];
+    const minimumTotal = baseMinimums.reduce((sum, value) => sum + value, 0);
+    const factor = Math.min(1, available / minimumTotal);
+    historyColumnMinimums = baseMinimums.map(value => value * factor);
+
+    const requested = Array.isArray(widths) && widths.length === defaultHistoryColumnWidths.length
+      ? widths : defaultHistoryColumnWidths;
+    const next = requested.map((width, index) => {
+      const normalized = Number.isFinite(Number(width)) ? Number(width) : defaultHistoryColumnWidths[index];
+      return Math.max(historyColumnMinimums[index], normalized);
+    });
+    let remaining = available - next.reduce((sum, width) => sum + width, 0);
+    if (remaining < 0) {
+      for (const index of [1, 2, 3, 4, 0]) {
+        const reduction = Math.min(-remaining, next[index] - historyColumnMinimums[index]);
+        next[index] -= reduction;
+        remaining += reduction;
+        if (remaining >= 0) break;
+      }
     } else {
-      historyColumnWidths = widths.map((width, index) => {
-        const normalized = Number.isFinite(width) ? width : defaultHistoryColumnWidths[index];
-        return Math.round(Math.max(getHistoryColumnMinimum(index), normalized));
-      });
+      next[1] += remaining;
     }
-
-    region.style.setProperty('--history-graph-column-width', `${historyColumnWidths[0]}px`);
-    region.style.setProperty('--history-message-column-width', `${historyColumnWidths[1]}px`);
-    region.style.setProperty('--history-author-column-width', `${historyColumnWidths[2]}px`);
-    region.style.setProperty('--history-date-column-width', `${historyColumnWidths[3]}px`);
-    region.style.setProperty('--history-commit-column-width', `${historyColumnWidths[4]}px`);
-  }
-
-  function updateHistoryMessageMinimum(history) {
-    if (!history) return;
-    const refGroups = Array.from(history.querySelectorAll('.history-refs'));
-    const widestRefs = refGroups.reduce((width, refs) => Math.max(width, refs.scrollWidth), 0);
-    historyMessageMinimum = Math.max(260, Math.ceil(widestRefs + 140));
-    if (historyColumnWidths.length > 0 && historyColumnWidths[1] < historyMessageMinimum) {
-      historyColumnWidths[1] = historyMessageMinimum;
-    }
+    renderedHistoryColumnWidths = next;
+    region.style.setProperty('--history-content-width', `${contentWidth}px`);
+    ['graph', 'message', 'author', 'date', 'commit'].forEach((name, index) => {
+      region.style.setProperty(`--history-${name}-column-width`, `${next[index]}px`);
+    });
+    scheduleHistoryGraphGeometry();
   }
 
   function setupHistoryColumnResizers() {
@@ -2028,27 +2063,41 @@
 
     applyHistoryColumnWidths(historyColumnWidths);
 
-    history.addEventListener('scroll', function () {
-      header.style.transform = `translateX(-${history.scrollLeft}px)`;
-    });
+    history.scrollLeft = 0;
+    new ResizeObserver(() => applyHistoryColumnWidths(historyColumnWidths))
+      .observe(history);
 
     header.querySelectorAll('.history-column-resizer').forEach(handle => {
       const columnIndex = Number(handle.dataset.columnIndex);
+      if (columnIndex === 4) {
+        handle.remove();
+        return;
+      }
       let startX = 0;
       let startWidth = 0;
+      let adjacentWidth = 0;
+      const adjacentIndex = columnIndex + 1;
 
       handle.addEventListener('pointerdown', function (event) {
         event.preventDefault();
         startX = event.clientX;
-        startWidth = historyColumnWidths[columnIndex];
+        startWidth = renderedHistoryColumnWidths[columnIndex];
+        adjacentWidth = renderedHistoryColumnWidths[adjacentIndex];
         handle.classList.add('dragging');
         handle.setPointerCapture(event.pointerId);
       });
 
       handle.addEventListener('pointermove', function (event) {
         if (!handle.hasPointerCapture(event.pointerId)) return;
-        const nextWidth = startWidth + event.clientX - startX;
-        historyColumnWidths[columnIndex] = Math.max(getHistoryColumnMinimum(columnIndex), nextWidth);
+        const pairWidth = startWidth + adjacentWidth;
+        const nextWidth = clampPanelSize(
+          startWidth + event.clientX - startX,
+          getHistoryColumnMinimum(columnIndex),
+          pairWidth - getHistoryColumnMinimum(adjacentIndex)
+        );
+        historyColumnWidths = (historyColumnWidths.length ? historyColumnWidths : defaultHistoryColumnWidths).slice();
+        historyColumnWidths[columnIndex] = nextWidth;
+        historyColumnWidths[adjacentIndex] = pairWidth - nextWidth;
         applyHistoryColumnWidths(historyColumnWidths);
       });
 
@@ -2062,10 +2111,14 @@
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
         event.preventDefault();
         const delta = event.key === 'ArrowRight' ? 16 : -16;
-        historyColumnWidths[columnIndex] = Math.max(
+        const pairWidth = renderedHistoryColumnWidths[columnIndex] + renderedHistoryColumnWidths[adjacentIndex];
+        historyColumnWidths = (historyColumnWidths.length ? historyColumnWidths : defaultHistoryColumnWidths).slice();
+        historyColumnWidths[columnIndex] = clampPanelSize(
+          renderedHistoryColumnWidths[columnIndex] + delta,
           getHistoryColumnMinimum(columnIndex),
-          historyColumnWidths[columnIndex] + delta
+          pairWidth - getHistoryColumnMinimum(adjacentIndex)
         );
+        historyColumnWidths[adjacentIndex] = pairWidth - historyColumnWidths[columnIndex];
         applyHistoryColumnWidths(historyColumnWidths);
         saveState();
       });
