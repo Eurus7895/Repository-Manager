@@ -175,6 +175,17 @@ export class RepositoryManagerPanel {
         await this._summarizeChanges(message.payload);
         return;
       }
+      if (message.type === 'loadSummaryModels') {
+        try {
+          const models = await this._summaryProvider.listModels();
+          await this._panel.webview.postMessage({ type: 'summaryModelsLoaded', payload: { models } });
+        } catch (error) {
+          await this._panel.webview.postMessage({ type: 'summaryModelsError', payload: {
+            message: error instanceof Error ? error.message : 'Unable to load Copilot models.'
+          } });
+        }
+        return;
+      }
       // Handle refresh separately as it's not in the handler map
       if (message.type === 'refresh') {
         try {
@@ -248,9 +259,10 @@ export class RepositoryManagerPanel {
       return;
     }
     const request = payload as Record<string, unknown>;
-    const { repositoryPath, targetSha, baseSha, requestId } = request;
+    const { repositoryPath, targetSha, baseSha, requestId, modelId } = request;
     if (typeof repositoryPath !== 'string' || typeof targetSha !== 'string' ||
-        (baseSha !== null && typeof baseSha !== 'string') || typeof requestId !== 'number') {
+        (baseSha !== null && typeof baseSha !== 'string') || typeof requestId !== 'number' ||
+        (modelId !== undefined && typeof modelId !== 'string')) {
       return;
     }
     this._cancelSummary();
@@ -284,7 +296,7 @@ export class RepositoryManagerPanel {
       await send('changeSummaryProgress', { status: 'Summarizing…' });
       const result = await this._summaryProvider.summarize(context, controller.token, () => {
         void send('changeSummaryProgress', { status: 'Summarizing…' });
-      });
+      }, modelId || undefined);
       await send('changeSummaryProgress', { status: 'Validating…' });
       await send('changeSummaryLoaded', { summary: result.summary, model: result.model });
     } catch (error) {

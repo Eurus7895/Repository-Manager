@@ -6,7 +6,7 @@ const listeners = {};
 const posts = [];
 function node(id) {
   if (!nodes.has(id)) nodes.set(id, { id, hidden: false, disabled: false, innerHTML: '', textContent: '', value: '', dataset: {}, style: {},
-    classList: { add() {}, remove() {}, toggle() {} }, addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; },
+    classList: { add() {}, remove() {}, toggle() {} }, listeners: {}, addEventListener(type, cb) { this.listeners[type] = cb; }, querySelector() { return null; }, querySelectorAll() { return []; },
     setAttribute() {}, removeAttribute() {}, closest() { return null; } });
   return nodes.get(id);
 }
@@ -49,4 +49,24 @@ listeners.body_click({ target: { dataset: { action: 'selectHistoryCommit', commi
 detail(A,P);
 assert.match(node('changeSummaryResult').innerHTML, /Changed a.txt/);
 assert.equal(posts.filter(item=>item.type==='cancelChangeSummary').length,0);
+click('loadSummaryModels');
+assert.equal(posts.at(-1).type, 'loadSummaryModels');
+listeners.window_message({ data: { type: 'summaryModelsLoaded', payload: { models: [
+  { id: 'fast', name: 'Fast model' }, { id: 'deep', name: 'Deep model' }
+] } } });
+const modelSelect = node('summaryModelSelect');
+assert.match(modelSelect.innerHTML, /Deep model/);
+modelSelect.value = 'deep';
+modelSelect.listeners.change();
+assert.equal(node('changeSummaryResult').innerHTML, '');
+click('summarizeChanges');
+assert.equal(posts.at(-1).payload.modelId, 'deep');
+const secondId = posts.at(-1).payload.requestId;
+listeners.window_message({ data: { type: 'changeSummaryLoaded', payload: {
+  requestId: secondId, repositoryPath: '.', summary: { ...summary, intent: { text: 'Deep summary', evidence: ['a.txt'] } }, model: 'deep:1'
+} } });
+assert.match(node('changeSummaryResult').innerHTML, /Deep summary/);
+modelSelect.value = '';
+modelSelect.listeners.change();
+assert.match(node('changeSummaryResult').innerHTML, /Changed a.txt/);
 console.log('UI summary switch smoke passed');

@@ -49,11 +49,12 @@
   let workingTreePreviewRequestId = 0;
   let changeSummaryRequestId = 0;
   let changeSummarySelection = null;
+  let selectedSummaryModelId = '';
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
 
   function changeSummaryKey(selection, repositoryPath = activeDashboardRepository) {
-    return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha]);
+    return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha, selectedSummaryModelId]);
   }
 
   function cancelPendingChangeSummary() {
@@ -86,6 +87,7 @@
     if (!changeSummarySelection) return;
     const record = changeSummaries.get(changeSummaryKey(changeSummarySelection));
     document.getElementById('changeSummary').hidden = false;
+    document.getElementById('changeSummaryResult').innerHTML = '';
     document.getElementById('changeSummaryStatus').textContent = record ? record.status : '';
     document.getElementById('summarizeChangesButton').disabled = Boolean(record && record.pending);
     document.getElementById('cancelChangeSummaryButton').hidden = !record || !record.pending;
@@ -192,6 +194,12 @@
 
   // Action handlers
   const actions = {
+    loadSummaryModels: () => {
+      const button = document.getElementById('loadSummaryModelsButton');
+      button.disabled = true;
+      button.textContent = 'Loading models…';
+      postMessage('loadSummaryModels', {});
+    },
     summarizeChanges: () => {
       if (!changeSummarySelection) return;
       const key = changeSummaryKey(changeSummarySelection);
@@ -205,7 +213,7 @@
       restoreChangeSummary();
       postMessage('summarizeChanges', { repositoryPath: activeDashboardRepository,
         baseSha: changeSummarySelection.baseSha, targetSha: changeSummarySelection.targetSha,
-        requestId });
+        requestId, modelId: selectedSummaryModelId });
     },
     cancelChangeSummary: () => {
       cancelPendingChangeSummary();
@@ -1512,6 +1520,30 @@
 
     try {
       switch (message.type) {
+        case 'summaryModelsLoaded': {
+          const select = document.getElementById('summaryModelSelect');
+          const models = Array.isArray(message.payload?.models) ? message.payload.models : [];
+          select.innerHTML = '<option value="">Default Copilot model</option>' + models
+            .filter(model => typeof model.id === 'string' && typeof model.name === 'string')
+            .map(model => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name)}</option>`).join('');
+          if (selectedSummaryModelId && !models.some(model => model.id === selectedSummaryModelId)) {
+            cancelPendingChangeSummary();
+            selectedSummaryModelId = '';
+          }
+          select.value = selectedSummaryModelId;
+          const button = document.getElementById('loadSummaryModelsButton');
+          button.disabled = false;
+          button.textContent = 'Reload models';
+          restoreChangeSummary();
+          break;
+        }
+        case 'summaryModelsError': {
+          const button = document.getElementById('loadSummaryModelsButton');
+          button.disabled = false;
+          button.textContent = 'Load models';
+          document.getElementById('changeSummaryStatus').textContent = message.payload?.message || 'Unable to load models.';
+          break;
+        }
         case 'changeSummaryProgress':
         case 'changeSummaryLoaded':
         case 'changeSummaryError': {
@@ -2109,6 +2141,15 @@
   }
 
   const dashboardSearch = document.getElementById('dashboardSearch');
+  const summaryModelSelect = document.getElementById('summaryModelSelect');
+  if (summaryModelSelect) {
+    summaryModelSelect.addEventListener('change', function () {
+      if (summaryModelSelect.value === selectedSummaryModelId) return;
+      cancelPendingChangeSummary();
+      selectedSummaryModelId = summaryModelSelect.value;
+      restoreChangeSummary();
+    });
+  }
   if (dashboardSearch) {
     dashboardSearch.addEventListener('input', function () {
       captureDashboardFilters();

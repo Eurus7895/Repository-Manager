@@ -3054,6 +3054,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 }
 .change-summary[hidden], .change-summary button[hidden] { display: none; }
 .change-summary-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.change-summary-toolbar select { max-width: min(260px, 100%); min-width: 150px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border, var(--border)); padding: 5px; }
 .change-summary-result { font-size: 12px; line-height: 1.5; }
 .change-summary-result section { margin-top: 12px; }
 .change-summary-result h4 { margin: 0 0 4px; }
