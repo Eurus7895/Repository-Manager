@@ -2,8 +2,14 @@ name: Build VSIX
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to upload a VSIX to (leave blank for CI only)
+        required: false
+        type: string
   release:
     types: [published]
 
@@ -11,7 +17,8 @@ permissions:
   contents: read
 
 jobs:
-  build-vsix:
+  verify:
+    if: github.event_name != 'release' && (github.event_name != 'workflow_dispatch' || inputs.release_tag == '')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -31,51 +38,36 @@ jobs:
       - name: Compile, lint, and test
         run: npm test
 
-      - name: Package VSIX
+      - name: Verify VSIX packaging
         run: npm run package
 
-      - name: Select packaged version
-        id: version
-        run: |
-          version=$(node -p "require('./package.json').version")
-          asset="repository-manager-$version.vsix"
-          test -f "$asset"
-          echo "asset=$asset" >> "$GITHUB_OUTPUT"
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: repository-manager-vsix
-          path: ${{ steps.version.outputs.asset }}
-          if-no-files-found: error
-          retention-days: 14
-
   upload-release:
-    if: github.event_name == 'release'
-    needs: build-vsix
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+          persist-credentials: false
+
+      # Earlier release tags have a test that expects a named local branch.
+      - name: Provide local branch for tagged builds
+        run: git switch -c release-build
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      - name: Download built VSIX
-        uses: actions/download-artifact@v4
-        with:
-          name: repository-manager-vsix
-
-      - name: Verify version and upload to release
+      - name: Verify release version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           version=$(node -p "require('./package.json').version")
           if [ "${RELEASE_TAG#v}" != "$version" ]; then
@@ -83,10 +75,24 @@ jobs:
             exit 1
           fi
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile, lint, and test
+        run: npm test
+
+      - name: Package VSIX
+        run: npm run package
+
+      - name: Upload matching VSIX to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          version=$(node -p "require('./package.json').version")
           asset="repository-manager-$version.vsix"
           if [ ! -f "$asset" ]; then
             echo "::error::Built VSIX $asset is missing"
             exit 1
           fi
-
           gh release upload "$RELEASE_TAG" "$asset" --clobber

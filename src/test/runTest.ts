@@ -214,7 +214,13 @@ async function testRepositoryIntegration(): Promise<void> {
 
   const refs = await referenceService.getRepositoryRefs('.');
   assert.equal(refs.repositoryPath, '.');
-  assert.ok(refs.branches.length > 0);
+  const checkedOutBranch = await git.execGit(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => null);
+  if (checkedOutBranch) {
+    assert.ok(refs.branches.some(branch => branch.name === checkedOutBranch));
+  } else {
+    // A tag checkout has a valid HEAD with no local branch.
+    assert.ok(Array.isArray(refs.branches));
+  }
 }
 
 async function testWorkingTreePreview(): Promise<void> {
