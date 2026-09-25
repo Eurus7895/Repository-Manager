@@ -89,6 +89,14 @@ let prevented = false;
 listeners.body_contextmenu({ target: row, clientX: 1180, clientY: 790, preventDefault() { prevented = true; } });
 assert.equal(prevented, true);
 assert.equal(node('historyContextMenu').hidden, false);
+for (const [action, operation] of [
+  ['contextCherryPick', 'cherry-pick'], ['contextRevert', 'revert'], ['contextMerge', 'merge']
+]) {
+  click(action);
+  assert.equal(posts.at(-1).type, 'applyHistoryCommit');
+  assert.equal(posts.at(-1).payload.commit, B);
+  assert.equal(posts.at(-1).payload.operation, operation);
+}
 click('contextAddTag');
 assert.equal(posts.at(-1).type, 'createTagFromCommit');
 assert.equal(posts.at(-1).payload.commit, B);

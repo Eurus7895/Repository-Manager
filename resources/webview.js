@@ -231,6 +231,24 @@
 
   // Action handlers
   const actions = {
+    contextCherryPick: () => {
+      if (!historyContextTarget) return;
+      postMessage('applyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, operation: 'cherry-pick' });
+      hideHistoryContextMenu();
+    },
+    contextRevert: () => {
+      if (!historyContextTarget) return;
+      postMessage('applyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, operation: 'revert' });
+      hideHistoryContextMenu();
+    },
+    contextMerge: () => {
+      if (!historyContextTarget) return;
+      postMessage('applyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, operation: 'merge' });
+      hideHistoryContextMenu();
+    },
     contextAddTag: () => {
       if (!historyContextTarget) return;
       postMessage('createTagFromCommit', { repositoryPath: historyContextTarget.repositoryPath,

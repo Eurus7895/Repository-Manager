@@ -9,6 +9,7 @@ import { GitCommandService } from '../services/gitCommandService';
 import { ChangeContextService, EMPTY_TREE } from '../services/changeContextService';
 import { validateSummary } from '../services/changeSummaryValidation';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
+import { HistoryActionService } from '../services/historyActionService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
 import { renderDashboardToolbar } from '../webview/toolbar';
 
@@ -282,6 +283,83 @@ async function testAnnotatedTagFromHistoryCommit(): Promise<void> {
   }
 }
 
+async function testHistoryApplyActions(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-actions-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'History Actions Test']);
+    await git.execGit(['config', 'user.email', 'history-actions@example.com']);
+    writeFileSync(path.join(root, 'base.txt'), 'base\n');
+    await git.execGit(['add', 'base.txt']);
+    await git.execGit(['commit', '-qm', 'base']);
+    const base = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'source']);
+    writeFileSync(path.join(root, 'new.txt'), 'source\n');
+    await git.execGit(['add', 'new.txt']);
+    await git.execGit(['commit', '-qm', 'add source']);
+    const source = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'target', base]);
+    writeFileSync(path.join(root, 'target.txt'), 'target only\n');
+    await git.execGit(['add', 'target.txt']);
+    await git.execGit(['commit', '-qm', 'target only']);
+    const actions = new HistoryActionService(git);
+    assert.equal((await actions.describe('.', source)).branch, 'target');
+    assert.equal((await actions.apply('.', source, 'cherry-pick')).success, true);
+    assert.equal(await git.execGit(['show', '-s', '--format=%s', 'HEAD']), 'add source');
+    assert.equal((await actions.apply('.', 'HEAD', 'revert')).success, true);
+    assert.equal(await git.execGit(['show', '-s', '--format=%s', 'HEAD']), 'Revert "add source"');
+    assert.equal((await actions.apply('.', source, 'merge')).success, true);
+    const merged = await git.execGit(['rev-parse', 'HEAD']);
+    assert.equal((await actions.describe('.', merged)).parents.length, 2);
+    assert.equal((await actions.apply('.', merged, 'revert')).success, false);
+    assert.equal((await actions.apply('.', merged, 'revert', 1)).success, true);
+    await git.execGit(['switch', '-c', 'pick-merge', base]);
+    assert.equal((await actions.apply('.', merged, 'cherry-pick')).success, false);
+    assert.equal((await actions.apply('.', merged, 'cherry-pick', 1)).success, true);
+    writeFileSync(path.join(root, 'dirty.txt'), 'untracked\n');
+    const current = await git.execGit(['rev-parse', 'HEAD']);
+    assert.equal((await actions.apply('.', source, 'merge')).success, false);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), current);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testHistoryApplyConflict(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-conflict-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Conflict Test']);
+    await git.execGit(['config', 'user.email', 'conflict@example.com']);
+    writeFileSync(path.join(root, 'shared.txt'), 'base\n');
+    await git.execGit(['add', 'shared.txt']);
+    await git.execGit(['commit', '-qm', 'base']);
+    const base = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'source']);
+    writeFileSync(path.join(root, 'shared.txt'), 'source\n');
+    await git.execGit(['commit', '-qam', 'source edit']);
+    const source = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'target', base]);
+    writeFileSync(path.join(root, 'shared.txt'), 'target\n');
+    await git.execGit(['commit', '-qam', 'target edit']);
+    const actions = new HistoryActionService(git);
+    const cherry = await actions.apply('.', source, 'cherry-pick');
+    assert.equal(cherry.success, false);
+    assert.equal((cherry.data as { pending?: string }).pending, 'cherry-pick');
+    assert.equal((await actions.abort('.', 'cherry-pick')).success, true);
+    assert.equal(await actions.pendingOperation('.'), undefined);
+    const merge = await actions.apply('.', source, 'merge');
+    assert.equal(merge.success, false);
+    assert.equal((merge.data as { pending?: string }).pending, 'merge');
+    assert.equal((await actions.abort('.', 'merge')).success, true);
+    assert.equal(await git.execGit(['status', '--porcelain']), '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -409,6 +487,8 @@ async function main(): Promise<void> {
   await testRepositoryIntegration();
   await testBranchFromHistoryCommit();
   await testAnnotatedTagFromHistoryCommit();
+  await testHistoryApplyActions();
+  await testHistoryApplyConflict();
   console.log('Repository Manager backend tests passed');
 }
 

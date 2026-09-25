@@ -9,6 +9,7 @@ import { GitOperations } from '../gitOperations';
 import { PRManager } from '../prManager';
 import { HistoryQuery } from '../types';
 import { GitCommandService } from '../services/gitCommandService';
+import { HistoryAction } from '../services/historyActionService';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -685,6 +686,51 @@ export async function handleCreateTagFromCommit(ctx: MessageHandlerContext, payl
   }
 }
 
+export async function handleApplyHistoryCommit(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; commit: string; operation: HistoryAction
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || typeof payload.commit !== 'string' ||
+      !['cherry-pick', 'revert', 'merge'].includes(payload.operation)) {
+    return;
+  }
+  const { sha, branch, parents } = await ctx.gitOps.describeHistoryCommit(payload.repositoryPath, payload.commit);
+  let mainline: number | undefined;
+  if (payload.operation !== 'merge' && parents.length > 1) {
+    const picked = await vscode.window.showQuickPick(parents.map((parent, index) => ({
+      label: `Parent ${index + 1} · ${parent.slice(0, 12)}`,
+      description: index === 0 ? 'First parent' : undefined,
+      index: index + 1
+    })), { title: `Choose the mainline parent for ${payload.operation}`, placeHolder: 'Select the parent whose changes should be kept' });
+    if (!picked) {
+      return;
+    }
+    mainline = picked.index;
+  }
+  const label = payload.operation === 'cherry-pick' ? 'Cherry pick' : payload.operation === 'revert' ? 'Revert' : 'Merge';
+  const approved = await vscode.window.showWarningMessage(
+    `${label} ${sha.slice(0, 12)} ${payload.operation === 'merge' ? 'into' : 'on'} ${branch} in ${payload.repositoryPath}?`,
+    { modal: true, detail: `The working tree must be clean. Conflicts can be resolved in Source Control.` }, label
+  );
+  if (approved !== label) {
+    return;
+  }
+  const result = await ctx.gitOps.applyHistoryCommit(payload.repositoryPath, sha, payload.operation, mainline);
+  const pending = (result.data as { pending?: HistoryAction } | undefined)?.pending;
+  if (pending) {
+    const choice = await vscode.window.showWarningMessage(result.message, 'Abort operation');
+    if (choice === 'Abort operation') {
+      const aborted = await ctx.gitOps.abortHistoryAction(payload.repositoryPath, pending);
+      showResult(aborted.success, aborted.message);
+    }
+  } else {
+    showResult(result.success, result.message);
+  }
+  if (result.success) {
+    await ctx.reloadDashboardHistory([payload.repositoryPath]);
+  }
+  await ctx.refresh();
+}
+
 /**
  * Handler for getting commits
  */
@@ -816,6 +862,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'createBranchFromCommit': (ctx, payload) => handleCreateBranchFromCommit(ctx, payload as { repositoryPath: string; branchName: string; commit: string; checkout: boolean }),
   'copyHistoryCommit': (ctx, payload) => handleCopyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; field: 'hash' | 'subject' }),
   'createTagFromCommit': (ctx, payload) => handleCreateTagFromCommit(ctx, payload as { repositoryPath: string; commit: string }),
+  'applyHistoryCommit': (ctx, payload) => handleApplyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; operation: HistoryAction }),
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),
