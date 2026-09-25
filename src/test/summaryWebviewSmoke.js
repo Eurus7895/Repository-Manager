@@ -97,6 +97,21 @@ for (const [action, operation] of [
   assert.equal(posts.at(-1).payload.commit, B);
   assert.equal(posts.at(-1).payload.operation, operation);
 }
+for (const [action, operation] of [
+  ['contextRebase', 'rebase'], ['contextReset', 'reset'], ['contextDrop', 'drop']
+]) {
+  click(action);
+  assert.equal(posts.at(-1).type, 'rewriteHistoryCommit');
+  assert.equal(posts.at(-1).payload.commit, B);
+  assert.equal(posts.at(-1).payload.action, operation);
+}
+for (const [action, command] of [
+  ['contextContinueRebase', 'continue'], ['contextAbortRebase', 'abort']
+]) {
+  click(action);
+  assert.equal(posts.at(-1).type, 'resolveHistoryRebase');
+  assert.equal(posts.at(-1).payload.command, command);
+}
 click('contextAddTag');
 assert.equal(posts.at(-1).type, 'createTagFromCommit');
 assert.equal(posts.at(-1).payload.commit, B);

@@ -11,6 +11,7 @@ import { validateSummary } from '../services/changeSummaryValidation';
 import { buildSummaryBatches, combineBatchSummaries, splitPatch, SUMMARY_BATCH_BYTES } from '../services/changeSummaryBatches';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { HistoryActionService } from '../services/historyActionService';
+import { HistoryRewriteService } from '../services/historyRewriteService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
 import { renderDashboardToolbar } from '../webview/toolbar';
 
@@ -381,6 +382,160 @@ async function testHistoryApplyConflict(): Promise<void> {
   }
 }
 
+async function testHistoryRewrite(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-rewrite-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Rewrite Test']);
+    await git.execGit(['config', 'user.email', 'rewrite@example.com']);
+    writeFileSync(path.join(root, 'base.txt'), 'base\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'base']);
+    const base = await git.execGit(['rev-parse', 'HEAD']);
+    const rewrite = new HistoryRewriteService(git);
+    await git.execGit(['switch', '-c', 'source']);
+    writeFileSync(path.join(root, 'source.txt'), 'source\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'source']);
+    const source = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'target', base]);
+    writeFileSync(path.join(root, 'target.txt'), 'target\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'target']);
+    const oldHead = await git.execGit(['rev-parse', 'HEAD']);
+    const preview = await rewrite.preview('.', source, 'rebase');
+    assert.equal(preview.branch, 'target');
+    assert.equal(preview.affectedCount, 1);
+    assert.equal(preview.affected[0].subject, 'target');
+    assert.equal((await rewrite.execute('.', source, 'rebase', 'wrong', oldHead)).success, false);
+    assert.equal((await rewrite.execute('.', source, 'rebase', 'target', base)).success, false);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), oldHead);
+    const rebased = await rewrite.execute('.', source, 'rebase', 'target', oldHead);
+    assert.equal(rebased.success, true, rebased.message);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD^']), source);
+    assert.notEqual(await git.execGit(['rev-parse', 'HEAD']), oldHead);
+    const afterRebase = await git.execGit(['rev-parse', 'HEAD']);
+    assert.equal((await rewrite.execute('.', base, 'reset', 'target', afterRebase, 'soft')).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), base);
+    assert.equal(await git.execGit(['write-tree']), await git.execGit(['rev-parse', `${afterRebase}^{tree}`]));
+    // Soft reset leaves the index intact, so mixed reset requires committing first.
+    assert.equal((await rewrite.execute('.', afterRebase, 'reset', 'target', base, 'mixed')).success, false);
+    await git.execGit(['reset', '--hard', afterRebase]);
+    const hard = await rewrite.execute('.', base, 'reset', 'target', afterRebase, 'hard');
+    assert.equal(hard.success, true, hard.message);
+    const backup = (hard.data as { backup: string }).backup;
+    assert.equal(await git.execGit(['rev-parse', backup]), afterRebase);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), base);
+    assert.equal(await git.execGit(['status', '--porcelain']), '');
+    const applyPath = path.join(root, '.git', 'rebase-apply');
+    mkdirSync(applyPath);
+    writeFileSync(path.join(applyPath, 'applying'), '');
+    assert.equal((await rewrite.execute('.', afterRebase, 'reset', 'target', base, 'mixed')).success, false);
+    rmSync(applyPath, { recursive: true, force: true });
+    assert.equal((await rewrite.execute('.', afterRebase, 'reset', 'target', base, 'mixed')).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), afterRebase);
+    writeFileSync(path.join(root, 'untracked.txt'), 'dirty\n');
+    assert.equal((await rewrite.execute('.', base, 'reset', 'target', afterRebase, 'hard')).success, false);
+    rmSync(path.join(root, 'untracked.txt'));
+    assert.equal((await rewrite.execute('.', '0'.repeat(40), 'reset', 'target', afterRebase, 'hard')).success, false);
+    await assert.rejects(rewrite.preview('.', base, 'drop'), /root or merge commit/);
+
+    await git.execGit(['switch', '-c', 'drop-branch', base]);
+    writeFileSync(path.join(root, 'one.txt'), 'one\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'drop this']);
+    const dropped = await git.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(root, 'two.txt'), 'two\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'keep this']);
+    const beforeDrop = await git.execGit(['rev-parse', 'HEAD']);
+    const dropPreview = await rewrite.preview('.', dropped, 'drop');
+    assert.equal(dropPreview.affectedCount, 1);
+    assert.equal(dropPreview.targetSubject, 'drop this');
+    await git.execGit(['update-ref', 'refs/remotes/origin/published', dropped]);
+    await assert.rejects(rewrite.preview('.', dropped, 'drop'), /published commit/);
+    await git.execGit(['update-ref', '-d', 'refs/remotes/origin/published']);
+    assert.equal((await rewrite.execute('.', source, 'drop', 'drop-branch', beforeDrop)).success, false);
+    const dropResult = await rewrite.execute('.', dropped, 'drop', 'drop-branch', beforeDrop);
+    assert.equal(dropResult.success, true, dropResult.message);
+    assert.equal(await git.execGit(['rev-parse', (dropResult.data as { backup: string }).backup]), beforeDrop);
+    assert.equal(await git.execGit(['show', '-s', '--format=%s', 'HEAD']), 'keep this');
+    assert.equal(await git.execGit(['rev-parse', 'HEAD^']), base);
+    assert.equal(await git.execGit(['ls-files', 'one.txt']), '');
+    const last = await git.execGit(['rev-parse', 'HEAD']);
+    assert.equal((await rewrite.preview('.', last, 'drop')).affectedCount, 0);
+    assert.equal((await rewrite.execute('.', last, 'drop', 'drop-branch', last)).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), base);
+
+    const linked = path.join(root, 'linked');
+    await git.execGit(['worktree', 'add', '-qb', 'linked-branch', linked, base]);
+    const linkedPreview = await rewrite.preview('linked', source, 'reset');
+    assert.equal(linkedPreview.branch, 'linked-branch');
+    assert.equal(linkedPreview.head, base);
+    assert.equal((await rewrite.execute('linked', source, 'reset', 'linked-branch', base, 'hard')).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD'], linked), source);
+    assert.equal(await git.execGit(['symbolic-ref', '--short', 'HEAD']), 'drop-branch');
+
+    await git.execGit(['switch', '-c', 'merge-branch', base]);
+    writeFileSync(path.join(root, 'start.txt'), 'start\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'start']);
+    const start = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'side']);
+    writeFileSync(path.join(root, 'side.txt'), 'side\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'side']);
+    await git.execGit(['switch', 'merge-branch']);
+    writeFileSync(path.join(root, 'main.txt'), 'main\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'main']);
+    await git.execGit(['merge', '--no-ff', '--no-edit', 'side']);
+    await assert.rejects(rewrite.preview('.', start, 'drop'), /merge commits/);
+    await assert.rejects(rewrite.preview('.', source, 'rebase'), /merge commits/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testHistoryRewriteConflict(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-rebase-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Rebase Test']);
+    await git.execGit(['config', 'user.email', 'rebase@example.com']);
+    writeFileSync(path.join(root, 'shared.txt'), 'base\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'base']);
+    const base = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'source']);
+    writeFileSync(path.join(root, 'shared.txt'), 'source\n');
+    await git.execGit(['commit', '-qam', 'source']);
+    const source = await git.execGit(['rev-parse', 'HEAD']);
+    await git.execGit(['switch', '-c', 'target', base]);
+    writeFileSync(path.join(root, 'shared.txt'), 'target\n');
+    await git.execGit(['commit', '-qam', 'target']);
+    const head = await git.execGit(['rev-parse', 'HEAD']);
+    const rewrite = new HistoryRewriteService(git);
+    const conflict = await rewrite.execute('.', source, 'rebase', 'target', head);
+    assert.equal(conflict.success, false);
+    assert.equal((conflict.data as { pending: string }).pending, 'rebase');
+    assert.equal((await rewrite.resolveRebase('.', 'abort')).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), head);
+    assert.equal(await new HistoryActionService(git).pendingOperation('.'), undefined);
+    assert.equal((await rewrite.execute('.', source, 'rebase', 'target', head)).success, false);
+    writeFileSync(path.join(root, 'shared.txt'), 'resolved\n');
+    await git.execGit(['add', 'shared.txt']);
+    const continued = await rewrite.resolveRebase('.', 'continue');
+    assert.equal(continued.success, true, continued.message);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD^']), source);
+    assert.equal(await new HistoryActionService(git).pendingOperation('.'), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -530,6 +685,8 @@ async function main(): Promise<void> {
   await testAnnotatedTagFromHistoryCommit();
   await testHistoryApplyActions();
   await testHistoryApplyConflict();
+  await testHistoryRewrite();
+  await testHistoryRewriteConflict();
   console.log('Repository Manager backend tests passed');
 }
 

@@ -10,6 +10,7 @@ import { PRManager } from '../prManager';
 import { HistoryQuery } from '../types';
 import { GitCommandService } from '../services/gitCommandService';
 import { HistoryAction } from '../services/historyActionService';
+import { HistoryRewriteAction, ResetMode } from '../services/historyRewriteService';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -734,6 +735,95 @@ export async function handleApplyHistoryCommit(ctx: MessageHandlerContext, paylo
   await ctx.refresh();
 }
 
+export async function handleRewriteHistoryCommit(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; commit: string; action: HistoryRewriteAction
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || typeof payload.commit !== 'string' ||
+      !['rebase', 'reset', 'drop'].includes(payload.action)) {
+    return;
+  }
+  try {
+    const preview = await ctx.gitOps.previewHistoryRewrite(payload.repositoryPath, payload.commit, payload.action);
+    let mode: ResetMode | undefined;
+    if (payload.action === 'reset') {
+      const selection = await vscode.window.showQuickPick([
+        { label: 'Soft', description: 'Move HEAD; keep index and working files', value: 'soft' as const },
+        { label: 'Mixed', description: 'Move HEAD and reset index; keep working files', value: 'mixed' as const },
+        { label: 'Hard', description: 'Move HEAD, index and working files; create backup branch first', value: 'hard' as const }
+      ], { title: `Reset ${preview.branch} to ${preview.target.slice(0, 12)}`, placeHolder: 'Choose reset mode' });
+      if (!selection) {
+        return;
+      }
+      mode = selection.value;
+    }
+    const label = payload.action === 'rebase' ? 'Rebase' : payload.action === 'drop' ? 'Drop commit' : `Reset (${mode})`;
+    const shown = preview.affected.map(item => `${item.hash.slice(0, 12)} ${item.subject}`).join('\n');
+    const more = preview.affectedCount > preview.affected.length ? `\n… and ${preview.affectedCount - preview.affected.length} more` : '';
+    const detail = `Repository: ${payload.repositoryPath}\nCurrent branch: ${preview.branch}\n` +
+      `HEAD: ${preview.head}\nSelected: ${preview.target} ${preview.targetSubject}\n` +
+      `${payload.action === 'drop' ? 'Commits replayed after dropping the selected commit' : 'Commits affected'} (${preview.affectedCount}):` +
+      `\n${shown || '(none)'}${more}\nWorking tree must be clean. ` +
+      `${payload.action === 'drop' || mode === 'hard' ? 'A local backup branch will be created.' : 'Commits may receive new hashes.'}`;
+    const approved = await vscode.window.showWarningMessage(
+      `${label} on ${preview.branch}?`, { modal: true, detail }, label
+    );
+    if (approved !== label) {
+      return;
+    }
+    if (mode === 'hard') {
+      const confirmation = await vscode.window.showInputBox({
+        title: `Confirm hard reset of ${preview.branch}`, prompt: `Type ${preview.branch} to confirm`,
+        ignoreFocusOut: true, validateInput: value => value === preview.branch ? undefined : 'Type the current branch name.'
+      });
+      if (confirmation !== preview.branch) {
+        return;
+      }
+    }
+    const result = await ctx.gitOps.executeHistoryRewrite(payload.repositoryPath, preview.target, payload.action,
+      preview.branch, preview.head, mode);
+    const pending = (result.data as { pending?: string } | undefined)?.pending;
+    let resolved = false;
+    if (pending === 'rebase') {
+      const choice = await vscode.window.showWarningMessage(result.message, 'Continue rebase', 'Abort rebase');
+      if (choice) {
+        const recovery = await ctx.gitOps.resolveHistoryRebase(payload.repositoryPath, choice === 'Continue rebase' ? 'continue' : 'abort');
+        showResult(recovery.success, recovery.message);
+        resolved = recovery.success;
+      }
+    } else {
+      showResult(result.success, result.message);
+    }
+    const headAfter = await new GitCommandService(ctx.workspaceRoot).resolveRevision(payload.repositoryPath, 'HEAD');
+    if (result.success || resolved || headAfter !== preview.head) {
+      await ctx.reloadDashboardHistory([payload.repositoryPath]);
+    }
+    await ctx.refresh();
+  } catch (error) {
+    showResult(false, error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function handleResolveHistoryRebase(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; command: 'continue' | 'abort'
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || !['continue', 'abort'].includes(payload.command)) {
+    return;
+  }
+  if (payload.command === 'abort') {
+    const confirmed = await vscode.window.showWarningMessage(
+      `Abort the rebase in ${payload.repositoryPath}?`, { modal: true }, 'Abort rebase');
+    if (confirmed !== 'Abort rebase') {
+      return;
+    }
+  }
+  const result = await ctx.gitOps.resolveHistoryRebase(payload.repositoryPath, payload.command);
+  showResult(result.success, result.message);
+  if (result.success) {
+    await ctx.reloadDashboardHistory([payload.repositoryPath]);
+  }
+  await ctx.refresh();
+}
+
 /**
  * Handler for getting commits
  */
@@ -866,6 +956,8 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'copyHistoryCommit': (ctx, payload) => handleCopyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; field: 'hash' | 'subject' }),
   'createTagFromCommit': (ctx, payload) => handleCreateTagFromCommit(ctx, payload as { repositoryPath: string; commit: string }),
   'applyHistoryCommit': (ctx, payload) => handleApplyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; operation: HistoryAction }),
+  'rewriteHistoryCommit': (ctx, payload) => handleRewriteHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; action: HistoryRewriteAction }),
+  'resolveHistoryRebase': (ctx, payload) => handleResolveHistoryRebase(ctx, payload as { repositoryPath: string; command: 'continue' | 'abort' }),
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),
