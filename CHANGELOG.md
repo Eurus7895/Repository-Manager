@@ -5,7 +5,20 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] - Unreleased
+## [1.5.0] - 2026-09-25
+
+### Added
+
+- Right-click commit history actions to copy commit details, checkout a commit, create a branch or annotated tag, cherry-pick, revert, and merge.
+- Rebase the current branch onto a selected commit, reset it (soft, mixed, or hard), or drop an unpublished commit, with confirmation, backup branches for hard reset and drop, and rebase continue/abort actions.
+- Analyze large changes in bounded AI Change Summary batches with validated evidence and progress for each part.
+
+### Fixed
+
+- Refresh dashboard history after Git actions change commits or refs, including after resolving conflicts.
+- Allow a summary with an invalid batch intent to be retried instead of caching incomplete output.
+
+## [1.4.0] - 2026-09-25
 
 ### Added
 
