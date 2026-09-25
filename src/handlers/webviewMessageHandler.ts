@@ -700,7 +700,7 @@ export async function handleApplyHistoryCommit(ctx: MessageHandlerContext, paylo
       label: `Parent ${index + 1} · ${parent.slice(0, 12)}`,
       description: index === 0 ? 'First parent' : undefined,
       index: index + 1
-    })), { title: `Choose the mainline parent for ${payload.operation}`, placeHolder: 'Select the parent whose changes should be kept' });
+    })), { title: `Choose the mainline parent for ${payload.operation}`, placeHolder: 'Select the parent to compare the merge against' });
     if (!picked) {
       return;
     }
@@ -714,7 +714,9 @@ export async function handleApplyHistoryCommit(ctx: MessageHandlerContext, paylo
   if (approved !== label) {
     return;
   }
-  const result = await ctx.gitOps.applyHistoryCommit(payload.repositoryPath, sha, payload.operation, mainline);
+  const git = new GitCommandService(ctx.workspaceRoot);
+  const headBefore = await git.resolveRevision(payload.repositoryPath, 'HEAD');
+  const result = await ctx.gitOps.applyHistoryCommit(payload.repositoryPath, sha, payload.operation, mainline, branch);
   const pending = (result.data as { pending?: HistoryAction } | undefined)?.pending;
   if (pending) {
     const choice = await vscode.window.showWarningMessage(result.message, 'Abort operation');
@@ -725,7 +727,8 @@ export async function handleApplyHistoryCommit(ctx: MessageHandlerContext, paylo
   } else {
     showResult(result.success, result.message);
   }
-  if (result.success) {
+  const headAfter = pending ? await git.resolveRevision(payload.repositoryPath, 'HEAD') : headBefore;
+  if (result.success || (pending && headAfter !== headBefore)) {
     await ctx.reloadDashboardHistory([payload.repositoryPath]);
   }
   await ctx.refresh();

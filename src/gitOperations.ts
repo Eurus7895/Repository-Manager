@@ -326,8 +326,8 @@ export class GitOperations {
     return this.historyActionService.describe(repositoryPath, commit);
   }
 
-  async applyHistoryCommit(repositoryPath: string, commit: string, operation: HistoryAction, mainline?: number): Promise<CommandResult> {
-    return this.historyActionService.apply(repositoryPath, commit, operation, mainline);
+  async applyHistoryCommit(repositoryPath: string, commit: string, operation: HistoryAction, mainline?: number, expectedBranch?: string): Promise<CommandResult> {
+    return this.historyActionService.apply(repositoryPath, commit, operation, mainline, expectedBranch);
   }
 
   async abortHistoryAction(repositoryPath: string, operation: HistoryAction): Promise<CommandResult> {
