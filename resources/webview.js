@@ -249,6 +249,34 @@
         commit: historyContextTarget.hash, operation: 'merge' });
       hideHistoryContextMenu();
     },
+    contextRebase: () => {
+      if (!historyContextTarget) return;
+      postMessage('rewriteHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, action: 'rebase' });
+      hideHistoryContextMenu();
+    },
+    contextReset: () => {
+      if (!historyContextTarget) return;
+      postMessage('rewriteHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, action: 'reset' });
+      hideHistoryContextMenu();
+    },
+    contextDrop: () => {
+      if (!historyContextTarget) return;
+      postMessage('rewriteHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, action: 'drop' });
+      hideHistoryContextMenu();
+    },
+    contextContinueRebase: () => {
+      if (!historyContextTarget) return;
+      postMessage('resolveHistoryRebase', { repositoryPath: historyContextTarget.repositoryPath, command: 'continue' });
+      hideHistoryContextMenu();
+    },
+    contextAbortRebase: () => {
+      if (!historyContextTarget) return;
+      postMessage('resolveHistoryRebase', { repositoryPath: historyContextTarget.repositoryPath, command: 'abort' });
+      hideHistoryContextMenu();
+    },
     contextAddTag: () => {
       if (!historyContextTarget) return;
       postMessage('createTagFromCommit', { repositoryPath: historyContextTarget.repositoryPath,

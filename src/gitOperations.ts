@@ -18,6 +18,7 @@ import {
   ReferenceService
 } from './services';
 import { HistoryAction, HistoryActionService } from './services/historyActionService';
+import { HistoryRewriteAction, HistoryRewritePreview, HistoryRewriteService, ResetMode } from './services/historyRewriteService';
 
 import {
   SubmoduleInfo,
@@ -44,6 +45,7 @@ export class GitOperations {
   private diffService: DiffService;
   private referenceService: ReferenceService;
   private historyActionService: HistoryActionService;
+  private historyRewriteService: HistoryRewriteService;
 
   constructor(workspaceRoot: string) {
     this.gitCmd = new GitCommandService(workspaceRoot);
@@ -54,6 +56,7 @@ export class GitOperations {
     this.diffService = new DiffService(this.gitCmd);
     this.referenceService = new ReferenceService(this.gitCmd, this.branchService, this.commitService);
     this.historyActionService = new HistoryActionService(this.gitCmd);
+    this.historyRewriteService = new HistoryRewriteService(this.gitCmd);
   }
 
   // ==================== Git Command Methods ====================
@@ -332,5 +335,18 @@ export class GitOperations {
 
   async abortHistoryAction(repositoryPath: string, operation: HistoryAction): Promise<CommandResult> {
     return this.historyActionService.abort(repositoryPath, operation);
+  }
+
+  async previewHistoryRewrite(repositoryPath: string, commit: string, action: HistoryRewriteAction): Promise<HistoryRewritePreview> {
+    return this.historyRewriteService.preview(repositoryPath, commit, action);
+  }
+
+  async executeHistoryRewrite(repositoryPath: string, target: string, action: HistoryRewriteAction,
+    expectedBranch: string, expectedHead: string, mode?: ResetMode): Promise<CommandResult> {
+    return this.historyRewriteService.execute(repositoryPath, target, action, expectedBranch, expectedHead, mode);
+  }
+
+  async resolveHistoryRebase(repositoryPath: string, command: 'continue' | 'abort'): Promise<CommandResult> {
+    return this.historyRewriteService.resolveRebase(repositoryPath, command);
   }
 }

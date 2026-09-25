@@ -436,6 +436,12 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextRevert">Revert…</button>
     <button type="button" role="menuitem" data-action="contextMerge">Merge into current branch…</button>
     <div class="history-context-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="contextRebase">Rebase current branch onto this commit…</button>
+    <button type="button" role="menuitem" data-action="contextReset">Reset current branch to this commit…</button>
+    <button type="button" role="menuitem" data-action="contextDrop">Drop this commit…</button>
+    <button type="button" role="menuitem" data-action="contextContinueRebase">Continue rebase</button>
+    <button type="button" role="menuitem" data-action="contextAbortRebase">Abort rebase…</button>
+    <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
   </div>
