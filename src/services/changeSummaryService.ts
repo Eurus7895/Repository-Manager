@@ -116,7 +116,7 @@ export class CopilotSummaryProvider implements AIProvider {
     const summary = combineBatchSummaries(packet, validated);
     if (batches.length > 1) {summary.limitations.push(`Summary assembled from ${batches.length} independently analyzed parts.`);}
     summary.limitations.push(...failures.slice(0, Math.max(0, 20 - summary.limitations.length)));
-    if (!failures.length && !summary.intent.text.includes('AI intent could not be verified')) {
+    if (!failures.length && validated.every(result => !result.intent.text.includes('AI intent could not be verified'))) {
       this.cache.set(key, summary);
       if (this.cache.size > 20) {
         this.cache.delete(this.cache.keys().next().value!);

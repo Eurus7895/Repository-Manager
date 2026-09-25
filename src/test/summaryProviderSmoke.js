@@ -6,6 +6,7 @@ let requests = 0;
 let active = 0;
 let maxActive = 0;
 let failPart = false;
+let invalidLaterIntent = false;
 const fakeModel = {
   id: 'test-model', version: '1', name: 'Test model', maxInputTokens: 32000,
   async countTokens(value) { return Math.ceil(value.length / 4); },
@@ -22,7 +23,7 @@ const fakeModel = {
           await new Promise(resolve => setTimeout(resolve, 2));
           if (failPart && number === 2) throw new Error('Temporary model error');
           yield JSON.stringify({ schemaVersion: 1, baseSha: packet.baseSha, targetSha: packet.targetSha,
-            intent: { text: `Part ${number}`, evidence: [path] },
+            intent: { text: `Part ${number}`, evidence: [invalidLaterIntent && number === 2 ? 'missing.ts' : path] },
             behaviorChanges: [], affectedAreas: [], dependencyConfigChanges: [],
             possibleBreakingChanges: [], riskHints: [], suggestedTests: [], limitations: [] });
         } finally {
@@ -78,6 +79,17 @@ async function main() {
   const beforeRetry = requests;
   await retryProvider.summarize(makePacket(), token, () => {});
   assert.ok(requests > beforeRetry, 'incomplete result should be retryable');
+
+  invalidLaterIntent = true;
+  const invalidProvider = new CopilotSummaryProvider();
+  requests = 0;
+  const invalid = await invalidProvider.summarize(makePacket(), token, () => {});
+  assert.equal(invalid.summary.intent.text, 'Part 1');
+  assert.ok(invalid.summary.limitations.some(reason => reason.includes('evidence could not be verified')));
+  invalidLaterIntent = false;
+  const beforeInvalidRetry = requests;
+  await invalidProvider.summarize(makePacket(), token, () => {});
+  assert.ok(requests > beforeInvalidRetry, 'invalid later-batch intent should not be cached');
   console.log('AI summary batch provider smoke passed');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
