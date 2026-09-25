@@ -73,6 +73,23 @@
     return true;
   }
 
+  function restoreBranchModalControls() {
+    branchFromCommitTarget = null;
+    const baseInput = document.getElementById('baseBranchInput');
+    baseInput.disabled = false;
+    baseInput.value = '';
+    baseInput.placeholder = 'Loading branches...';
+    document.getElementById('baseBranch').value = '';
+    document.getElementById('baseBranchHint').textContent = '';
+    document.getElementById('baseBranchDropdown').style.pointerEvents = '';
+    document.getElementById('branchFromCommitCheckoutRow').hidden = true;
+    document.querySelectorAll('.branch-repository').forEach(cb => {
+      if (cb.dataset.originalDisabled !== undefined) {
+        cb.disabled = cb.dataset.originalDisabled === 'true';
+      }
+    });
+  }
+
   function changeSummaryKey(selection, repositoryPath = activeDashboardRepository) {
     return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha, selectedSummaryModelId]);
   }
@@ -489,7 +506,8 @@
 
     openCreateBranchModal: (fromHistory = false) => {
       const fromCommit = fromHistory === true && branchFromCommitTarget;
-      if (!fromCommit) branchFromCommitTarget = null;
+      restoreBranchModalControls();
+      if (fromCommit) branchFromCommitTarget = fromCommit;
       // Reset form fields
       document.getElementById('ticketId').value = '';
       document.getElementById('taskTitle').value = '';
@@ -537,7 +555,7 @@
     closeModal: (el) => {
       const modalId = el.dataset.modal;
       document.getElementById(modalId).classList.remove('active');
-      if (modalId === 'createBranchModal') branchFromCommitTarget = null;
+      if (modalId === 'createBranchModal') restoreBranchModalControls();
     },
 
     createBranch: () => {
@@ -558,8 +576,8 @@
         postMessage('createBranchFromCommit', { repositoryPath: branchFromCommitTarget.repositoryPath,
           commit: branchFromCommitTarget.hash, branchName,
           checkout: document.getElementById('branchFromCommitCheckout').checked });
-        branchFromCommitTarget = null;
         document.getElementById('createBranchModal').classList.remove('active');
+        restoreBranchModalControls();
         return;
       }
 
@@ -578,6 +596,7 @@
 
     createBranchForSelected: () => {
       if (selectedRepositories.size === 0) return;
+      restoreBranchModalControls();
       // Reset form fields
       document.getElementById('ticketId').value = '';
       document.getElementById('taskTitle').value = '';
