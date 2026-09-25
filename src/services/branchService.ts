@@ -9,6 +9,29 @@ import { BranchInfo, CommandResult } from '../types';
 export class BranchService {
   constructor(private gitCmd: GitCommandService) {}
 
+  /** Create a local branch at a commit without checking out or pulling its base. */
+  async createBranchFromCommit(repositoryPath: string, branchName: string, commit: string, checkout: boolean): Promise<CommandResult> {
+    try {
+      const root = this.gitCmd.resolveRepositoryPath(repositoryPath);
+      if (!branchName || branchName.startsWith('-')) {
+        throw new Error('Invalid branch name');
+      }
+      await this.gitCmd.execGit(['check-ref-format', '--branch', branchName], root);
+      const sha = await this.gitCmd.resolveRevision(repositoryPath, commit);
+      await this.gitCmd.execGit(['branch', branchName, sha], root);
+      if (checkout) {
+        try {
+          await this.gitCmd.execGit(['switch', branchName], root);
+        } catch (error) {
+          return { success: true, data: { checkoutFailed: true }, message: `Branch '${branchName}' was created at ${sha.slice(0, 8)}, but checkout failed: ${error instanceof Error ? error.message : String(error)}` };
+        }
+      }
+      return { success: true, message: `Branch '${branchName}' created at ${sha.slice(0, 8)}${checkout ? ' and checked out' : ''}` };
+    } catch (error) {
+      return { success: false, message: `Failed to create branch: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   /**
    * Get branches for a submodule (fast - single git command, no network calls)
    */

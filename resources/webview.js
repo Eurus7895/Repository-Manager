@@ -52,6 +52,26 @@
   let selectedSummaryModelId = '';
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
+  let historyContextTarget = null;
+  let branchFromCommitTarget = null;
+
+  function hideHistoryContextMenu() {
+    document.getElementById('historyContextMenu').hidden = true;
+  }
+
+  function showHistoryContextMenu(element, x, y) {
+    const commit = loadedHistoryCommits.find(item => item.hash === element.dataset.commit);
+    if (!commit) return false;
+    historyContextTarget = { repositoryPath: activeDashboardRepository, hash: commit.hash };
+    const menu = document.getElementById('historyContextMenu');
+    menu.hidden = false;
+    const width = window.innerWidth || document.documentElement.clientWidth;
+    const height = window.innerHeight || document.documentElement.clientHeight;
+    menu.style.left = `${Math.max(0, Math.min(x, width - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(0, Math.min(y, height - menu.offsetHeight - 8))}px`;
+    menu.querySelector('button').focus();
+    return true;
+  }
 
   function changeSummaryKey(selection, repositoryPath = activeDashboardRepository) {
     return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha, selectedSummaryModelId]);
@@ -194,6 +214,30 @@
 
   // Action handlers
   const actions = {
+    contextCopyHash: () => {
+      if (!historyContextTarget) return;
+      postMessage('copyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, field: 'hash' });
+      hideHistoryContextMenu();
+    },
+    contextCopySubject: () => {
+      if (!historyContextTarget) return;
+      postMessage('copyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, field: 'subject' });
+      hideHistoryContextMenu();
+    },
+    contextCheckoutCommit: () => {
+      if (!historyContextTarget) return;
+      postMessage('checkoutCommit', { submodule: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash, fromHistory: true });
+      hideHistoryContextMenu();
+    },
+    contextCreateBranch: () => {
+      if (!historyContextTarget) return;
+      branchFromCommitTarget = { ...historyContextTarget };
+      hideHistoryContextMenu();
+      actions.openCreateBranchModal(true);
+    },
     loadSummaryModels: () => {
       const button = document.getElementById('loadSummaryModelsButton');
       button.disabled = true;
@@ -443,7 +487,9 @@
       postMessage('commitFiles', { repositoryPath, files, message });
     },
 
-    openCreateBranchModal: () => {
+    openCreateBranchModal: (fromHistory = false) => {
+      const fromCommit = fromHistory === true && branchFromCommitTarget;
+      if (!fromCommit) branchFromCommitTarget = null;
       // Reset form fields
       document.getElementById('ticketId').value = '';
       document.getElementById('taskTitle').value = '';
@@ -455,7 +501,16 @@
       if (baseBranchInput) {
         baseBranchInput.value = '';
         baseBranchInput.placeholder = 'Loading branches...';
+        baseBranchInput.disabled = Boolean(fromCommit);
       }
+      document.getElementById('baseBranchDropdown').style.pointerEvents = fromCommit ? 'none' : '';
+      document.getElementById('branchFromCommitCheckoutRow').hidden = !fromCommit;
+      document.getElementById('branchFromCommitCheckout').checked = true;
+      document.querySelectorAll('.branch-repository').forEach(cb => {
+        if (cb.dataset.originalDisabled === undefined) cb.dataset.originalDisabled = cb.disabled ? 'true' : 'false';
+        cb.disabled = fromCommit ? cb.value !== fromCommit.repositoryPath : cb.dataset.originalDisabled === 'true';
+        if (fromCommit) cb.checked = cb.value === fromCommit.repositoryPath;
+      });
       const baseBranchList = document.getElementById('baseBranchList');
       if (baseBranchList) {
         baseBranchList.innerHTML = '';
@@ -465,15 +520,24 @@
         baseBranchDropdown.classList.remove('open');
       }
       // Request branches from the first available repository.
-      postMessage('getBaseBranchesForCreate', {});
+      if (fromCommit) {
+        document.getElementById('baseBranch').value = fromCommit.hash;
+        baseBranchInput.value = `Commit ${fromCommit.hash.slice(0, 12)}`;
+        baseBranchInput.placeholder = '';
+        updatePrefixOptions();
+        document.getElementById('baseBranchHint').textContent = 'Branch starts at the selected commit.';
+      } else {
+        postMessage('getBaseBranchesForCreate', {});
+      }
       document.getElementById('createBranchModal').classList.add('active');
       // Retry if branches haven't loaded after 2s
-      retryLoadBaseBranches(3);
+      if (!fromCommit) retryLoadBaseBranches(3);
     },
 
     closeModal: (el) => {
       const modalId = el.dataset.modal;
       document.getElementById(modalId).classList.remove('active');
+      if (modalId === 'createBranchModal') branchFromCommitTarget = null;
     },
 
     createBranch: () => {
@@ -487,6 +551,15 @@
           branchName.endsWith('_') ||
           branchName.includes('x.x.x')) {
         alert('Please fill in all required fields to generate a valid branch name.');
+        return;
+      }
+
+      if (branchFromCommitTarget) {
+        postMessage('createBranchFromCommit', { repositoryPath: branchFromCommitTarget.repositoryPath,
+          commit: branchFromCommitTarget.hash, branchName,
+          checkout: document.getElementById('branchFromCommitCheckout').checked });
+        branchFromCommitTarget = null;
+        document.getElementById('createBranchModal').classList.remove('active');
         return;
       }
 
@@ -1195,7 +1268,7 @@
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
     const rows = loadedHistoryCommits.map((commit, index) => {
       const refs = renderHistoryRefs(commit.refs, true);
-      return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">
+      return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}" tabindex="0">
         ${renderGraphCell()}
         <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<button class="history-subject" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">${escapeHtml(commit.subject)}</button></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
@@ -1391,6 +1464,7 @@
 
   // Event delegation - handle all clicks
   document.body.addEventListener('click', function (e) {
+    if (!e.target.closest('#historyContextMenu')) hideHistoryContextMenu();
     let el = e.target;
 
     // Special handling for checkboxes - don't prevent default, just track state
@@ -1435,6 +1509,25 @@
         if (e.target.closest('.row-actions') || e.target.closest('.row-checkbox')) return;
         actions.toggleBranches({ dataset: { repository: card.dataset.path } });
       }
+    }
+  });
+
+  document.body.addEventListener('contextmenu', function (e) {
+    const commitElement = e.target.closest('.history-row, .graph-node-control[data-commit]');
+    if (!commitElement) {
+      hideHistoryContextMenu();
+      return;
+    }
+    if (showHistoryContextMenu(commitElement, e.clientX, e.clientY)) e.preventDefault();
+  });
+  window.addEventListener('scroll', hideHistoryContextMenu, true);
+  window.addEventListener('blur', hideHistoryContextMenu);
+  document.body.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') hideHistoryContextMenu();
+    if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && e.target.closest('.history-row')) {
+      e.preventDefault();
+      const rect = e.target.getBoundingClientRect();
+      showHistoryContextMenu(e.target.closest('.history-row'), rect.left + 10, rect.top + 10);
     }
   });
 

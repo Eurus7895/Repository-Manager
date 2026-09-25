@@ -8,6 +8,7 @@ import * as path from 'path';
 import { GitOperations } from '../gitOperations';
 import { PRManager } from '../prManager';
 import { HistoryQuery } from '../types';
+import { GitCommandService } from '../services/gitCommandService';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -598,11 +599,55 @@ export async function handleGetBranches(
  */
 export async function handleCheckoutCommit(
   ctx: MessageHandlerContext,
-  payload: { submodule: string; commit: string }
+  payload: { submodule: string; commit: string; fromHistory?: boolean }
 ): Promise<void> {
-  const result = await ctx.gitOps.checkoutCommit(payload.submodule, payload.commit);
+  if (payload.fromHistory) {
+    const decision = await vscode.window.showWarningMessage(
+      `Checkout ${payload.commit.slice(0, 12)} in ${payload.submodule}? This will leave HEAD detached.`,
+      { modal: true }, 'Checkout commit'
+    );
+    if (decision !== 'Checkout commit') {
+      return;
+    }
+  }
+  const result = await ctx.gitOps.checkoutCommit(payload.submodule, payload.commit, payload.fromHistory);
   showResult(result.success, result.message);
+  if (result.success) {
+    await ctx.reloadDashboardHistory([payload.submodule]);
+  }
   await ctx.refresh();
+}
+
+export async function handleCreateBranchFromCommit(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; branchName: string; commit: string; checkout: boolean
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || typeof payload.branchName !== 'string' ||
+      typeof payload.commit !== 'string' || typeof payload.checkout !== 'boolean') {
+    return;
+  }
+  const result = await ctx.gitOps.createBranchFromCommit(payload.repositoryPath, payload.branchName, payload.commit, payload.checkout);
+  if (result.success && (result.data as { checkoutFailed?: boolean } | undefined)?.checkoutFailed) {
+    vscode.window.showWarningMessage(result.message);
+  } else {
+    showResult(result.success, result.message);
+  }
+  if (result.success) {
+    await ctx.reloadDashboardHistory([payload.repositoryPath]);
+    await ctx.refresh();
+  }
+}
+
+export async function handleCopyHistoryCommit(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; commit: string; field: 'hash' | 'subject'
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || typeof payload.commit !== 'string' ||
+      (payload.field !== 'hash' && payload.field !== 'subject')) {
+    return;
+  }
+  const git = new GitCommandService(ctx.workspaceRoot);
+  const sha = await git.resolveRevision(payload.repositoryPath, payload.commit);
+  const text = payload.field === 'hash' ? sha : await git.execGit(['show', '-s', '--format=%s', sha], git.resolveRepositoryPath(payload.repositoryPath));
+  await vscode.env.clipboard.writeText(text);
 }
 
 /**
@@ -732,7 +777,9 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'openSubmodule': (ctx, payload) => handleOpenSubmodule(ctx, payload as { submodule: string }),
   'stageSubmodule': (ctx, payload) => handleStageSubmodule(ctx, payload as { submodule: string }),
   'getBranches': (ctx, payload) => handleGetBranches(ctx, payload as { submodule: string }),
-  'checkoutCommit': (ctx, payload) => handleCheckoutCommit(ctx, payload as { submodule: string; commit: string }),
+  'checkoutCommit': (ctx, payload) => handleCheckoutCommit(ctx, payload as { submodule: string; commit: string; fromHistory?: boolean }),
+  'createBranchFromCommit': (ctx, payload) => handleCreateBranchFromCommit(ctx, payload as { repositoryPath: string; branchName: string; commit: string; checkout: boolean }),
+  'copyHistoryCommit': (ctx, payload) => handleCopyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; field: 'hash' | 'subject' }),
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),

@@ -232,12 +232,15 @@ export class CommitService {
   /**
    * Checkout a specific commit in a submodule
    */
-  async checkoutCommit(submodulePath: string, commit: string): Promise<CommandResult> {
+  async checkoutCommit(submodulePath: string, commit: string, fromHistory = false): Promise<CommandResult> {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
-      await this.gitCmd.execGit(['fetch', '--all'], fullPath);
-      await this.gitCmd.execGit(['checkout', commit], fullPath);
+      if (!fromHistory) {
+        await this.gitCmd.execGit(['fetch', '--all'], fullPath);
+      }
+      const sha = await this.gitCmd.resolveRevision(submodulePath, commit);
+      await this.gitCmd.execGit(['checkout', '--detach', sha], fullPath);
       return { success: true, message: `Checked out commit '${commit.substring(0, 8)}'` };
     } catch (error: unknown) {
       const err = error as Error;
