@@ -121,6 +121,7 @@ function renderModals(repositories: RepositoryInfo[]): string {
             </div>
             <input type="hidden" id="branchName">
           </div>
+          <label class="form-label" id="branchFromCommitCheckoutRow" hidden><input type="checkbox" id="branchFromCommitCheckout" checked> Checkout new branch</label>
         </div>
         <div class="modal-footer">
           <button class="btn" data-action="closeModal" data-modal="createBranchModal">Cancel</button>
@@ -425,6 +426,14 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
   </div>
 
   ${renderModals(repositories)}
+
+  <div class="history-context-menu" id="historyContextMenu" role="menu" aria-label="Commit actions" hidden>
+    <button type="button" role="menuitem" data-action="contextCreateBranch">Create Branch…</button>
+    <button type="button" role="menuitem" data-action="contextCheckoutCommit">Checkout…</button>
+    <div class="history-context-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
+    <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
+  </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
   <script nonce="${nonce}" src="${resourceUris.graphScriptUri}"></script>

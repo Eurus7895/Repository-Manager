@@ -223,6 +223,37 @@ async function testRepositoryIntegration(): Promise<void> {
   }
 }
 
+async function testBranchFromHistoryCommit(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-history-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'History Test']);
+    await git.execGit(['config', 'user.email', 'history@example.com']);
+    writeFileSync(path.join(root, 'file.txt'), 'first\n');
+    await git.execGit(['add', 'file.txt']);
+    await git.execGit(['commit', '-qm', 'first']);
+    const first = await git.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(root, 'file.txt'), 'second\n');
+    await git.execGit(['commit', '-qam', 'second']);
+    const latest = await git.execGit(['rev-parse', 'HEAD']);
+    const branch = new BranchService(git);
+    assert.equal((await branch.createBranchFromCommit('.', 'topic/old', first, false)).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), latest);
+    assert.equal(await git.execGit(['rev-parse', 'topic/old']), first);
+    assert.equal((await branch.createBranchFromCommit('.', 'topic/old', latest, false)).success, false);
+    assert.equal((await branch.createBranchFromCommit('.', '-bad', latest, false)).success, false);
+    assert.equal((await branch.createBranchFromCommit('.', 'topic/current', first, true)).success, true);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), first);
+    assert.equal(await git.execGit(['symbolic-ref', '--short', 'HEAD']), 'topic/current');
+    const checkout = await new CommitService(git).checkoutCommit('.', latest, true);
+    assert.equal(checkout.success, true);
+    assert.equal(await git.execGit(['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''), '');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -348,6 +379,7 @@ async function main(): Promise<void> {
   await testWorkingTreePreview();
   await testChangeSummaryContext();
   await testRepositoryIntegration();
+  await testBranchFromHistoryCommit();
   console.log('Repository Manager backend tests passed');
 }
 

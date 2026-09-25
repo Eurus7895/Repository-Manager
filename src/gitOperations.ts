@@ -275,8 +275,12 @@ export class GitOperations {
   /**
    * Checkout a specific commit in a submodule
    */
-  async checkoutCommit(submodulePath: string, commit: string): Promise<CommandResult> {
-    return this.commitService.checkoutCommit(submodulePath, commit);
+  async checkoutCommit(submodulePath: string, commit: string, fromHistory = false): Promise<CommandResult> {
+    return this.commitService.checkoutCommit(submodulePath, commit, fromHistory);
+  }
+
+  async createBranchFromCommit(repositoryPath: string, branchName: string, commit: string, checkout: boolean): Promise<CommandResult> {
+    return this.branchService.createBranchFromCommit(repositoryPath, branchName, commit, checkout);
   }
 
   /**
