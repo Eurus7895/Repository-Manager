@@ -231,6 +231,12 @@
 
   // Action handlers
   const actions = {
+    contextAddTag: () => {
+      if (!historyContextTarget) return;
+      postMessage('createTagFromCommit', { repositoryPath: historyContextTarget.repositoryPath,
+        commit: historyContextTarget.hash });
+      hideHistoryContextMenu();
+    },
     contextCopyHash: () => {
       if (!historyContextTarget) return;
       postMessage('copyHistoryCommit', { repositoryPath: historyContextTarget.repositoryPath,

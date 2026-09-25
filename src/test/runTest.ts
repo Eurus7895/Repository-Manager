@@ -254,6 +254,34 @@ async function testBranchFromHistoryCommit(): Promise<void> {
   }
 }
 
+async function testAnnotatedTagFromHistoryCommit(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-tag-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Tag Test']);
+    await git.execGit(['config', 'user.email', 'tag@example.com']);
+    writeFileSync(path.join(root, 'file.txt'), 'first\n');
+    await git.execGit(['add', 'file.txt']);
+    await git.execGit(['commit', '-qm', 'first']);
+    const first = await git.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(root, 'file.txt'), 'second\n');
+    await git.execGit(['commit', '-qam', 'second']);
+    const latest = await git.execGit(['rev-parse', 'HEAD']);
+    const service = new ReferenceService(git, new BranchService(git), new CommitService(git));
+    assert.equal((await service.createAnnotatedTag('.', 'v1.4.0', 'Release candidate', first)).success, true);
+    assert.equal(await git.execGit(['cat-file', '-t', 'refs/tags/v1.4.0']), 'tag');
+    assert.equal(await git.execGit(['rev-parse', 'v1.4.0^{commit}']), first);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), latest);
+    assert.ok((await service.getRepositoryRefs('.')).tags.some(tag => tag.name === 'v1.4.0'));
+    assert.equal((await service.createAnnotatedTag('.', 'v1.4.0', 'Duplicate', latest)).success, false);
+    assert.equal((await service.createAnnotatedTag('.', '-invalid', 'Message', first)).success, false);
+    assert.equal((await service.createAnnotatedTag('.', 'valid', ' ', first)).success, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -380,6 +408,7 @@ async function main(): Promise<void> {
   await testChangeSummaryContext();
   await testRepositoryIntegration();
   await testBranchFromHistoryCommit();
+  await testAnnotatedTagFromHistoryCommit();
   console.log('Repository Manager backend tests passed');
 }
 

@@ -650,6 +650,41 @@ export async function handleCopyHistoryCommit(ctx: MessageHandlerContext, payloa
   await vscode.env.clipboard.writeText(text);
 }
 
+export async function handleCreateTagFromCommit(ctx: MessageHandlerContext, payload: {
+  repositoryPath: string; commit: string
+}): Promise<void> {
+  if (!payload || typeof payload.repositoryPath !== 'string' || typeof payload.commit !== 'string') {
+    return;
+  }
+  const git = new GitCommandService(ctx.workspaceRoot);
+  const sha = await git.resolveRevision(payload.repositoryPath, payload.commit);
+  const name = await vscode.window.showInputBox({
+    title: `Add annotated tag at ${sha.slice(0, 12)}`,
+    prompt: `Repository: ${payload.repositoryPath}`,
+    placeHolder: 'e.g. v1.4.0',
+    ignoreFocusOut: true,
+    validateInput: value => value.trim() ? undefined : 'Enter a tag name.'
+  });
+  if (name === undefined) {
+    return;
+  }
+  const message = await vscode.window.showInputBox({
+    title: `Message for tag ${name}`,
+    prompt: `Tag ${sha.slice(0, 12)} in ${payload.repositoryPath} (local only)`,
+    ignoreFocusOut: true,
+    validateInput: value => value.trim() ? undefined : 'Enter a tag message.'
+  });
+  if (message === undefined) {
+    return;
+  }
+  const result = await ctx.gitOps.createAnnotatedTag(payload.repositoryPath, name, message, sha);
+  showResult(result.success, result.message);
+  if (result.success) {
+    await ctx.reloadDashboardHistory([payload.repositoryPath]);
+    await ctx.refresh();
+  }
+}
+
 /**
  * Handler for getting commits
  */
@@ -780,6 +815,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'checkoutCommit': (ctx, payload) => handleCheckoutCommit(ctx, payload as { submodule: string; commit: string; fromHistory?: boolean }),
   'createBranchFromCommit': (ctx, payload) => handleCreateBranchFromCommit(ctx, payload as { repositoryPath: string; branchName: string; commit: string; checkout: boolean }),
   'copyHistoryCommit': (ctx, payload) => handleCopyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; field: 'hash' | 'subject' }),
+  'createTagFromCommit': (ctx, payload) => handleCreateTagFromCommit(ctx, payload as { repositoryPath: string; commit: string }),
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),
