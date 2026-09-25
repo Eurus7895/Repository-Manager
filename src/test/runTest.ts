@@ -493,6 +493,9 @@ async function testHistoryRewrite(): Promise<void> {
     await git.execGit(['merge', '--no-ff', '--no-edit', 'side']);
     await assert.rejects(rewrite.preview('.', start, 'drop'), /merge commits/);
     await assert.rejects(rewrite.preview('.', source, 'rebase'), /merge commits/);
+    const resetMergePreview = await rewrite.preview('.', base, 'reset');
+    assert.equal(resetMergePreview.affectedCount, 4);
+    assert.ok(resetMergePreview.affected.some(item => item.subject === 'side'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -531,6 +534,31 @@ async function testHistoryRewriteConflict(): Promise<void> {
     assert.equal(continued.success, true, continued.message);
     assert.equal(await git.execGit(['rev-parse', 'HEAD^']), source);
     assert.equal(await new HistoryActionService(git).pendingOperation('.'), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testHistoryRewriteSha256(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-sha256-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q', '--object-format=sha256']);
+    await git.execGit(['config', 'user.name', 'SHA256 Test']);
+    await git.execGit(['config', 'user.email', 'sha256@example.com']);
+    writeFileSync(path.join(root, 'base.txt'), 'base\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'base']);
+    const base = await git.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(root, 'next.txt'), 'next\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-qm', 'next']);
+    const head = await git.execGit(['rev-parse', 'HEAD']);
+    assert.equal(head.length, 64);
+    const branch = await git.execGit(['symbolic-ref', '--short', 'HEAD']);
+    const result = await new HistoryRewriteService(git).execute('.', base, 'reset', branch, head, 'hard');
+    assert.equal(result.success, true, result.message);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), base);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -687,6 +715,7 @@ async function main(): Promise<void> {
   await testHistoryApplyConflict();
   await testHistoryRewrite();
   await testHistoryRewriteConflict();
+  await testHistoryRewriteSha256();
   console.log('Repository Manager backend tests passed');
 }
 

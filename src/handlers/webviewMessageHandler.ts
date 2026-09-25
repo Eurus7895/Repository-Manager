@@ -816,9 +816,12 @@ export async function handleResolveHistoryRebase(ctx: MessageHandlerContext, pay
       return;
     }
   }
+  const git = new GitCommandService(ctx.workspaceRoot);
+  const headBefore = await git.resolveRevision(payload.repositoryPath, 'HEAD');
   const result = await ctx.gitOps.resolveHistoryRebase(payload.repositoryPath, payload.command);
   showResult(result.success, result.message);
-  if (result.success) {
+  const headAfter = await git.resolveRevision(payload.repositoryPath, 'HEAD');
+  if (result.success || headAfter !== headBefore) {
     await ctx.reloadDashboardHistory([payload.repositoryPath]);
   }
   await ctx.refresh();

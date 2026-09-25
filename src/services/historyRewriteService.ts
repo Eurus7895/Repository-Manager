@@ -66,8 +66,9 @@ export class HistoryRewriteService {
         throw new Error('Rewriting a range containing merge commits is not supported.');
       }
     }
-    const affectedCount = Number(await this.git.execGit(['rev-list', '--first-parent', '--count', range], cwd, 10000));
-    const log = await this.git.execGit(['log', '--first-parent', '--reverse', '--max-count=10', '--format=%H%x1f%s', range], cwd, 10000);
+    const traversal = action === 'reset' ? [] : ['--first-parent'];
+    const affectedCount = Number(await this.git.execGit(['rev-list', ...traversal, '--count', range], cwd, 10000));
+    const log = await this.git.execGit(['log', ...traversal, '--reverse', '--max-count=10', '--format=%H%x1f%s', range], cwd, 10000);
     const affected = log.split('\n').filter(Boolean).map(line => {
       const [hash, ...subject] = line.split('\x1f');
       return { hash, subject: subject.join('\x1f') };
@@ -80,7 +81,7 @@ export class HistoryRewriteService {
     let started = false;
     let backup: string | undefined;
     try {
-      if (!expectedBranch || !/^[a-f0-9]{40}$/i.test(expectedHead)) {
+      if (!expectedBranch || !expectedHead) {
         throw new Error('Missing confirmed branch or HEAD.');
       }
       if (action === 'reset' && !['soft', 'mixed', 'hard'].includes(mode || '')) {

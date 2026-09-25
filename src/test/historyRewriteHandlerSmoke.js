@@ -25,7 +25,7 @@ Module._load = function (request, parent, isMain) {
   if (request === 'vscode') return fakeVscode;
   return originalLoad.call(this, request, parent, isMain);
 };
-const { handleRewriteHistoryCommit } = require('../../out/handlers/webviewMessageHandler.js');
+const { handleRewriteHistoryCommit, handleResolveHistoryRebase } = require('../../out/handlers/webviewMessageHandler.js');
 const { GitCommandService } = require('../../out/services/gitCommandService.js');
 const { HistoryRewriteService } = require('../../out/services/historyRewriteService.js');
 Module._load = originalLoad;
@@ -65,6 +65,14 @@ async function main() {
     assert.equal(reloads, 1);
     assert.equal(refreshes, 1);
     assert.equal(run('for-each-ref', '--format=%(objectname)', 'refs/heads/history-backup/'), head);
+    fakeVscode.window.showErrorMessage = message => assert.match(message, /another conflict/);
+    ctx.gitOps.resolveHistoryRebase = async () => {
+      run('commit', '--allow-empty', '-qm', 'intermediate rebase commit');
+      return { success: false, message: 'another conflict' };
+    };
+    await handleResolveHistoryRebase(ctx, { repositoryPath: '.', command: 'continue' });
+    assert.equal(reloads, 2, 'a continue that advances HEAD must reload history even if it stops again');
+    assert.equal(refreshes, 2);
     console.log('History rewrite handler smoke passed');
   } finally {
     rmSync(root, { recursive: true, force: true });
