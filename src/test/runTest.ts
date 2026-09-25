@@ -8,6 +8,7 @@ import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
 import { ChangeContextService, EMPTY_TREE } from '../services/changeContextService';
 import { validateSummary } from '../services/changeSummaryValidation';
+import { buildSummaryBatches, combineBatchSummaries, splitPatch, SUMMARY_BATCH_BYTES } from '../services/changeSummaryBatches';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { HistoryActionService } from '../services/historyActionService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
@@ -490,8 +491,28 @@ async function testChangeSummaryContext(): Promise<void> {
     await git.execGit(['add', 'large.txt']);
     await git.execGit(['commit', '-m', 'large file']);
     const large = await service.collect('.', 'HEAD', second);
-    assert.ok(large.coverage.omitted.some(item => item.startsWith('large.txt: patch exceeds budget')));
-    assert.ok(!large.patches.some(item => item.path === 'large.txt'));
+    assert.ok(large.patches.some(item => item.path === 'large.txt'));
+    assert.ok(!large.coverage.omitted.some(item => item.startsWith('large.txt: patch exceeds budget')));
+    const batches = buildSummaryBatches(large);
+    assert.ok(batches.length > 1);
+    assert.equal(batches.flatMap(batch => batch.patches).map(part => part.patch).join(''), large.patches[0].patch);
+    assert.ok(batches.every(batch => batch.patches.reduce((size, part) => size + Buffer.byteLength(part.patch), 0) <= SUMMARY_BATCH_BYTES));
+    const validated = batches.map(batch => validateSummary(JSON.stringify({ ...reply,
+      baseSha: large.baseSha, targetSha: large.targetSha,
+      intent: { text: 'Add large file', evidence: ['large.txt'] }
+    }), batch));
+    const combined = combineBatchSummaries(large, validated);
+    assert.deepEqual(combined.intent.evidence, ['large.txt']);
+    assert.equal(combined.coverage.includedFiles, 1);
+    const unsupported = validateSummary(JSON.stringify({ ...reply,
+      baseSha: large.baseSha, targetSha: large.targetSha,
+      intent: { text: 'Claim another file', evidence: ['new.txt'] }
+    }), batches[0]);
+    assert.match(unsupported.intent.text, /AI intent could not be verified/);
+    const multibyte = 'a😀\n'.repeat(60);
+    const pieces = splitPatch(multibyte, 9);
+    assert.equal(pieces.join(''), multibyte);
+    assert.ok(pieces.every(piece => Buffer.byteLength(piece) <= 9));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

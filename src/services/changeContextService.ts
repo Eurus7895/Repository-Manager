@@ -4,8 +4,8 @@ import { GitCommandService } from './gitCommandService';
 
 export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_FILES = 80;
-const MAX_PATCH_BYTES = 60000;
-const MAX_FILE_BYTES = 12000;
+export const MAX_PATCH_BYTES = 300000;
+const MAX_FILE_BYTES = 300000;
 
 export class ChangeContextService {
   constructor(private git: GitCommandService) {}
