@@ -378,7 +378,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
             <div class="change-summary" id="changeSummary" hidden>
-              <div class="change-summary-toolbar"><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="loadSummaryModels" id="loadSummaryModelsButton">Load models</button><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
             <div class="commit-content">

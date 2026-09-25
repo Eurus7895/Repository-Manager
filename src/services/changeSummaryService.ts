@@ -4,6 +4,7 @@ import { validateSummary } from './changeSummaryValidation';
 
 interface SummaryChatModel {
   id: string;
+  name: string;
   version: string;
   maxInputTokens: number;
   countTokens(value: string): Thenable<number>;
@@ -18,19 +19,31 @@ interface SummaryLanguageModelAPI {
   };
 }
 export interface AIProvider {
-  summarize(packet: ChangeContextPacket, token: vscode.CancellationToken, progress: () => void): Promise<{ model: string; summary: ChangeSummary }>;
+  summarize(packet: ChangeContextPacket, token: vscode.CancellationToken, progress: () => void, selectedModelId?: string): Promise<{ model: string; summary: ChangeSummary }>;
 }
 export class CopilotSummaryProvider implements AIProvider {
   private cache = new Map<string, ChangeSummary>();
 
-  async summarize(packet: ChangeContextPacket, token: vscode.CancellationToken, progress: () => void) {
+  async listModels(): Promise<{ id: string; name: string }[]> {
+    const api = vscode as typeof vscode & SummaryLanguageModelAPI;
+    if (!api.lm?.selectChatModels) {
+      throw new Error('AI Change Summary requires VS Code 1.91 or newer.');
+    }
+    const models = await api.lm.selectChatModels({ vendor: 'copilot' });
+    return models.map(model => ({ id: model.id, name: model.name || model.id }));
+  }
+
+  async summarize(packet: ChangeContextPacket, token: vscode.CancellationToken, progress: () => void, selectedModelId?: string) {
     const api = vscode as typeof vscode & SummaryLanguageModelAPI;
     if (!api.lm?.selectChatModels || !api.LanguageModelChatMessage) {
       throw new Error('AI Change Summary requires VS Code 1.91 or newer.');
     }
-    const [model] = await api.lm.selectChatModels({ vendor: 'copilot' });
+    const models = await api.lm.selectChatModels({ vendor: 'copilot' });
+    const model = selectedModelId ? models.find(candidate => candidate.id === selectedModelId) : models[0];
     if (!model) {
-      throw new Error('No Copilot model available. Sign in to GitHub Copilot and try again.');
+      throw new Error(selectedModelId
+        ? 'The selected Copilot model is no longer available. Reload the model list and try again.'
+        : 'No Copilot model available. Sign in to GitHub Copilot and try again.');
     }
     if (token.isCancellationRequested) {
       throw new Error('Cancelled');
