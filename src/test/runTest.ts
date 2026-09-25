@@ -6,6 +6,8 @@ import { BranchService } from '../services/branchService';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
+import { ChangeContextService, EMPTY_TREE } from '../services/changeContextService';
+import { validateSummary } from '../services/changeSummaryValidation';
 import { HistoryService, parseDecorations, parseHistoryOutput } from '../services/historyService';
 import { parseStashesOutput, parseTagsOutput, ReferenceService } from '../services/referenceService';
 import { renderDashboardToolbar } from '../webview/toolbar';
@@ -272,12 +274,73 @@ async function testWorkingTreePreview(): Promise<void> {
   }
 }
 
+async function testChangeSummaryContext(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-summary-'));
+  const git = new GitCommandService(root);
+  try {
+    await git.execGit(['init', '-q']);
+    await git.execGit(['config', 'user.name', 'Summary Test']);
+    await git.execGit(['config', 'user.email', 'summary@example.com']);
+    writeFileSync(path.join(root, 'old.txt'), 'first\nsecond\nthird\nfourth\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-m', 'root']);
+    const first = await git.execGit(['rev-parse', 'HEAD']);
+    const service = new ChangeContextService(git);
+    const initial = await service.collect('.', first);
+    assert.equal(initial.baseSha, EMPTY_TREE);
+    assert.equal(initial.root, true);
+    assert.deepEqual(initial.files.map(file => file.path), ['old.txt']);
+    assert.match(initial.patches[0].patch, /\+first/);
+
+    await git.execGit(['mv', 'old.txt', 'new.txt']);
+    writeFileSync(path.join(root, 'new.txt'), 'first\nsecond\nthird\nfourth\nfifth\n');
+    await git.execGit(['add', '.']);
+    await git.execGit(['commit', '-m', 'rename and edit']);
+    const second = await git.execGit(['rev-parse', 'HEAD']);
+    writeFileSync(path.join(root, 'new.txt'), 'uncommitted secret\n');
+    const packet = await service.collect('.', second, first);
+    assert.equal(packet.baseSha, first);
+    assert.equal(packet.targetSha, second);
+    assert.deepEqual(packet.files, [{ oldPath: 'old.txt', path: 'new.txt', status: 'renamed' }]);
+    assert.doesNotMatch(JSON.stringify(packet), /uncommitted secret/);
+    const reply = {
+      schemaVersion: 1, baseSha: first, targetSha: second,
+      intent: { text: 'Rename', evidence: ['new.txt'] },
+      behaviorChanges: [], affectedAreas: [], dependencyConfigChanges: [],
+      possibleBreakingChanges: [], riskHints: [], suggestedTests: [], limitations: []
+    };
+    assert.equal(validateSummary(JSON.stringify(reply), packet).intent.text, 'Rename');
+    assert.throws(() => validateSummary(JSON.stringify({ ...reply, targetSha: first }), packet));
+    const partial = validateSummary(JSON.stringify({ ...reply,
+      intent: { text: 'Wrong', evidence: ['outside.txt'] },
+      behaviorChanges: [{ text: 'New path', evidence: ['b/new.txt:3'] },
+        { text: 'Unsupported', evidence: ['missing.txt'] }]
+    }), packet);
+    assert.match(partial.intent.text, /AI intent could not be verified/);
+    assert.deepEqual(partial.behaviorChanges, [{ text: 'New path', evidence: ['new.txt'] }]);
+    assert.equal(partial.limitations.length, 1);
+    const shortCommit = validateSummary(JSON.stringify({ ...reply,
+      intent: { text: 'Rename', evidence: [second.slice(0, 10)] }
+    }), packet);
+    assert.deepEqual(shortCommit.intent.evidence, [second]);
+    writeFileSync(path.join(root, 'large.txt'), Array.from({ length: 1000 }, (_, index) => `line ${index} ${'x'.repeat(40)}`).join('\n'));
+    await git.execGit(['add', 'large.txt']);
+    await git.execGit(['commit', '-m', 'large file']);
+    const large = await service.collect('.', 'HEAD', second);
+    assert.ok(large.coverage.omitted.some(item => item.startsWith('large.txt: patch exceeds budget')));
+    assert.ok(!large.patches.some(item => item.path === 'large.txt'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   testParsers();
   testPathBoundary();
   testHistoryGraph();
   testDashboardToolbarHierarchy();
   await testWorkingTreePreview();
+  await testChangeSummaryContext();
   await testRepositoryIntegration();
   console.log('Repository Manager backend tests passed');
 }

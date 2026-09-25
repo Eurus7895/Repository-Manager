@@ -1431,7 +1431,7 @@ select {
 
 .commit-detail-region {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -3044,3 +3044,20 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
     max-height: 240px;
   }
 }
+
+.change-summary {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  max-height: min(35vh, 240px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.change-summary[hidden], .change-summary button[hidden] { display: none; }
+.change-summary-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.change-summary-result { font-size: 12px; line-height: 1.5; }
+.change-summary-result section { margin-top: 12px; }
+.change-summary-result h4 { margin: 0 0 4px; }
+.change-summary-result ul { margin: 4px 0; padding-left: 20px; }
+.change-summary-result li { margin-bottom: 6px; }
+.change-summary-revisions { font-family: var(--vscode-editor-font-family, monospace); overflow-wrap: anywhere; }
+.change-summary-evidence { margin: 4px 5px 0 0; font: inherit; cursor: pointer; }

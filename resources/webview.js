@@ -47,6 +47,94 @@
   let previewedWorkingTreeFile = null;
   let workingTreePreviewMode = 'unstaged';
   let workingTreePreviewRequestId = 0;
+  let changeSummaryRequestId = 0;
+  let changeSummarySelection = null;
+  const changeSummaries = new Map();
+  let activeChangeSummaryKey = null;
+
+  function changeSummaryKey(selection, repositoryPath = activeDashboardRepository) {
+    return JSON.stringify([repositoryPath, selection.baseSha, selection.targetSha]);
+  }
+
+  function cancelPendingChangeSummary() {
+    if (!activeChangeSummaryKey) return;
+    const record = changeSummaries.get(activeChangeSummaryKey);
+    if (record && record.pending) {
+      record.pending = false;
+      record.status = 'Summary cancelled.';
+      postMessage('cancelChangeSummary', {});
+    }
+    activeChangeSummaryKey = null;
+  }
+
+  function resetChangeSummary(cancelPending = false) {
+    if (cancelPending) cancelPendingChangeSummary();
+    changeSummarySelection = null;
+    const area = document.getElementById('changeSummary');
+    const result = document.getElementById('changeSummaryResult');
+    const status = document.getElementById('changeSummaryStatus');
+    const cancel = document.getElementById('cancelChangeSummaryButton');
+    const start = document.getElementById('summarizeChangesButton');
+    if (area) area.hidden = true;
+    if (result) result.innerHTML = '';
+    if (status) status.textContent = '';
+    if (cancel) cancel.hidden = true;
+    if (start) start.disabled = false;
+  }
+
+  function restoreChangeSummary() {
+    if (!changeSummarySelection) return;
+    const record = changeSummaries.get(changeSummaryKey(changeSummarySelection));
+    document.getElementById('changeSummary').hidden = false;
+    document.getElementById('changeSummaryStatus').textContent = record ? record.status : '';
+    document.getElementById('summarizeChangesButton').disabled = Boolean(record && record.pending);
+    document.getElementById('cancelChangeSummaryButton').hidden = !record || !record.pending;
+    if (record && record.summary) {
+      renderChangeSummary({ requestId: record.requestId, repositoryPath: record.repositoryPath,
+        summary: record.summary, model: record.model });
+    }
+  }
+
+  function isCurrentChangeSummary(payload) {
+    return payload && changeSummarySelection && payload.repositoryPath === activeDashboardRepository &&
+      changeSummarySelection.targetSha === selectedDashboardCommit &&
+      changeSummarySelection.baseSha === comparisonBaseHash &&
+      changeSummaries.get(changeSummaryKey(changeSummarySelection))?.requestId === payload.requestId;
+  }
+
+  function finishChangeSummary() {
+    document.getElementById('cancelChangeSummaryButton').hidden = true;
+    document.getElementById('summarizeChangesButton').disabled = false;
+  }
+
+  function renderChangeSummary(payload) {
+    if (!isCurrentChangeSummary(payload)) return;
+    const data = payload.summary;
+    if (!data || data.targetSha !== changeSummarySelection.targetSha ||
+        data.baseSha !== (changeSummarySelection.baseSha || '4b825dc642cb6eb9a060e54bf8d69288fbee4904')) return;
+    finishChangeSummary();
+    document.getElementById('changeSummaryStatus').textContent = `Completed · ${payload.model}`;
+    const changed = new Set(changeSummarySelection.files.map(file => file.path));
+    function claim(item) {
+      const refs = (item.evidence || []).map(ref => changed.has(ref)
+        ? `<button class="change-summary-evidence" type="button" data-action="selectChangedFile" data-path="${escapeHtml(ref)}">${escapeHtml(ref)}</button>`
+        : `<button class="change-summary-evidence" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(ref)}">${escapeHtml(ref.slice(0, 12))}</button>`).join('');
+      return `<li>${escapeHtml(item.text)}${refs ? `<div>${refs}</div>` : ''}</li>`;
+    }
+    function section(title, items) {
+      return `<section><h4>${title}</h4>${items.length ? `<ul>${items.map(claim).join('')}</ul>` : '<p>None identified from the provided context.</p>'}</section>`;
+    }
+    const limitations = [...(data.limitations || []), ...(data.coverage.omitted || []),
+      ...(data.coverage.truncatedCommits ? ['Commit history was truncated.'] : [])];
+    document.getElementById('changeSummaryResult').innerHTML =
+      `<p class="change-summary-revisions">${escapeHtml(data.repositoryPath)} · ${data.root ? 'Empty tree' : escapeHtml(data.baseSha)} → ${escapeHtml(data.targetSha)}</p>` +
+      `<p>Coverage: ${data.coverage.includedFiles}/${data.coverage.totalFiles} file patches.</p>` +
+      section('Summary', [data.intent, ...data.behaviorChanges]) + section('Affected areas', data.affectedAreas) +
+      section('Dependency / config', data.dependencyConfigChanges) +
+      section('Possible breaking changes', data.possibleBreakingChanges) + section('Risk hints', data.riskHints) +
+      section('Suggested tests', data.suggestedTests) +
+      `<section><h4>Coverage limitations</h4><ul>${limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('') || '<li>None reported.</li>'}</ul></section>`;
+  }
 
   // Save state helper
   function saveState() {
@@ -104,6 +192,25 @@
 
   // Action handlers
   const actions = {
+    summarizeChanges: () => {
+      if (!changeSummarySelection) return;
+      const key = changeSummaryKey(changeSummarySelection);
+      if (changeSummaries.get(key)?.pending) return;
+      cancelPendingChangeSummary();
+      const requestId = ++changeSummaryRequestId;
+      changeSummaries.set(key, { requestId, repositoryPath: activeDashboardRepository,
+        pending: true, status: 'Collecting context…', summary: null, model: null });
+      activeChangeSummaryKey = key;
+      document.getElementById('changeSummaryResult').innerHTML = '';
+      restoreChangeSummary();
+      postMessage('summarizeChanges', { repositoryPath: activeDashboardRepository,
+        baseSha: changeSummarySelection.baseSha, targetSha: changeSummarySelection.targetSha,
+        requestId });
+    },
+    cancelChangeSummary: () => {
+      cancelPendingChangeSummary();
+      restoreChangeSummary();
+    },
     refresh: () => runToolbarOperation('refresh', 'refresh'),
     initAll: () => postMessage('initSubmodules'),
     updateAll: () => postMessage('updateSubmodules'),
@@ -785,6 +892,7 @@
 
   function loadParentCommitDetail(commitHash) {
     if (!commitHash) return;
+    resetChangeSummary();
     selectedDashboardCommit = commitHash;
     activeComparisonTarget = commitHash;
     comparisonBaseHash = null;
@@ -830,6 +938,7 @@
   }
 
   function loadComparison(baseRevision, targetRevision, source) {
+    resetChangeSummary();
     selectedDashboardCommit = targetRevision;
     activeComparisonTarget = targetRevision;
     comparisonBaseHash = baseRevision;
@@ -903,7 +1012,12 @@
     if (!repository) return;
 
     if (dashboardActivated) captureDashboardFilters();
+    if (repositoryPath !== activeDashboardRepository) {
+      cancelPendingChangeSummary();
+      changeSummaries.clear();
+    }
     activeDashboardRepository = repositoryPath;
+    resetChangeSummary();
     const canRestoreComparison = !dashboardActivated && comparisonRepository === repositoryPath;
     if (!canRestoreComparison) {
       selectedDashboardCommit = null;
@@ -1206,6 +1320,9 @@
     selectedDashboardCommit = detail.hash;
     activeComparisonTarget = detail.hash;
     comparisonBaseHash = detail.comparisonBaseHash || null;
+    resetChangeSummary();
+    changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
+    restoreChangeSummary();
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
@@ -1395,6 +1512,33 @@
 
     try {
       switch (message.type) {
+        case 'changeSummaryProgress':
+        case 'changeSummaryLoaded':
+        case 'changeSummaryError': {
+          const payload = message.payload;
+          const entry = Array.from(changeSummaries.entries()).find(([, record]) =>
+            record.requestId === payload?.requestId && record.repositoryPath === payload.repositoryPath);
+          if (!entry || !entry[1].pending) break;
+          const [key, record] = entry;
+          if (message.type === 'changeSummaryProgress') {
+            record.status = payload.status;
+          } else {
+            record.pending = false;
+            if (activeChangeSummaryKey === key) activeChangeSummaryKey = null;
+            if (message.type === 'changeSummaryLoaded') {
+              record.summary = payload.summary;
+              record.model = payload.model;
+              record.status = `Completed · ${payload.model}`;
+            } else {
+              record.status = payload.message;
+            }
+          }
+          if (isCurrentChangeSummary(payload)) {
+            if (record.summary) renderChangeSummary(payload);
+            else restoreChangeSummary();
+          }
+          break;
+        }
         case 'workingTreeChangesLoaded':
           renderWorkingTreeChanges(message.payload);
           break;

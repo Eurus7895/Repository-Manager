@@ -68,6 +68,35 @@ export interface WorkingTreePreview {
   requestId: number;
 }
 
+export interface ChangeContextPacket {
+  repositoryPath: string;
+  baseSha: string;
+  targetSha: string;
+  root: boolean;
+  files: ChangedFileInfo[];
+  patches: { path: string; patch: string }[];
+  commits: { hash: string; subject: string }[];
+  coverage: { totalFiles: number; includedFiles: number; omitted: string[]; truncatedCommits: boolean };
+}
+
+export interface SummaryClaim { text: string; evidence: string[] }
+
+export interface ChangeSummary {
+  repositoryPath: string;
+  baseSha: string;
+  targetSha: string;
+  root: boolean;
+  intent: SummaryClaim;
+  behaviorChanges: SummaryClaim[];
+  affectedAreas: SummaryClaim[];
+  dependencyConfigChanges: SummaryClaim[];
+  possibleBreakingChanges: SummaryClaim[];
+  riskHints: SummaryClaim[];
+  suggestedTests: SummaryClaim[];
+  limitations: string[];
+  coverage: ChangeContextPacket['coverage'];
+}
+
 export interface PullRequestInfo {
   title: string;
   body: string;
