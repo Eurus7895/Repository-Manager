@@ -17,6 +17,7 @@ import {
   DiffService,
   ReferenceService
 } from './services';
+import { HistoryAction, HistoryActionService } from './services/historyActionService';
 
 import {
   SubmoduleInfo,
@@ -42,6 +43,7 @@ export class GitOperations {
   private historyService: HistoryService;
   private diffService: DiffService;
   private referenceService: ReferenceService;
+  private historyActionService: HistoryActionService;
 
   constructor(workspaceRoot: string) {
     this.gitCmd = new GitCommandService(workspaceRoot);
@@ -51,6 +53,7 @@ export class GitOperations {
     this.historyService = new HistoryService(this.gitCmd);
     this.diffService = new DiffService(this.gitCmd);
     this.referenceService = new ReferenceService(this.gitCmd, this.branchService, this.commitService);
+    this.historyActionService = new HistoryActionService(this.gitCmd);
   }
 
   // ==================== Git Command Methods ====================
@@ -317,5 +320,17 @@ export class GitOperations {
 
   async createAnnotatedTag(repositoryPath: string, name: string, message: string, commit: string): Promise<CommandResult> {
     return this.referenceService.createAnnotatedTag(repositoryPath, name, message, commit);
+  }
+
+  async describeHistoryCommit(repositoryPath: string, commit: string): Promise<{ sha: string; branch: string; parents: string[] }> {
+    return this.historyActionService.describe(repositoryPath, commit);
+  }
+
+  async applyHistoryCommit(repositoryPath: string, commit: string, operation: HistoryAction, mainline?: number, expectedBranch?: string): Promise<CommandResult> {
+    return this.historyActionService.apply(repositoryPath, commit, operation, mainline, expectedBranch);
+  }
+
+  async abortHistoryAction(repositoryPath: string, operation: HistoryAction): Promise<CommandResult> {
+    return this.historyActionService.abort(repositoryPath, operation);
   }
 }

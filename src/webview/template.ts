@@ -432,6 +432,10 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextCreateBranch">Create Branch…</button>
     <button type="button" role="menuitem" data-action="contextCheckoutCommit">Checkout…</button>
     <div class="history-context-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="contextCherryPick">Cherry Pick…</button>
+    <button type="button" role="menuitem" data-action="contextRevert">Revert…</button>
+    <button type="button" role="menuitem" data-action="contextMerge">Merge into current branch…</button>
+    <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
   </div>
