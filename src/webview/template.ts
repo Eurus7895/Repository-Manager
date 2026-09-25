@@ -428,6 +428,7 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
   ${renderModals(repositories)}
 
   <div class="history-context-menu" id="historyContextMenu" role="menu" aria-label="Commit actions" hidden>
+    <button type="button" role="menuitem" data-action="contextAddTag">Add Tag…</button>
     <button type="button" role="menuitem" data-action="contextCreateBranch">Create Branch…</button>
     <button type="button" role="menuitem" data-action="contextCheckoutCommit">Checkout…</button>
     <div class="history-context-separator" role="separator"></div>

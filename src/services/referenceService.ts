@@ -2,7 +2,7 @@
  * Aggregates repository refs for the dashboard sidebar.
  */
 
-import { RepositoryRefs, StashInfo, TagInfo } from '../types';
+import { CommandResult, RepositoryRefs, StashInfo, TagInfo } from '../types';
 import { BranchService } from './branchService';
 import { CommitService } from './commitService';
 import { GitCommandService } from './gitCommandService';
@@ -41,6 +41,24 @@ export class ReferenceService {
     private branchService: BranchService,
     private commitService: CommitService
   ) {}
+
+  async createAnnotatedTag(repositoryPath: string, name: string, message: string, commit: string): Promise<CommandResult> {
+    try {
+      const root = this.gitCmd.resolveRepositoryPath(repositoryPath);
+      if (!name || name !== name.trim() || name.startsWith('-')) {
+        throw new Error('Invalid tag name');
+      }
+      if (!message.trim()) {
+        throw new Error('Tag message is required');
+      }
+      await this.gitCmd.execGit(['check-ref-format', `refs/tags/${name}`], root);
+      const sha = await this.gitCmd.resolveRevision(repositoryPath, commit);
+      await this.gitCmd.execGit(['tag', '-a', '-m', message.trim(), '--', name, sha], root);
+      return { success: true, message: `Annotated tag '${name}' created locally at ${sha.slice(0, 12)}` };
+    } catch (error) {
+      return { success: false, message: `Failed to create tag: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
 
   async getRepositoryRefs(repositoryPath: string): Promise<RepositoryRefs> {
     const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);

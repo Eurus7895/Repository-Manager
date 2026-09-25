@@ -314,4 +314,8 @@ export class GitOperations {
   async getRepositoryRefs(repositoryPath: string): Promise<RepositoryRefs> {
     return this.referenceService.getRepositoryRefs(repositoryPath);
   }
+
+  async createAnnotatedTag(repositoryPath: string, name: string, message: string, commit: string): Promise<CommandResult> {
+    return this.referenceService.createAnnotatedTag(repositoryPath, name, message, commit);
+  }
 }
