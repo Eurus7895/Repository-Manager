@@ -53,6 +53,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.release_tag }}
+          persist-credentials: false
 
       # Earlier release tags have a test that expects a named local branch.
       - name: Provide local branch for tagged builds
