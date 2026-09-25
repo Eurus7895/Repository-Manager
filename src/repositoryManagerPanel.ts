@@ -9,7 +9,7 @@ import { PRManager } from './prManager';
 import { getHtmlForWebview, WebviewResourceUris, WorkspaceFolderInfo } from './webview/template';
 import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessageHandler';
 import { GitCommandService } from './services/gitCommandService';
-import { ChangeContextService } from './services/changeContextService';
+import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
 import { CopilotSummaryProvider } from './services/changeSummaryService';
 
 export class RepositoryManagerPanel {
@@ -285,7 +285,7 @@ export class RepositoryManagerPanel {
       const decision = await vscode.window.showInformationMessage(
         `Summarize ${context.coverage.totalFiles} changed files with Copilot?`,
         { modal: true, detail: `${context.repositoryPath}\n${context.baseSha} → ${context.targetSha}\n` +
-          `${context.patches.length} patches (up to 60 KB total) may be sent to the model. ` +
+          `${context.patches.length} patches (up to ${Math.round(MAX_PATCH_BYTES / 1000)} KB total) may be sent across multiple model requests. ` +
           `${context.coverage.omitted.length} items have no patch. Review changed files in the dashboard first.` },
         'Summarize'
       );
@@ -294,8 +294,8 @@ export class RepositoryManagerPanel {
         return;
       }
       await send('changeSummaryProgress', { status: 'Summarizing…' });
-      const result = await this._summaryProvider.summarize(context, controller.token, () => {
-        void send('changeSummaryProgress', { status: 'Summarizing…' });
+      const result = await this._summaryProvider.summarize(context, controller.token, status => {
+        void send('changeSummaryProgress', { status });
       }, modelId || undefined);
       await send('changeSummaryProgress', { status: 'Validating…' });
       await send('changeSummaryLoaded', { summary: result.summary, model: result.model });
