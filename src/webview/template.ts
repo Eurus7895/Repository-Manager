@@ -422,13 +422,6 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
 <body>
   ${renderDashboard(repositories, workspaceFolders)}
 
-  <div class="selection-bar" id="selectionBar">
-    <span class="selection-count"><span id="selectedCount">0</span> selected</span>
-    <button class="btn btn-primary btn-sm" data-action="createBranchForSelected">Create Branch</button>
-    <button class="btn btn-sm" data-action="syncSelected">Sync</button>
-    <button class="btn btn-sm" data-action="deselectAll">Cancel</button>
-  </div>
-
   ${renderModals(repositories)}
 
   <div class="history-context-menu" id="historyContextMenu" role="menu" aria-label="Commit actions" hidden>

@@ -23,7 +23,7 @@ const window = { __initialRepositories: [], innerWidth: 1200, innerHeight: 800,
   RepositoryHistoryGraph: { laneX() { return 25; }, buildGraphModel(commits) { return {
     width: 76, rowHeight: 32, rows: commits.map(() => ({ lane: 0, before: [], after: [], startsHere: true, parentLanes: [], isMerge: false }))
   }; } } };
-const vscode = { getState() { return { selectedDashboardCommit: 'a'.repeat(40), activeDashboardRepository: '.', selectedRepositories: ['other'] }; },
+const vscode = { getState() { return { selectedDashboardCommit: 'a'.repeat(40), activeDashboardRepository: '.' }; },
   setState() {}, postMessage(message) { posts.push(message); } };
 vm.runInNewContext(fs.readFileSync('resources/webview.js', 'utf8'), { document, window, acquireVsCodeApi: () => vscode,
   console, ResizeObserver: class { observe() {} }, setTimeout, clearTimeout, requestAnimationFrame: () => 1 });
@@ -144,7 +144,7 @@ assert.equal(posts.at(-1).payload.checkout, false);
 assert.equal(node('baseBranchInput').disabled, false);
 assert.equal(node('branchFromCommitCheckoutRow').hidden, true);
 click('contextCreateBranch');
-click('createBranchForSelected');
+click('openCreateBranchModal');
 assert.equal(node('baseBranchInput').disabled, false);
 assert.equal(node('baseBranchDropdown').style.pointerEvents, '');
 assert.equal(node('branchFromCommitCheckoutRow').hidden, true);

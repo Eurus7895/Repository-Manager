@@ -7,7 +7,6 @@
 
   // Restore state from previous session
   const previousState = vscode.getState() || {};
-  let selectedRepositories = new Set(previousState.selectedRepositories || previousState.selectedSubmodules || []);
   let rebasingRepositories = new Set(previousState.rebasingRepositories || previousState.rebasingSubmodules || []);
   let repositoryData = previousState.repositoryData || previousState.submoduleData || (window.__initialRepositories || []);
   let activeDashboardRepository = previousState.activeDashboardRepository || (repositoryData[0] && repositoryData[0].path) || '.';
@@ -178,7 +177,6 @@
   // Save state helper
   function saveState() {
     vscode.setState({
-      selectedRepositories: Array.from(selectedRepositories),
       rebasingRepositories: Array.from(rebasingRepositories),
       repositoryData,
       activeDashboardRepository,
@@ -403,6 +401,11 @@
       renderRepositorySwitcher();
     },
 
+    // The extension host asks for confirmation before moving HEAD.
+    syncRepositoryToRecorded: (el) => {
+      if (el.dataset.path) postMessage('syncRepositoryToRecorded', { repositoryPath: el.dataset.path });
+    },
+
     replaceLocalBranchFromRemote: (el) => {
       requestBranchCheckout(el.dataset.branch, true);
     },
@@ -447,55 +450,6 @@
 
     checkoutDashboardBranch: (el) => {
       requestBranchCheckout(el.dataset.branch, el);
-    },
-
-    selectAll: () => {
-      document.querySelectorAll('.repository-card').forEach(row => {
-        selectedRepositories.add(row.dataset.path);
-        const cb = row.querySelector('.row-checkbox');
-        if (cb) cb.checked = true;
-        row.classList.add('selected');
-      });
-      saveState();
-      updateSelectionUI();
-    },
-
-    deselectAll: () => {
-      selectedRepositories.clear();
-      document.querySelectorAll('.repository-card').forEach(row => {
-        const cb = row.querySelector('.row-checkbox');
-        if (cb) cb.checked = false;
-        row.classList.remove('selected');
-      });
-      saveState();
-      updateSelectionUI();
-    },
-
-    toggleSelection: (el) => {
-      const path = el.dataset.repository;
-      if (!path) return;
-
-      // Toggle selection state
-      if (selectedRepositories.has(path)) {
-        selectedRepositories.delete(path);
-      } else {
-        selectedRepositories.add(path);
-      }
-
-      // Update checkbox state directly
-      const checkbox = el.tagName === 'INPUT' ? el : el.querySelector('.row-checkbox');
-      if (checkbox) {
-        checkbox.checked = selectedRepositories.has(path);
-      }
-
-      // Update the row's selected class
-      const row = el.closest('.repository-card');
-      if (row) {
-        row.classList.toggle('selected', selectedRepositories.has(path));
-      }
-
-      saveState();
-      updateSelectionUI();
     },
 
     previewWorkingTreeFile: (el) => {
@@ -586,7 +540,7 @@
       document.querySelectorAll('.branch-repository').forEach(cb => {
         if (cb.dataset.originalDisabled === undefined) cb.dataset.originalDisabled = cb.disabled ? 'true' : 'false';
         cb.disabled = fromCommit ? cb.value !== fromCommit.repositoryPath : cb.dataset.originalDisabled === 'true';
-        if (fromCommit) cb.checked = cb.value === fromCommit.repositoryPath;
+        cb.checked = fromCommit ? cb.value === fromCommit.repositoryPath : !cb.disabled;
       });
       const baseBranchList = document.getElementById('baseBranchList');
       if (baseBranchList) {
@@ -651,40 +605,6 @@
       pendingBranchInfo = { repositories, branchName, baseBranch };
       postMessage('createBranchWithReview', { submodules: repositories, branchName, baseBranch });
       document.getElementById('createBranchModal').classList.remove('active');
-    },
-
-    createBranchForSelected: () => {
-      if (selectedRepositories.size === 0) return;
-      restoreBranchModalControls();
-      // Reset form fields
-      document.getElementById('ticketId').value = '';
-      document.getElementById('taskTitle').value = '';
-      document.getElementById('productName').value = '';
-      document.getElementById('releaseVersion').value = '';
-      document.getElementById('devBranchName').value = '';
-      document.getElementById('baseBranch').value = '';
-      const baseBranchInput = document.getElementById('baseBranchInput');
-      if (baseBranchInput) {
-        baseBranchInput.value = '';
-        baseBranchInput.placeholder = 'Loading branches...';
-      }
-      const baseBranchList = document.getElementById('baseBranchList');
-      if (baseBranchList) {
-        baseBranchList.innerHTML = '';
-      }
-      const baseBranchDropdown = document.getElementById('baseBranchDropdown');
-      if (baseBranchDropdown) {
-        baseBranchDropdown.classList.remove('open');
-      }
-      // Request branches
-      postMessage('getBaseBranchesForCreate', {});
-      // Apply the repository selection to the branch workflow.
-      document.querySelectorAll('.branch-repository').forEach(cb => {
-        cb.checked = selectedRepositories.has(cb.value);
-      });
-      document.getElementById('createBranchModal').classList.add('active');
-      // Retry if branches haven't loaded after 2s
-      retryLoadBaseBranches(3);
     },
 
     confirmAndPush: () => {
@@ -760,7 +680,6 @@
     createPR: (el) => postMessage('createPR', { submodule: el.dataset.repository }),
     openRepository: (el) => postMessage('openSubmodule', { submodule: el.dataset.repository }),
     stageSubmodule: (el) => postMessage('stageSubmodule', { submodule: el.dataset.repository }),
-    syncSelected: () => postMessage('syncVersions', { submodules: Array.from(selectedRepositories) }),
     syncAll: () => postMessage('syncVersions', { submodules: [] }),
 
     toggleBranches: (el) => {
@@ -1018,11 +937,14 @@
       const title = unavailable
         ? `${repository.name} is not initialized`
         : `${repository.name} · ${branch} · ${repository.status}${alignment === 'drifted' ? ` (parent is on ${targetBranch})` : ''}`;
-      return `<button class="sidebar-repository-item${active ? ' active' : ''}" type="button"${active ? ' aria-current="true"' : ''} data-action="selectDashboardRepository" data-path="${escapeHtml(repository.path)}" title="${escapeHtml(title)}"${unavailable ? ' disabled' : ''}>
+      const resetAction = repository.atRecordedCommit === false
+        ? `<button class="sidebar-repository-action" type="button" data-action="syncRepositoryToRecorded" data-path="${escapeHtml(repository.path)}" title="Reset ${escapeHtml(repository.name)} to the recorded commit ${escapeHtml(repository.recordedCommit)}">Reset to recorded</button>`
+        : '';
+      return `<div class="sidebar-repository-row"><button class="sidebar-repository-item${active ? ' active' : ''}" type="button"${active ? ' aria-current="true"' : ''} data-action="selectDashboardRepository" data-path="${escapeHtml(repository.path)}" title="${escapeHtml(title)}"${unavailable ? ' disabled' : ''}>
         <span class="repo-status-dot status-${escapeHtml(repository.status)}" aria-hidden="true"></span>
         <span class="repo-copy"><strong>${escapeHtml(repository.name)}${repository.isParentRepo ? ' <small>parent</small>' : ''}</strong><code>${escapeHtml(branch)}</code></span>
         <span class="repo-badges">${badges}</span>
-      </button>`;
+      </button>${resetAction}</div>`;
     }).join('') || '<span class="sidebar-placeholder">No repositories</span>';
   }
 
@@ -1612,26 +1534,6 @@
     if (!e.target.closest('#historyContextMenu')) hideHistoryContextMenu();
     let el = e.target;
 
-    // Special handling for checkboxes - don't prevent default, just track state
-    if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.action === 'toggleSelection') {
-      const path = el.dataset.repository;
-      if (path) {
-        // Sync our state with checkbox state (checkbox already toggled)
-        if (el.checked) {
-          selectedRepositories.add(path);
-        } else {
-          selectedRepositories.delete(path);
-        }
-        const row = el.closest('.repository-card');
-        if (row) {
-          row.classList.toggle('selected', el.checked);
-        }
-        saveState();
-        updateSelectionUI();
-      }
-      return;
-    }
-
     // Walk up the DOM tree to find element with data-action
     while (el && el !== document.body) {
       if (el.dataset && el.dataset.action) {
@@ -1715,26 +1617,6 @@
         const visible = name.includes(query) || path.includes(query) || branch.includes(query);
         row.style.display = visible ? 'block' : 'none';
       });
-    });
-  }
-
-  function updateSelectionUI() {
-    const bar = document.getElementById('selectionBar');
-    const count = document.getElementById('selectedCount');
-
-    if (selectedRepositories.size > 0) {
-      bar.classList.add('active');
-      count.textContent = selectedRepositories.size;
-    } else {
-      bar.classList.remove('active');
-    }
-
-    document.querySelectorAll('.repository-card').forEach(row => {
-      const checkbox = row.querySelector('.row-checkbox');
-      if (checkbox) {
-        checkbox.checked = selectedRepositories.has(row.dataset.path);
-        row.classList.toggle('selected', selectedRepositories.has(row.dataset.path));
-      }
     });
   }
 
@@ -2630,7 +2512,6 @@
   // Initialize UI on load
   setupHistoryColumnResizers();
   setupDashboardSplitters();
-  updateSelectionUI();
   updateRebaseUI();
   closeAllBranchPanels();
   if (repositoryData.length > 0) {

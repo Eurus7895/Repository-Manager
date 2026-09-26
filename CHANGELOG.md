@@ -10,12 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Switch the dashboard between the parent repository and linked repositories from a Repositories list that shows each repository's branch, status, ahead/behind counts, drift from the parent branch, and whether it has moved off the commit the parent records.
+- Reset a single linked repository to the commit the parent records from its row in the Repositories list, after a confirmation that explains the resulting detached HEAD.
 - Show old and new file line numbers in commit and working-tree diffs.
 - Add `npm run test:ui`, which renders the dashboard in headless Chromium against a fixture workspace and writes screenshots to `ui-snapshots/`.
 
 ### Changed
 
 - Hide Git's `diff --git`, `index`, `---`, and `+++` header lines in diffs; the panel title already names the file.
+
+### Removed
+
+- Remove the unreachable repository selection bar; branch creation already selects repositories in its own dialog.
+
+### Fixed
+
+- Re-select all available repositories when opening New branch after creating a branch from a history commit.
 
 ## [1.5.0] - 2026-09-25
 

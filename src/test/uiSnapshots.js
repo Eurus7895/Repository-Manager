@@ -155,7 +155,12 @@ async function main() {
     assert.match(await libB.textContent(), /drift/);
     assert.match(await libB.textContent(), /≠ recorded/);
     assert.equal(await page.locator('.sidebar-repository-item[data-path="lib-a"] .repo-badge-drift').count(), 0);
+    // Only repositories off their recorded commit offer the reset action.
+    assert.equal(await page.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
+    assert.equal(await page.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
     await snap(page, '01-dashboard');
+    await libB.hover();
+    await snap(page, '01b-reset-to-recorded');
 
     // Diff shows file line numbers and hides git's file headers.
     await page.locator('.history-row', { hasText: 'update app in two places' }).click();
