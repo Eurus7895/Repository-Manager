@@ -396,6 +396,13 @@
       requestBranchCheckout(el.dataset.branch);
     },
 
+    selectDashboardRepository: (el) => {
+      const repositoryPath = el.dataset.path;
+      if (!repositoryPath || repositoryPath === activeDashboardRepository) return;
+      activateDashboardRepository(repositoryPath);
+      renderRepositorySwitcher();
+    },
+
     replaceLocalBranchFromRemote: (el) => {
       requestBranchCheckout(el.dataset.branch, true);
     },
@@ -832,14 +839,31 @@
     if (count) count.textContent = selected + ' selected';
   }
 
+  // Renders a unified patch with old/new file line numbers. Git's file headers
+  // (diff/index/---/+++) are dropped because the panel title already names the file.
   function renderPatchLines(patch) {
-    return String(patch || '').split('\n').map(line => {
-      let className = 'diff-context';
-      if (line.startsWith('+') && !line.startsWith('+++')) className = 'diff-addition';
-      else if (line.startsWith('-') && !line.startsWith('---')) className = 'diff-deletion';
-      else if (line.startsWith('@@')) className = 'diff-hunk';
-      else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) className = 'diff-meta';
-      return `<span class="${className}">${escapeHtml(line) || ' '}</span>`;
+    const lines = String(patch || '').replace(/\n$/, '').split('\n');
+    let oldLine = 0;
+    let newLine = 0;
+    let inHunk = false;
+    const row = (className, oldNumber, newNumber, text) => `<span class="diff-line ${className}"><i class="diff-ln">${oldNumber}</i><i class="diff-ln">${newNumber}</i><span class="diff-text">${escapeHtml(text) || ' '}</span></span>`;
+    return lines.map(line => {
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (hunk) {
+        oldLine = Number(hunk[1]);
+        newLine = Number(hunk[2]);
+        inHunk = true;
+        return row('diff-hunk', '', '', line);
+      }
+      if (!inHunk || line.startsWith('diff --git ')) {
+        inHunk = false;
+        if (/^(diff --git |index |--- |\+\+\+ )/.test(line)) return '';
+        return row('diff-meta', '', '', line);
+      }
+      if (line.startsWith('+')) return row('diff-addition', '', newLine++, line);
+      if (line.startsWith('-')) return row('diff-deletion', oldLine++, '', line);
+      if (line.startsWith('\\')) return row('diff-meta', '', '', line);
+      return row('diff-context', oldLine++, newLine++, line);
     }).join('');
   }
 
@@ -950,6 +974,51 @@
 
   function getRepository(path) {
     return repositoryData.find(repository => repository.path === path);
+  }
+
+  // Linked repositories are "aligned" when they are on the parent repository's branch.
+  function getRepositoryAlignment(repository, targetBranch) {
+    if (repository.isParentRepo) return 'parent';
+    if (repository.status === 'uninitialized') return 'uninitialized';
+    if (!repository.currentBranch) return 'detached';
+    return targetBranch && repository.currentBranch !== targetBranch ? 'drifted' : 'aligned';
+  }
+
+  function renderRepositorySwitcher() {
+    const list = document.getElementById('dashboardRepositories');
+    const summary = document.getElementById('repositoryAlignment');
+    if (!list) return;
+    const parent = repositoryData.find(repository => repository.isParentRepo) || repositoryData[0];
+    const targetBranch = parent ? parent.currentBranch : '';
+    const linked = repositoryData.filter(repository => repository !== parent);
+    const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned').length;
+    if (summary) {
+      summary.textContent = linked.length ? `${aligned}/${linked.length} aligned` : '';
+      summary.classList.toggle('drifted', aligned < linked.length);
+    }
+
+    list.innerHTML = repositoryData.map(repository => {
+      const alignment = getRepositoryAlignment(repository, targetBranch);
+      const active = repository.path === activeDashboardRepository;
+      const unavailable = alignment === 'uninitialized';
+      const branch = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`.trim();
+      const badges = [
+        repository.behind > 0 ? `<span class="repo-badge" title="${repository.behind} behind upstream">↓${repository.behind}</span>` : '',
+        repository.ahead > 0 ? `<span class="repo-badge" title="${repository.ahead} ahead of upstream">↑${repository.ahead}</span>` : '',
+        alignment === 'drifted' || alignment === 'detached'
+          ? `<span class="repo-badge repo-badge-drift" title="Not on ${escapeHtml(targetBranch || 'the parent branch')}">${alignment === 'detached' ? 'detached' : 'drift'}</span>`
+          : '',
+        alignment === 'uninitialized' ? '<span class="repo-badge repo-badge-muted">not initialized</span>' : ''
+      ].join('');
+      const title = unavailable
+        ? `${repository.name} is not initialized`
+        : `${repository.name} · ${branch} · ${repository.status}${alignment === 'drifted' ? ` (parent is on ${targetBranch})` : ''}`;
+      return `<button class="sidebar-repository-item${active ? ' active' : ''}" type="button"${active ? ' aria-current="true"' : ''} data-action="selectDashboardRepository" data-path="${escapeHtml(repository.path)}" title="${escapeHtml(title)}"${unavailable ? ' disabled' : ''}>
+        <span class="repo-status-dot status-${escapeHtml(repository.status)}" aria-hidden="true"></span>
+        <span class="repo-copy"><strong>${escapeHtml(repository.name)}${repository.isParentRepo ? ' <small>parent</small>' : ''}</strong><code>${escapeHtml(branch)}</code></span>
+        <span class="repo-badges">${badges}</span>
+      </button>`;
+    }).join('') || '<span class="sidebar-placeholder">No repositories</span>';
   }
 
   function shortRevision(revision) {
@@ -1883,6 +1952,7 @@
           repositoryData = message.payload.submodules;
           saveState();
           updateRepositoryRows(repositoryData);
+          renderRepositorySwitcher();
           break;
         }
 
@@ -2559,6 +2629,8 @@
   updateRebaseUI();
   closeAllBranchPanels();
   if (repositoryData.length > 0) {
+    if (!getRepository(activeDashboardRepository)) activeDashboardRepository = repositoryData[0].path;
     activateDashboardRepository(activeDashboardRepository);
   }
+  renderRepositorySwitcher();
 })();

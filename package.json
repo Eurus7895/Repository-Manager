@@ -186,6 +186,7 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js && node ./src/test/summaryWebviewSmoke.js && node ./src/test/historyActionHandlerSmoke.js && node ./src/test/historyRewriteHandlerSmoke.js && node ./src/test/summaryProviderSmoke.js",
+    "test:ui": "npm run compile && node ./src/test/uiSnapshots.js",
     "package": "vsce package"
   },
   "devDependencies": {
@@ -195,6 +196,7 @@
     "@typescript-eslint/parser": "^6.0.0",
     "@vscode/vsce": "^2.0.0",
     "eslint": "^8.0.0",
+    "playwright-core": "~1.56.1",
     "sharp": "^0.34.5",
     "typescript": "^5.0.0"
   },

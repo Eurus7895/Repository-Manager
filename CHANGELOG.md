@@ -5,6 +5,18 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Switch the dashboard between the parent repository and linked repositories from a Repositories list that shows each repository's branch, status, ahead/behind counts, and drift from the parent branch.
+- Show old and new file line numbers in commit and working-tree diffs.
+- Add `npm run test:ui`, which renders the dashboard in headless Chromium against a fixture workspace and writes screenshots to `ui-snapshots/`.
+
+### Changed
+
+- Hide Git's `diff --git`, `index`, `---`, and `+++` header lines in diffs; the panel title already names the file.
+
 ## [1.5.0] - 2026-09-25
 
 ### Added

@@ -3068,3 +3068,86 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .history-context-menu button { display: block; width: 100%; padding: 6px 10px; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .history-context-menu button:hover, .history-context-menu button:focus-visible { background: var(--vscode-menu-selectionBackground, var(--accent)); color: var(--vscode-menu-selectionForeground, var(--text-primary)); outline: none; }
 .history-context-separator { border-top: 1px solid var(--vscode-menu-separatorBackground, var(--border)); margin: 4px 0; }
+
+/* Repository switcher */
+.repositories-section { flex: 0 0 auto; }
+#repositoryAlignment.drifted { color: #f0c07a; }
+.sidebar-repository-list {
+  display: grid;
+  gap: 2px;
+  max-height: 40vh;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.sidebar-repository-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-repository-item:hover { background: var(--vscode-list-hoverBackground); }
+.sidebar-repository-item:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.sidebar-repository-item.active {
+  color: var(--text-primary);
+  background: rgba(60, 199, 166, .10);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.sidebar-repository-item:disabled { opacity: .55; cursor: default; }
+.sidebar-repository-item:disabled:hover { background: transparent; }
+.repo-copy { display: grid; min-width: 0; line-height: 1.25; }
+.repo-copy strong,
+.repo-copy code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-copy strong { font-size: 12px; font-weight: 600; }
+.repo-copy strong small { color: var(--text-muted); font-size: 9px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
+.repo-copy code { color: var(--text-muted); font-family: var(--vscode-editor-font-family), monospace; font-size: 10px; }
+.repo-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.repo-status-dot.status-clean { background: #3cc7a6; }
+.repo-status-dot.status-modified { background: #e5a547; }
+.repo-status-dot.status-detached { background: #6f9cff; }
+.repo-status-dot.status-conflict { background: #f07178; }
+.repo-status-dot.status-uninitialized,
+.repo-status-dot.status-unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); }
+.repo-badges { display: flex; gap: 3px; }
+.repo-badge {
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.repo-badge-drift { color: #f0c07a; background: rgba(229, 165, 71, .14); }
+.repo-badge-muted { color: var(--text-muted); }
+
+/* Numbered diff lines: old | new | text */
+.diff-viewer > .diff-line {
+  display: grid;
+  grid-template-columns: 44px 44px max-content;
+  padding: 0 16px 0 0;
+  counter-increment: none;
+}
+.diff-viewer > .diff-line::before { content: none; }
+.diff-ln {
+  padding-right: 10px;
+  color: #5e6573;
+  font-style: normal;
+  text-align: right;
+  user-select: none;
+}
+.diff-ln + .diff-ln { border-right: 1px solid color-mix(in srgb, var(--border) 80%, transparent); margin-right: 10px; }
+.diff-text { white-space: pre; }

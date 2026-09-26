@@ -325,6 +325,10 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
 function renderDashboardSidebar(): string {
   return `
     <aside class="dashboard-sidebar">
+      <section class="sidebar-section repositories-section">
+        <div class="sidebar-section-title"><span>Repositories</span><span id="repositoryAlignment" title="Repositories on the parent repository's branch">—</span></div>
+        <div class="sidebar-repository-list" id="dashboardRepositories" role="group" aria-label="Repositories"></div>
+      </section>
       <section class="sidebar-section branches-section">
         <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
         <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
