@@ -460,11 +460,15 @@ export async function handlePullChanges(
 ): Promise<void> {
   const result = await ctx.gitOps.pullChanges(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**
@@ -476,11 +480,15 @@ export async function handlePushChanges(
 ): Promise<void> {
   const result = await ctx.gitOps.pushChanges(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**
@@ -492,11 +500,15 @@ export async function handleFetchUpdates(
 ): Promise<void> {
   const result = await ctx.gitOps.fetchUpdates(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**

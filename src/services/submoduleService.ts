@@ -11,6 +11,23 @@ export class SubmoduleService {
   constructor(private gitCmd: GitCommandService) {}
 
   /**
+   * Commits behind/ahead of the branch's upstream (what Pull and Push use),
+   * falling back to the same-named branch on origin when no upstream is set.
+   */
+  private async countAheadBehind(currentBranch: string, cwd?: string): Promise<{ ahead: number; behind: number }> {
+    for (const upstream of ['@{upstream}', `origin/${currentBranch}`]) {
+      try {
+        const tracking = await this.gitCmd.execGit(['rev-list', '--left-right', '--count', `${upstream}...HEAD`], cwd);
+        const [behindStr, aheadStr] = tracking.split('\t');
+        return { behind: parseInt(behindStr, 10) || 0, ahead: parseInt(aheadStr, 10) || 0 };
+      } catch {
+        // Try the next candidate
+      }
+    }
+    return { ahead: 0, behind: 0 };
+  }
+
+  /**
    * Get information about the parent (main) repository
    */
   async getParentRepoInfo(): Promise<SubmoduleInfo | null> {
@@ -72,20 +89,9 @@ export class SubmoduleService {
       }
 
       // Get ahead/behind counts
-      let ahead = 0;
-      let behind = 0;
-      if (currentBranch && currentBranch !== 'HEAD') {
-        try {
-          const tracking = await this.gitCmd.execGit(
-            ['rev-list', '--left-right', '--count', `origin/${currentBranch}...HEAD`]
-          );
-          const [behindStr, aheadStr] = tracking.split('\t');
-          behind = parseInt(behindStr, 10) || 0;
-          ahead = parseInt(aheadStr, 10) || 0;
-        } catch {
-          // No tracking branch
-        }
-      }
+      const { ahead, behind } = currentBranch && currentBranch !== 'HEAD'
+        ? await this.countAheadBehind(currentBranch)
+        : { ahead: 0, behind: 0 };
 
       return {
         name,
@@ -214,17 +220,7 @@ export class SubmoduleService {
 
       // Get ahead/behind counts
       if (currentBranch && currentBranch !== 'HEAD') {
-        try {
-          const tracking = await this.gitCmd.execGit(
-            ['rev-list', '--left-right', '--count', `origin/${currentBranch}...HEAD`],
-            fullPath
-          );
-          const [behindStr, aheadStr] = tracking.split('\t');
-          behind = parseInt(behindStr, 10) || 0;
-          ahead = parseInt(aheadStr, 10) || 0;
-        } catch {
-          // No tracking branch
-        }
+        ({ ahead, behind } = await this.countAheadBehind(currentBranch, fullPath));
       }
     } catch {
       status = 'uninitialized';

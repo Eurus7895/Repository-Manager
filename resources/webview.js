@@ -213,7 +213,11 @@
         button.classList.remove('is-success', 'is-error');
       }, 900);
     }
-    if (message) button.title = message;
+    // Keep the button's own label in its tooltip; append only the latest failure.
+    if (!button.dataset.baseTitle) button.dataset.baseTitle = button.title;
+    button.title = state === 'error' && message
+      ? `${button.dataset.baseTitle}: ${message}`
+      : button.dataset.baseTitle;
   }
 
   function runToolbarOperation(operation, type) {

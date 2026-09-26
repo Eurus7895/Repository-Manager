@@ -4,7 +4,15 @@
  */
 
 import { GitCommandService } from './gitCommandService';
+import { HistoryActionService } from './historyActionService';
 import { BranchInfo, CommandResult } from '../types';
+
+/** Git prints fetch progress on stderr before the real error; keep the lines that explain the failure. */
+function summarizeGitError(message: string): string {
+  const lines = message.split('\n').map(line => line.trim()).filter(Boolean);
+  const reasons = lines.filter(line => /^(fatal|error):/i.test(line));
+  return (reasons.length ? reasons : lines.slice(-1)).join(' ').replace(/^(fatal|error):\s*/i, '');
+}
 
 export class BranchService {
   constructor(private gitCmd: GitCommandService) {}
@@ -209,13 +217,37 @@ export class BranchService {
   async pullChanges(submodulePath: string, branch?: string): Promise<CommandResult> {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
+    // A detached HEAD (normal for submodules) has no branch to pull into; `git pull origin HEAD`
+    // would merge the remote default branch into it and move the repository off its recorded commit.
+    const currentBranch = branch || await this.gitCmd.execGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], fullPath).catch(() => '');
+    if (!currentBranch) {
+      return { success: false, message: 'Cannot pull: HEAD is detached. Check out a branch first.' };
+    }
+    // Pull from the configured upstream when there is one, so branches tracking a differently
+    // named remote branch work; otherwise fall back to the same-named branch on origin.
+    const upstream = branch ? '' : await this.gitCmd.execGit(
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], fullPath
+    ).catch(() => '');
+
     try {
-      const currentBranch = branch || await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD'], fullPath);
-      await this.gitCmd.execGit(['pull', 'origin', currentBranch], fullPath);
-      return { success: true, message: 'Changes pulled successfully' };
+      await this.gitCmd.execGit(upstream ? ['pull'] : ['pull', 'origin', currentBranch], fullPath, 120000);
+      return { success: true, message: `Pulled ${upstream || `origin/${currentBranch}`} into ${currentBranch}` };
     } catch (error: unknown) {
-      const err = error as Error;
-      return { success: false, message: `Failed to pull: ${err.message}` };
+      const pending = await new HistoryActionService(this.gitCmd).pendingOperation(submodulePath).catch(() => undefined);
+      if (pending === 'merge' || pending === 'rebase') {
+        return {
+          success: false,
+          message: `Pull stopped with conflicts; a ${pending} is in progress in ${currentBranch}. Resolve the conflicts in Source Control, then continue or abort the ${pending}.`
+        };
+      }
+      const reason = summarizeGitError((error as Error).message);
+      if (/divergent branches|not possible to fast-forward/i.test((error as Error).message)) {
+        return {
+          success: false,
+          message: `Cannot pull: ${currentBranch} and ${upstream || `origin/${currentBranch}`} have diverged. Merge or rebase them, or set git's pull.rebase option.`
+        };
+      }
+      return { success: false, message: `Failed to pull: ${reason}` };
     }
   }
 

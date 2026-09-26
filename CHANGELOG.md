@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Re-select all available repositories when opening New branch after creating a branch from a history commit.
+- Pull refuses a detached HEAD instead of merging the remote default branch into it.
+- Pull uses the branch's configured upstream, so branches tracking a differently named remote branch can be pulled.
+- A pull that stops on conflicts now says a merge or rebase is in progress; diverged branches and other failures report the reason instead of fetch output.
+- Ahead/behind counts compare against the branch's upstream, matching what Pull and Push use.
+- The Pull, Push, and Fetch buttons always leave their busy state and keep their own label in the tooltip.
 
 ## [1.5.0] - 2026-09-25
 
