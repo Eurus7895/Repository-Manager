@@ -151,7 +151,13 @@
         "repositoryManager.autoFetch": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically fetch updates when opening the panel"
+          "description": "Fetch all repositories in the background while the dashboard is visible, so ahead/behind counts stay current. Background fetches turn off Git's credential prompt; a repository that needs one is skipped."
+        },
+        "repositoryManager.autoFetchInterval": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Minutes between background fetches when repositoryManager.autoFetch is enabled."
         },
         "repositoryManager.showNotifications": {
           "type": "boolean",
@@ -185,7 +191,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js && node ./src/test/summaryWebviewSmoke.js && node ./src/test/historyActionHandlerSmoke.js && node ./src/test/historyRewriteHandlerSmoke.js && node ./src/test/syncRecordedHandlerSmoke.js && node ./src/test/pullChangesSmoke.js && node ./src/test/summaryProviderSmoke.js",
+    "test": "node ./out/test/runTest.js && node ./src/test/summaryWebviewSmoke.js && node ./src/test/historyActionHandlerSmoke.js && node ./src/test/historyRewriteHandlerSmoke.js && node ./src/test/syncRecordedHandlerSmoke.js && node ./src/test/pullChangesSmoke.js && node ./src/test/autoFetchPanelSmoke.js && node ./src/test/summaryProviderSmoke.js",
     "test:ui": "npm run compile && node ./src/test/uiSnapshots.js",
     "package": "vsce package"
   },

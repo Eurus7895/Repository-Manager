@@ -12,6 +12,13 @@ import { GitCommandService } from './services/gitCommandService';
 import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
 import { CopilotSummaryProvider } from './services/changeSummaryService';
 
+/** Webview requests that only read Git state and may run during a background fetch. */
+const READ_ONLY_MESSAGES = new Set([
+  'getHistory', 'getCommitDetail', 'getFileDiff', 'getRepositoryRefs', 'getWorkingTreeChanges',
+  'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
+  'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels'
+]);
+
 export class RepositoryManagerPanel {
   public static currentPanel: RepositoryManagerPanel | undefined;
   private readonly _panel: vscode.WebviewPanel;
@@ -23,6 +30,10 @@ export class RepositoryManagerPanel {
   private readonly _summaryProvider = new CopilotSummaryProvider();
   private _summaryToken?: vscode.CancellationTokenSource;
   private _summaryRequest = 0;
+  private _autoFetchTimer?: NodeJS.Timeout;
+  private _autoFetchRun?: Promise<void>;
+  private _lastAutoFetch = 0;
+  private _messagesInFlight = 0;
 
   public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string) {
     const column = vscode.window.activeTextEditor
@@ -32,6 +43,7 @@ export class RepositoryManagerPanel {
     if (RepositoryManagerPanel.currentPanel) {
       RepositoryManagerPanel.currentPanel._panel.reveal(column);
       RepositoryManagerPanel.currentPanel.refresh();
+      RepositoryManagerPanel.currentPanel._autoFetchIfDue();
       return;
     }
 
@@ -75,6 +87,65 @@ export class RepositoryManagerPanel {
       null,
       this._disposables
     );
+
+    this._panel.onDidChangeViewState(() => this._autoFetchIfDue(), null, this._disposables);
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('repositoryManager.autoFetch')
+        || event.affectsConfiguration('repositoryManager.autoFetchInterval')) {
+        this._scheduleAutoFetch();
+      }
+    }, null, this._disposables);
+    this._scheduleAutoFetch();
+    this._autoFetchIfDue();
+  }
+
+  /** Background fetch interval in ms, or 0 when disabled. */
+  private _autoFetchIntervalMs(): number {
+    const config = vscode.workspace.getConfiguration('repositoryManager');
+    const minutes = config.get<number>('autoFetchInterval', 5);
+    return config.get<boolean>('autoFetch', true) && minutes > 0 ? minutes * 60000 : 0;
+  }
+
+  private _scheduleAutoFetch(): void {
+    if (this._autoFetchTimer) {
+      clearInterval(this._autoFetchTimer);
+      this._autoFetchTimer = undefined;
+    }
+    const interval = this._autoFetchIntervalMs();
+    if (interval > 0) {
+      this._autoFetchTimer = setInterval(() => this._autoFetchIfDue(), interval);
+    }
+  }
+
+  /**
+   * Fetch every initialized repository so ahead/behind counts stay current. Runs only while
+   * the panel is visible, at most once per interval, and never alongside a user action.
+   */
+  private _autoFetchIfDue(): void {
+    const interval = this._autoFetchIntervalMs();
+    if (!interval || !this._panel.visible || this._autoFetchRun || this._messagesInFlight > 0
+      || Date.now() - this._lastAutoFetch < interval - 1000) {
+      return;
+    }
+    this._lastAutoFetch = Date.now();
+    const gitOps = this._gitOps;
+    this._autoFetchRun = (async () => {
+      const repositories = await this._listRepositories();
+      for (const repository of repositories) {
+        // Stop early when the user starts an action or switches workspace folder.
+        if (this._messagesInFlight > 0 || gitOps !== this._gitOps) {
+          return;
+        }
+        if (repository.status !== 'uninitialized') {
+          await gitOps.fetchInBackground(repository.path).catch(() => undefined);
+        }
+      }
+      if (gitOps === this._gitOps) {
+        await this.refresh();
+      }
+    })().catch(() => undefined).finally(() => {
+      this._autoFetchRun = undefined;
+    });
   }
 
   /**
@@ -104,7 +175,12 @@ export class RepositoryManagerPanel {
     this._workspaceRoot = folderPath;
     this._gitOps = new GitOperations(folderPath);
     this._prManager = new PRManager(folderPath);
-    await this.refresh();
+    // Repository paths are relative to the folder (the root is always '.'), so the webview
+    // must be told explicitly to drop the old folder's history, refs and selection.
+    await this._panel.webview.postMessage({
+      type: 'workspaceFolderChanged',
+      payload: { repositories: await this._listRepositories() }
+    });
   }
 
   public async refresh(fullRefresh: boolean = false) {
@@ -131,12 +207,15 @@ export class RepositoryManagerPanel {
     return { graphScriptUri, scriptUri, styleUri };
   }
 
-  private async _update(fullRefresh: boolean = true) {
+  /** Parent repository first, then linked repositories. */
+  private async _listRepositories() {
     const submodules = await this._gitOps.getSubmodules();
-
-    // Get parent repo info and prepend it to the list
     const parentRepo = await this._gitOps.getParentRepoInfo();
-    const allRepos = parentRepo ? [parentRepo, ...submodules] : submodules;
+    return parentRepo ? [parentRepo, ...submodules] : submodules;
+  }
+
+  private async _update(fullRefresh: boolean = true) {
+    const allRepos = await this._listRepositories();
 
     if (fullRefresh) {
       const resourceUris = this._getResourceUris();
@@ -166,6 +245,19 @@ export class RepositoryManagerPanel {
   }
 
   private async _handleMessage(message: { type: string; payload?: unknown }) {
+    this._messagesInFlight++;
+    try {
+      // Git actions wait for a running background fetch so they never race it for ref locks.
+      if (this._autoFetchRun && !READ_ONLY_MESSAGES.has(message.type)) {
+        await this._autoFetchRun;
+      }
+      await this._dispatchMessage(message);
+    } finally {
+      this._messagesInFlight--;
+    }
+  }
+
+  private async _dispatchMessage(message: { type: string; payload?: unknown }) {
     try {
       if (message.type === 'cancelChangeSummary') {
         this._cancelSummary();
@@ -236,6 +328,9 @@ export class RepositoryManagerPanel {
 
   public dispose() {
     this._cancelSummary();
+    if (this._autoFetchTimer) {
+      clearInterval(this._autoFetchTimer);
+    }
     RepositoryManagerPanel.currentPanel = undefined;
     this._panel.dispose();
 

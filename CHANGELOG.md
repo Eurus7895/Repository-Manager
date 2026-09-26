@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Switch the dashboard between the parent repository and linked repositories from a Repositories list that shows each repository's branch, status, ahead/behind counts, drift from the parent branch, and whether it has moved off the commit the parent records.
 - Reset a single linked repository to the commit the parent records from its row in the Repositories list, after a confirmation that explains the resulting detached HEAD.
 - Show old and new file line numbers in commit and working-tree diffs.
+- Fetch all repositories in the background every `repositoryManager.autoFetchInterval` minutes (default 5) while the dashboard is visible, so ahead/behind counts stay current. The existing `repositoryManager.autoFetch` setting, which previously had no effect, turns this on or off.
 - Add `npm run test:ui`, which renders the dashboard in headless Chromium against a fixture workspace and writes screenshots to `ui-snapshots/`.
 
 ### Changed
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Choosing another workspace folder now loads its history, branches, and repositories immediately instead of after Refresh.
 - Re-select all available repositories when opening New branch after creating a branch from a history commit.
 - Pull refuses a detached HEAD instead of merging the remote default branch into it.
 - Pull uses the branch's configured upstream, so branches tracking a differently named remote branch can be pulled.

@@ -255,6 +255,10 @@ export class GitOperations {
     return this.branchService.fetchUpdates(submodulePath);
   }
 
+  async fetchInBackground(submodulePath: string): Promise<void> {
+    return this.branchService.fetchInBackground(submodulePath);
+  }
+
   // ==================== Commit Methods ====================
 
   async getWorkingTreeChanges(repositoryPath: string): Promise<WorkingTreeChange[]> {

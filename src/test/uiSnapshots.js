@@ -13,9 +13,26 @@ const os = require('os');
 const path = require('path');
 const { chromium } = require('playwright-core');
 
+const Module = require('module');
+
 const root = path.resolve(__dirname, '../..');
+// The extension's real message handlers run against a minimal fake `vscode` module.
+const fakeVscode = {
+  window: { showInformationMessage() {}, showWarningMessage() {}, showErrorMessage() {} },
+  workspace: { getConfiguration: () => ({ get: (_key, fallback) => fallback }) },
+  commands: { executeCommand: async () => undefined },
+  env: { clipboard: { writeText: async () => undefined } },
+  Uri: { file: fsPath => ({ fsPath }) }
+};
+const originalLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  if (request === 'vscode') return fakeVscode;
+  return originalLoad.call(this, request, parent, isMain);
+};
 const { GitOperations } = require(path.join(root, 'out/gitOperations'));
+const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessageHandler'));
 const { getHtmlForWebview } = require(path.join(root, 'out/webview/template'));
+Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
 
 // A trimmed VS Code "Dark Modern" palette so theme variables resolve.
@@ -66,11 +83,16 @@ function createFixture() {
   git(path.join(parent, 'lib-b'), 'checkout', '-q', 'main');
   commitFile(path.join(parent, 'lib-b'), 'CHANGES.md', 'unrecorded\n', 'feat: unrecorded lib-b change');
   fs.appendFileSync(path.join(parent, 'lib-b', 'README.md'), 'local edit\n');
-  return { base, parent };
+  // A second workspace folder, for switching folders in a multi-root workspace.
+  const other = path.join(base, 'other');
+  fs.mkdirSync(other);
+  git(other, 'init', '-q', '-b', 'main');
+  commitFile(other, 'notes.md', 'notes\n', 'docs: other folder notes');
+  return { base, parent, other };
 }
 
-function startServer(workspace) {
-  const ops = new GitOperations(workspace);
+function startServer(workspace, otherFolder) {
+  let ops = new GitOperations(workspace);
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async () => {
@@ -78,12 +100,28 @@ function startServer(workspace) {
     const submodules = await ops.getSubmodules();
     return parentRepo ? [parentRepo, ...submodules] : submodules;
   };
-  const handlers = {
-    getHistory: async p => ({ type: 'historyLoaded', payload: { ...(await ops.getHistory({ repositoryPath: p.repositoryPath, limit: p.limit, offset: p.offset, search: p.search, branch: p.branch, includeRemotes: p.includeRemotes === true })), requestId: p.requestId || 0 } }),
-    getRepositoryRefs: async p => ({ type: 'repositoryRefsLoaded', payload: await ops.getRepositoryRefs(p.repositoryPath) }),
-    getCommitDetail: async p => ({ type: 'commitDetailLoaded', payload: { repositoryPath: p.repositoryPath, detail: await ops.getCommitDetail(p.repositoryPath, p.commitHash, p.baseRevision), baseRevision: p.baseRevision, targetRevision: p.commitHash } }),
-    getFileDiff: async p => ({ type: 'fileDiffLoaded', payload: await ops.getFileDiff(p.repositoryPath, p.commitHash, p.path, p.baseRevision) }),
-    refresh: async () => ({ type: 'updateSubmodules', payload: { submodules: await listRepositories() } })
+  // Mirrors RepositoryManagerPanel: messages go to the real handler map, `refresh` is
+  // handled by the panel itself, and replies are posted back into the page.
+  const connect = async page => {
+    const post = message => page.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined);
+    const refresh = async () => post({ type: 'updateSubmodules', payload: { submodules: await listRepositories() } });
+    const ctx = {
+      panel: { webview: { postMessage: async message => { await post(message); return true; } } },
+      get gitOps() { return ops; }, prManager: {}, workspaceRoot: workspace, refresh,
+      reloadDashboardHistory: async repositoryPaths => post({ type: 'reloadDashboardHistory', payload: { repositoryPaths } })
+    };
+    await page.exposeFunction('__postToHost', async message => {
+      if (message.type === 'switchWorkspaceFolder') {
+        // Same as RepositoryManagerPanel._switchWorkspaceFolder.
+        ops = new GitOperations(message.payload.folderPath);
+        await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
+      } else if (message.type === 'refresh') {
+        await refresh();
+        await post({ type: 'repositoryOperationResult', payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' } });
+      } else if (messageHandlers[message.type]) {
+        await messageHandlers[message.type](ctx, message.payload);
+      }
+    });
   };
   const server = http.createServer(async (req, res) => {
     try {
@@ -92,15 +130,12 @@ function startServer(workspace) {
           graphScriptUri: resource('/resources/historyGraph.js'),
           scriptUri: resource('/resources/webview.js'),
           styleUri: resource('/resources/webview.css')
-        }, [{ name: 'workspace', path: workspace, isCurrent: true }])
+        }, [{ name: 'workspace', path: workspace, isCurrent: true }, { name: 'other', path: otherFolder, isCurrent: false }])
           .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
           .replace('<head>', `<head><style>${themeCss}</style><script>
             window.acquireVsCodeApi = () => ({
               getState() { return null; }, setState() {},
-              postMessage(message) {
-                fetch('/rpc', { method: 'POST', body: JSON.stringify(message) }).then(r => r.json())
-                  .then(reply => { if (reply) window.postMessage(reply, '*'); });
-              }
+              postMessage(message) { window.__postToHost(message); }
             });</script>`);
         res.setHeader('content-type', 'text/html');
         return res.end(html);
@@ -109,15 +144,6 @@ function startServer(workspace) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         return res.end(fs.readFileSync(path.join(root, 'resources', path.basename(req.url))));
       }
-      if (req.url === '/rpc') {
-        let body = '';
-        for await (const chunk of req) body += chunk;
-        const message = JSON.parse(body);
-        const handler = handlers[message.type];
-        const reply = handler ? await handler(message.payload || {}) : null;
-        res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify(reply));
-      }
       res.statusCode = 404;
       res.end();
     } catch (error) {
@@ -125,12 +151,12 @@ function startServer(workspace) {
       res.end(String(error));
     }
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect })));
 }
 
 async function main() {
-  const { base, parent } = createFixture();
-  const server = await startServer(parent);
+  const { base, parent, other } = createFixture();
+  const { server, connect } = await startServer(parent, other);
   const url = `http://127.0.0.1:${server.address().port}/`;
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
@@ -138,6 +164,7 @@ async function main() {
   const openPage = async (width, height) => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', error => pageErrors.push(error.message));
+    await connect(page);
     await page.goto(url);
     await page.locator('.history-row').first().waitFor();
     return page;
@@ -172,11 +199,19 @@ async function main() {
     assert.equal(await firstAddition.locator('.diff-ln').nth(1).textContent(), '3');
     await snap(page, '02-commit-diff');
 
-    // Switching repositories reloads history for the selected one.
+    // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
-    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor();
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('.history-row', { hasText: 'update app in two places' }).count(), 0);
     assert.equal(await libB.getAttribute('aria-current'), 'true');
     await snap(page, '03-linked-repository');
+
+    // Choosing another workspace folder loads its history and repositories without Refresh.
+    await page.selectOption('#workspaceFolderSelect', other);
+    await page.locator('.history-row', { hasText: 'other folder notes' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).count(), 0);
+    assert.equal(await page.locator('.sidebar-repository-item').count(), 1);
+    await snap(page, '03b-other-workspace-folder');
 
     await page.close();
     await snap(await openPage(820, 700), '04-narrow');

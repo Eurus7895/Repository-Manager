@@ -1839,6 +1839,26 @@
           break;
         }
 
+        case 'workspaceFolderChanged': {
+          // Paths such as '.' now point into a different folder: forget everything tied to the old one.
+          repositoryData = (message.payload && message.payload.repositories) || [];
+          dashboardHistoryState = {};
+          cancelPendingChangeSummary();
+          changeSummaries.clear();
+          activeDashboardRepository = null;
+          if (repositoryData.length > 0) {
+            activateDashboardRepository(repositoryData[0].path);
+          } else {
+            loadedHistoryCommits = [];
+            clearCommitDetail();
+            const history = document.getElementById('dashboardHistory');
+            if (history) history.innerHTML = '<div class="dashboard-empty">No Git repository in this folder.</div>';
+            saveState();
+          }
+          renderRepositorySwitcher();
+          break;
+        }
+
         case 'updateSubmodules': {
           repositoryData = message.payload.submodules;
           saveState();

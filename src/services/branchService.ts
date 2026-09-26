@@ -328,6 +328,17 @@ export class BranchService {
   /**
    * Fetch updates for a submodule
    */
+  /**
+   * Fetch without any credential prompt, for periodic background refreshes.
+   * Failures (offline, auth required) are left to the caller to ignore.
+   */
+  async fetchInBackground(submodulePath: string): Promise<void> {
+    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
+    const env = { ...process.env };
+    env.GIT_TERMINAL_PROMPT = '0';
+    await this.gitCmd.execGitRaw(['fetch', '--all', '--prune', '--quiet'], fullPath, 60000, false, env);
+  }
+
   async fetchUpdates(submodulePath: string): Promise<CommandResult> {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
