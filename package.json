@@ -151,7 +151,7 @@
         "repositoryManager.autoFetch": {
           "type": "boolean",
           "default": true,
-          "description": "Fetch all repositories in the background while the dashboard is visible, so ahead/behind counts stay current. Background fetches turn off Git's credential prompt; a repository that needs one is skipped."
+          "description": "Fetch all repositories in the background while the dashboard is visible, so ahead/behind counts stay current. Background fetches never prune deleted remote branches (the Fetch button does) and turn off Git's credential prompt; a repository that needs one is skipped."
         },
         "repositoryManager.autoFetchInterval": {
           "type": "number",

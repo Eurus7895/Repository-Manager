@@ -74,8 +74,12 @@ async function main() {
     git(upstream, 'add', 'f.txt');
     git(upstream, 'commit', '-qm', 'base');
     git(upstream, 'push', '-q', 'origin', 'main');
+    git(upstream, 'push', '-q', 'origin', 'main:old-feature');
     const local = path.join(base, 'local');
     git(base, 'clone', '-q', remote, local);
+    // Deleted on the server; background fetch must not prune it, even with fetch.prune set.
+    git(upstream, 'push', '-q', 'origin', '--delete', 'old-feature');
+    git(local, 'config', 'fetch.prune', 'true');
     writeFileSync(path.join(upstream, 'f.txt'), '2\n');
     git(upstream, 'commit', '-qam', 'upstream change');
     git(upstream, 'push', '-q');
@@ -92,6 +96,7 @@ async function main() {
     await waitFor(() => posted.some(message => message.type === 'updateSubmodules'
       && message.payload.submodules.some(repository => repository.isParentRepo && repository.behind === 1)));
     assert.equal(git(local, 'rev-parse', 'origin/main'), git(upstream, 'rev-parse', 'HEAD'));
+    assert.ok(git(local, 'branch', '-r').includes('origin/old-feature'), 'background fetch pruned a remote branch');
 
     RepositoryManagerPanel.currentPanel.dispose();
     console.log('Auto fetch panel smoke passed');
