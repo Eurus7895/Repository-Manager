@@ -230,6 +230,8 @@ export class SubmoduleService {
       status = 'uninitialized';
     }
 
+    const recordedCommit = await this.getRecordedCommit(submodulePath);
+
     return {
       name,
       path: submodulePath,
@@ -241,6 +243,8 @@ export class SubmoduleService {
       hasChanges,
       ahead,
       behind,
+      recordedCommit: recordedCommit.substring(0, 8),
+      atRecordedCommit: recordedCommit && currentCommit ? recordedCommit === currentCommit : undefined,
       lastUpdated: new Date()
     };
   }

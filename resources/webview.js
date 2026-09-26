@@ -976,7 +976,8 @@
     return repositoryData.find(repository => repository.path === path);
   }
 
-  // Linked repositories are "aligned" when they are on the parent repository's branch.
+  // Branch alignment: linked repositories should be on the parent repository's branch.
+  // Commit alignment (atRecordedCommit) is tracked separately.
   function getRepositoryAlignment(repository, targetBranch) {
     if (repository.isParentRepo) return 'parent';
     if (repository.status === 'uninitialized') return 'uninitialized';
@@ -991,7 +992,8 @@
     const parent = repositoryData.find(repository => repository.isParentRepo) || repositoryData[0];
     const targetBranch = parent ? parent.currentBranch : '';
     const linked = repositoryData.filter(repository => repository !== parent);
-    const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned').length;
+    const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned'
+      && repository.atRecordedCommit !== false).length;
     if (summary) {
       summary.textContent = linked.length ? `${aligned}/${linked.length} aligned` : '';
       summary.classList.toggle('drifted', aligned < linked.length);
@@ -1007,6 +1009,9 @@
         repository.ahead > 0 ? `<span class="repo-badge" title="${repository.ahead} ahead of upstream">↑${repository.ahead}</span>` : '',
         alignment === 'drifted' || alignment === 'detached'
           ? `<span class="repo-badge repo-badge-drift" title="Not on ${escapeHtml(targetBranch || 'the parent branch')}">${alignment === 'detached' ? 'detached' : 'drift'}</span>`
+          : '',
+        repository.atRecordedCommit === false
+          ? `<span class="repo-badge repo-badge-drift" title="HEAD ${escapeHtml(repository.currentCommit)} differs from the commit ${escapeHtml(repository.recordedCommit)} recorded by the parent">≠ recorded</span>`
           : '',
         alignment === 'uninitialized' ? '<span class="repo-badge repo-badge-muted">not initialized</span>' : ''
       ].join('');

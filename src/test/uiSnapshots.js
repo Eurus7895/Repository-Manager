@@ -60,9 +60,11 @@ function createFixture() {
   lines[35] = 'line 36 changed';
   lines.splice(20, 0, 'inserted line');
   commitFile(parent, 'src/app.txt', lines.join('\n') + '\n', 'feat: update app in two places');
-  // lib-a follows the parent branch; lib-b stays on main and has local edits.
+  // lib-a follows the parent branch at the recorded commit; lib-b stays on main,
+  // moves past the recorded commit, and has local edits.
   git(path.join(parent, 'lib-a'), 'checkout', '-q', '-b', 'feature/dashboard');
   git(path.join(parent, 'lib-b'), 'checkout', '-q', 'main');
+  commitFile(path.join(parent, 'lib-b'), 'CHANGES.md', 'unrecorded\n', 'feat: unrecorded lib-b change');
   fs.appendFileSync(path.join(parent, 'lib-b', 'README.md'), 'local edit\n');
   return { base, parent };
 }
@@ -151,6 +153,7 @@ async function main() {
     assert.equal(await page.locator('#repositoryAlignment').textContent(), '1/2 aligned');
     const libB = page.locator('.sidebar-repository-item[data-path="lib-b"]');
     assert.match(await libB.textContent(), /drift/);
+    assert.match(await libB.textContent(), /≠ recorded/);
     assert.equal(await page.locator('.sidebar-repository-item[data-path="lib-a"] .repo-badge-drift').count(), 0);
     await snap(page, '01-dashboard');
 
@@ -166,7 +169,7 @@ async function main() {
 
     // Switching repositories reloads history for the selected one.
     await libB.click();
-    await page.locator('.history-row', { hasText: 'initialize lib-b' }).waitFor();
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor();
     assert.equal(await libB.getAttribute('aria-current'), 'true');
     await snap(page, '03-linked-repository');
 

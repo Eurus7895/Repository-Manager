@@ -326,7 +326,7 @@ function renderDashboardSidebar(): string {
   return `
     <aside class="dashboard-sidebar">
       <section class="sidebar-section repositories-section">
-        <div class="sidebar-section-title"><span>Repositories</span><span id="repositoryAlignment" title="Repositories on the parent repository's branch">—</span></div>
+        <div class="sidebar-section-title"><span>Repositories</span><span id="repositoryAlignment" title="Linked repositories on the parent repository's branch and at the commit it records">—</span></div>
         <div class="sidebar-repository-list" id="dashboardRepositories" role="group" aria-label="Repositories"></div>
       </section>
       <section class="sidebar-section branches-section">
