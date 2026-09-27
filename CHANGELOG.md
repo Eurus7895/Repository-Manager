@@ -5,6 +5,34 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Switch the dashboard between the parent repository and linked repositories from a Repositories list that shows each repository's branch, status, ahead/behind counts, drift from the parent branch, and whether it has moved off the commit the parent records.
+- Reset a single linked repository to the commit the parent records from its row in the Repositories list, after a confirmation that explains the resulting detached HEAD. It resets only the commit you confirmed and needs no network when that commit is already local.
+- Show old and new file line numbers in commit and working-tree diffs.
+- Fetch all repositories in the background every `repositoryManager.autoFetchInterval` minutes (default 5) while the dashboard is visible, so ahead/behind counts stay current. Background fetches never prune; only the Fetch button removes deleted remote branches. The existing `repositoryManager.autoFetch` setting, which previously had no effect, turns this on or off.
+- Add `npm run test:ui`, which renders the dashboard in headless Chromium against a fixture workspace and writes screenshots to `ui-snapshots/`.
+
+### Changed
+
+- Hide Git's `diff --git`, `index`, `---`, and `+++` header lines in diffs; the panel title already names the file.
+
+### Removed
+
+- Remove the unreachable repository selection bar; branch creation already selects repositories in its own dialog.
+
+### Fixed
+
+- Choosing another workspace folder now loads its history, branches, and repositories immediately instead of after Refresh.
+- Re-select all available repositories when opening New branch after creating a branch from a history commit.
+- Pull refuses a detached HEAD instead of merging the remote default branch into it.
+- Pull uses the branch's configured upstream, so branches tracking a differently named remote branch can be pulled.
+- A pull that stops on conflicts now says a merge or rebase is in progress; diverged branches and other failures report the reason instead of fetch output.
+- Ahead/behind counts compare against the branch's upstream, matching what Pull and Push use.
+- The Pull, Push, and Fetch buttons always leave their busy state and keep their own label in the tooltip.
+
 ## [1.5.0] - 2026-09-25
 
 ### Added

@@ -15,6 +15,10 @@ export interface RepositoryInfo {
   behind: number;
   lastUpdated?: Date;
   isParentRepo?: boolean;
+  /** Short hash of the commit the parent repository records for this submodule. */
+  recordedCommit?: string;
+  /** Whether HEAD matches the recorded commit; undefined when either is unknown. */
+  atRecordedCommit?: boolean;
 }
 
 /**

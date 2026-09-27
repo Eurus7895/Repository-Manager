@@ -460,11 +460,15 @@ export async function handlePullChanges(
 ): Promise<void> {
   const result = await ctx.gitOps.pullChanges(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'pull', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**
@@ -476,11 +480,15 @@ export async function handlePushChanges(
 ): Promise<void> {
   const result = await ctx.gitOps.pushChanges(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'push', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**
@@ -492,11 +500,15 @@ export async function handleFetchUpdates(
 ): Promise<void> {
   const result = await ctx.gitOps.fetchUpdates(payload.submodule);
   showResult(result.success, result.message);
-  await ctx.refresh();
-  await sendToWebview(ctx, {
-    type: 'repositoryOperationResult',
-    payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
-  });
+  try {
+    await ctx.refresh();
+  } finally {
+    // Always report back so the toolbar button leaves its busy state.
+    await sendToWebview(ctx, {
+      type: 'repositoryOperationResult',
+      payload: { operation: 'fetch', repositoryPath: payload.submodule, ...result }
+    });
+  }
 }
 
 /**
@@ -534,6 +546,55 @@ export async function handleSyncVersions(
     );
   }
   await ctx.refresh();
+}
+
+/**
+ * Handler for resetting one linked repository to the commit the parent records,
+ * after a modal confirmation.
+ */
+export async function handleSyncRepositoryToRecorded(
+  ctx: MessageHandlerContext,
+  payload: unknown
+): Promise<void> {
+  const repositoryPath = requireString(requireRecord(payload), 'repositoryPath');
+  const repository = (await ctx.gitOps.getSubmodules()).find(item => item.path === repositoryPath);
+  const recordedCommit = repository ? await ctx.gitOps.getRecordedCommit(repositoryPath) : '';
+  if (!repository || !recordedCommit) {
+    vscode.window.showErrorMessage(`No recorded commit found for '${repositoryPath}'.`);
+    return;
+  }
+
+  const onBranch = repository.currentBranch
+    ? `Branch '${repository.currentBranch}' keeps its commits; ${repository.name} will be on a detached HEAD.`
+    : `${repository.name} stays on a detached HEAD.`;
+  const changes = repository.hasChanges
+    ? ' It has uncommitted changes, which Git will refuse to overwrite if they conflict.'
+    : '';
+  const confirm = 'Reset to recorded';
+  const choice = await vscode.window.showWarningMessage(
+    `Reset ${repository.name} to the recorded commit ${recordedCommit.substring(0, 8)}?`,
+    { modal: true, detail: `HEAD is at ${repository.currentCommit}. ${onBranch}${changes}` },
+    confirm
+  );
+  if (choice !== confirm) {
+    return;
+  }
+
+  // Act only on the commit the user confirmed; the parent may have moved while the modal was open.
+  if (await ctx.gitOps.getRecordedCommit(repositoryPath) !== recordedCommit) {
+    vscode.window.showErrorMessage(
+      `The recorded commit changed while confirming; ${repository.name} was not reset. Review it and try again.`
+    );
+    await ctx.refresh();
+    return;
+  }
+  const result = await ctx.gitOps.syncSubmodule(repositoryPath, recordedCommit);
+  showResult(result.success, result.success
+    ? `Reset ${repository.name} to the recorded commit ${recordedCommit.substring(0, 8)}`
+    : result.message);
+  await ctx.refresh();
+  // HEAD moved: reload history, refs and commit detail if this repository is on screen.
+  await ctx.reloadDashboardHistory([repositoryPath]);
 }
 
 /**
@@ -950,6 +1011,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'pushChanges': (ctx, payload) => handlePushChanges(ctx, payload as { submodule: string }),
   'fetchUpdates': (ctx, payload) => handleFetchUpdates(ctx, payload as { submodule: string }),
   'syncVersions': (ctx, payload) => handleSyncVersions(ctx, payload as { submodules: string[] }),
+  'syncRepositoryToRecorded': (ctx, payload) => handleSyncRepositoryToRecorded(ctx, payload),
   'createPR': (ctx, payload) => handleCreatePR(ctx, payload as { submodule: string }),
   'openSubmodule': (ctx, payload) => handleOpenSubmodule(ctx, payload as { submodule: string }),
   'stageSubmodule': (ctx, payload) => handleStageSubmodule(ctx, payload as { submodule: string }),

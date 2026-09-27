@@ -20,12 +20,19 @@ export class GitCommandService {
   /**
    * Execute Git without a shell and preserve separators/whitespace for parsers.
    */
-  async execGitRaw(args: string[], cwd?: string, timeoutMs: number = 30000, allowDiffExitCode = false): Promise<string> {
+  async execGitRaw(
+    args: string[],
+    cwd?: string,
+    timeoutMs: number = 30000,
+    allowDiffExitCode = false,
+    env?: NodeJS.ProcessEnv
+  ): Promise<string> {
     const workDir = cwd || this.workspaceRoot;
 
     return new Promise((resolve, reject) => {
       execFile('git', args, {
         cwd: workDir,
+        env,
         encoding: 'utf8',
         maxBuffer: 20 * 1024 * 1024,
         timeout: timeoutMs,

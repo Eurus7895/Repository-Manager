@@ -11,6 +11,23 @@ export class SubmoduleService {
   constructor(private gitCmd: GitCommandService) {}
 
   /**
+   * Commits behind/ahead of the branch's upstream (what Pull and Push use),
+   * falling back to the same-named branch on origin when no upstream is set.
+   */
+  private async countAheadBehind(currentBranch: string, cwd?: string): Promise<{ ahead: number; behind: number }> {
+    for (const upstream of ['@{upstream}', `origin/${currentBranch}`]) {
+      try {
+        const tracking = await this.gitCmd.execGit(['rev-list', '--left-right', '--count', `${upstream}...HEAD`], cwd);
+        const [behindStr, aheadStr] = tracking.split('\t');
+        return { behind: parseInt(behindStr, 10) || 0, ahead: parseInt(aheadStr, 10) || 0 };
+      } catch {
+        // Try the next candidate
+      }
+    }
+    return { ahead: 0, behind: 0 };
+  }
+
+  /**
    * Get information about the parent (main) repository
    */
   async getParentRepoInfo(): Promise<SubmoduleInfo | null> {
@@ -72,20 +89,9 @@ export class SubmoduleService {
       }
 
       // Get ahead/behind counts
-      let ahead = 0;
-      let behind = 0;
-      if (currentBranch && currentBranch !== 'HEAD') {
-        try {
-          const tracking = await this.gitCmd.execGit(
-            ['rev-list', '--left-right', '--count', `origin/${currentBranch}...HEAD`]
-          );
-          const [behindStr, aheadStr] = tracking.split('\t');
-          behind = parseInt(behindStr, 10) || 0;
-          ahead = parseInt(aheadStr, 10) || 0;
-        } catch {
-          // No tracking branch
-        }
-      }
+      const { ahead, behind } = currentBranch && currentBranch !== 'HEAD'
+        ? await this.countAheadBehind(currentBranch)
+        : { ahead: 0, behind: 0 };
 
       return {
         name,
@@ -214,21 +220,13 @@ export class SubmoduleService {
 
       // Get ahead/behind counts
       if (currentBranch && currentBranch !== 'HEAD') {
-        try {
-          const tracking = await this.gitCmd.execGit(
-            ['rev-list', '--left-right', '--count', `origin/${currentBranch}...HEAD`],
-            fullPath
-          );
-          const [behindStr, aheadStr] = tracking.split('\t');
-          behind = parseInt(behindStr, 10) || 0;
-          ahead = parseInt(aheadStr, 10) || 0;
-        } catch {
-          // No tracking branch
-        }
+        ({ ahead, behind } = await this.countAheadBehind(currentBranch, fullPath));
       }
     } catch {
       status = 'uninitialized';
     }
+
+    const recordedCommit = await this.getRecordedCommit(submodulePath);
 
     return {
       name,
@@ -241,6 +239,8 @@ export class SubmoduleService {
       hasChanges,
       ahead,
       behind,
+      recordedCommit: recordedCommit.substring(0, 8),
+      atRecordedCommit: recordedCommit && currentCommit ? recordedCommit === currentCommit : undefined,
       lastUpdated: new Date()
     };
   }
@@ -331,7 +331,12 @@ export class SubmoduleService {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
-      await this.gitCmd.execGit(['fetch', '--all'], fullPath);
+      // A commit that is already local needs no network; fetch only for branches or missing objects.
+      const isLocalCommit = /^[0-9a-f]{7,64}$/i.test(target)
+        && await this.gitCmd.execGit(['cat-file', '-e', `${target}^{commit}`], fullPath).then(() => true, () => false);
+      if (!isLocalCommit) {
+        await this.gitCmd.execGit(['fetch', '--all'], fullPath);
+      }
       await this.gitCmd.execGit(['checkout', target], fullPath);
       return { success: true, message: `Synced to '${target}'` };
     } catch (error: unknown) {

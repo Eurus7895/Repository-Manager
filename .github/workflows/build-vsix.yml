@@ -38,6 +38,20 @@ jobs:
       - name: Compile, lint, and test
         run: npm test
 
+      - name: Install Chromium for UI snapshots
+        run: npx playwright-core install --with-deps chromium
+
+      - name: UI snapshots
+        run: node ./src/test/uiSnapshots.js
+
+      - name: Upload UI snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-snapshots
+          path: ui-snapshots/
+          if-no-files-found: ignore
+
       - name: Verify VSIX packaging
         run: npm run package
 

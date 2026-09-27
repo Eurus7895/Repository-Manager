@@ -325,6 +325,10 @@ function renderWorkspaceFolderSelector(folders: WorkspaceFolderInfo[]): string {
 function renderDashboardSidebar(): string {
   return `
     <aside class="dashboard-sidebar">
+      <section class="sidebar-section repositories-section">
+        <div class="sidebar-section-title"><span>Repositories</span><span id="repositoryAlignment" title="Linked repositories on the parent repository's branch and at the commit it records">—</span></div>
+        <div class="sidebar-repository-list" id="dashboardRepositories" role="group" aria-label="Repositories"></div>
+      </section>
       <section class="sidebar-section branches-section">
         <div class="sidebar-section-title"><span>Branches</span><span id="branchRefCount">—</span></div>
         <div class="sidebar-ref-list" id="dashboardBranches"><span class="sidebar-placeholder">Loading branches…</span></div>
@@ -417,13 +421,6 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
 </head>
 <body>
   ${renderDashboard(repositories, workspaceFolders)}
-
-  <div class="selection-bar" id="selectionBar">
-    <span class="selection-count"><span id="selectedCount">0</span> selected</span>
-    <button class="btn btn-primary btn-sm" data-action="createBranchForSelected">Create Branch</button>
-    <button class="btn btn-sm" data-action="syncSelected">Sync</button>
-    <button class="btn btn-sm" data-action="deselectAll">Cancel</button>
-  </div>
 
   ${renderModals(repositories)}
 
