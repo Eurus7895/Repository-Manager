@@ -331,7 +331,12 @@ export class SubmoduleService {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
 
     try {
-      await this.gitCmd.execGit(['fetch', '--all'], fullPath);
+      // A commit that is already local needs no network; fetch only for branches or missing objects.
+      const isLocalCommit = /^[0-9a-f]{7,64}$/i.test(target)
+        && await this.gitCmd.execGit(['cat-file', '-e', `${target}^{commit}`], fullPath).then(() => true, () => false);
+      if (!isLocalCommit) {
+        await this.gitCmd.execGit(['fetch', '--all'], fullPath);
+      }
       await this.gitCmd.execGit(['checkout', target], fullPath);
       return { success: true, message: `Synced to '${target}'` };
     } catch (error: unknown) {

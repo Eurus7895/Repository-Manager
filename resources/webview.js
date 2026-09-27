@@ -916,7 +916,7 @@
     const targetBranch = parent ? parent.currentBranch : '';
     const linked = repositoryData.filter(repository => repository !== parent);
     const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned'
-      && repository.atRecordedCommit !== false).length;
+      && repository.atRecordedCommit === true).length;
     if (summary) {
       summary.textContent = linked.length ? `${aligned}/${linked.length} aligned` : '';
       summary.classList.toggle('drifted', aligned < linked.length);
@@ -935,6 +935,9 @@
           : '',
         repository.atRecordedCommit === false
           ? `<span class="repo-badge repo-badge-drift" title="HEAD ${escapeHtml(repository.currentCommit)} differs from the commit ${escapeHtml(repository.recordedCommit)} recorded by the parent">≠ recorded</span>`
+          : '',
+        !repository.isParentRepo && alignment !== 'uninitialized' && repository.atRecordedCommit === undefined
+          ? '<span class="repo-badge repo-badge-drift" title="The parent repository has no recorded commit for this repository yet (for example, it was added but not committed)">unrecorded</span>'
           : '',
         alignment === 'uninitialized' ? '<span class="repo-badge repo-badge-muted">not initialized</span>' : ''
       ].join('');
@@ -1863,6 +1866,10 @@
           repositoryData = message.payload.submodules;
           saveState();
           updateRepositoryRows(repositoryData);
+          // The active repository can vanish (e.g. removed from .gitmodules); fall back to one that exists.
+          if (repositoryData.length > 0 && !getRepository(activeDashboardRepository)) {
+            activateDashboardRepository(repositoryData[0].path);
+          }
           renderRepositorySwitcher();
           break;
         }

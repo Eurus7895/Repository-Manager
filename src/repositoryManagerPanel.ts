@@ -208,14 +208,19 @@ export class RepositoryManagerPanel {
   }
 
   /** Parent repository first, then linked repositories. */
-  private async _listRepositories() {
-    const submodules = await this._gitOps.getSubmodules();
-    const parentRepo = await this._gitOps.getParentRepoInfo();
+  private async _listRepositories(gitOps: GitOperations = this._gitOps) {
+    const submodules = await gitOps.getSubmodules();
+    const parentRepo = await gitOps.getParentRepoInfo();
     return parentRepo ? [parentRepo, ...submodules] : submodules;
   }
 
   private async _update(fullRefresh: boolean = true) {
-    const allRepos = await this._listRepositories();
+    const gitOps = this._gitOps;
+    const allRepos = await this._listRepositories(gitOps);
+    // A workspace folder switch while listing makes this result stale; the switch posts its own.
+    if (gitOps !== this._gitOps) {
+      return;
+    }
 
     if (fullRefresh) {
       const resourceUris = this._getResourceUris();

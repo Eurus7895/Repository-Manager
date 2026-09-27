@@ -337,6 +337,10 @@ export class BranchService {
     const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
     const env = { ...process.env };
     env.GIT_TERMINAL_PROMPT = '0';
+    // An empty GIT_ASKPASS also stops Git falling back to core.askPass and SSH_ASKPASS.
+    env.GIT_ASKPASS = '';
+    env.SSH_ASKPASS_REQUIRE = 'never';
+    env.GCM_INTERACTIVE = 'never';
     await this.gitCmd.execGitRaw(['fetch', '--all', '--no-prune', '--quiet'], fullPath, 60000, false, env);
   }
 

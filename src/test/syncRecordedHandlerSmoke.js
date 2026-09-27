@@ -13,13 +13,15 @@ const git = (cwd, ...args) => execFileSync('git', ['-c', 'protocol.file.allow=al
 }).trim();
 
 const prompts = [];
+const errors = [];
 let answer;
 const fakeVscode = { window: {
   async showWarningMessage(message, options, ...items) {
     prompts.push({ message, options, items });
-    return answer;
+    return typeof answer === 'function' ? answer() : answer;
   },
-  showInformationMessage() {}, showErrorMessage() {}
+  showInformationMessage() {},
+  showErrorMessage(message) { errors.push(message); }
 } };
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
@@ -51,7 +53,9 @@ async function main() {
     const moved = git(lib, 'rev-parse', 'HEAD');
 
     let refreshed = 0;
-    const ctx = { workspaceRoot: parent, gitOps: new GitOperations(parent), async refresh() { refreshed++; } };
+    const reloads = [];
+    const ctx = { workspaceRoot: parent, gitOps: new GitOperations(parent), async refresh() { refreshed++; },
+      async reloadDashboardHistory(paths) { reloads.push(paths); } };
 
     // Dismissing the modal leaves the repository untouched.
     answer = undefined;
@@ -64,12 +68,27 @@ async function main() {
     assert.equal(git(lib, 'rev-parse', 'HEAD'), moved);
     assert.equal(refreshed, 0);
 
-    // Confirming checks out the recorded commit and refreshes the dashboard.
+    // If the parent records a different commit while the modal is open, nothing is reset.
+    answer = () => {
+      git(parent, 'add', 'lib');
+      git(parent, 'commit', '-qm', 'record moved lib');
+      return 'Reset to recorded';
+    };
+    await handleSyncRepositoryToRecorded(ctx, { repositoryPath: 'lib' });
+    assert.equal(git(lib, 'rev-parse', 'HEAD'), moved);
+    assert.match(errors.at(-1) || '', /recorded commit changed/);
+    assert.equal(refreshed, 1);
+    git(parent, 'reset', '-q', '--hard', 'HEAD~1');
+
+    // Confirming checks out the recorded commit without network access when it is already
+    // local, then refreshes the list and reloads the repository's history.
+    git(lib, 'remote', 'set-url', 'origin', path.join(base, 'missing-remote'));
     answer = 'Reset to recorded';
     await handleSyncRepositoryToRecorded(ctx, { repositoryPath: 'lib' });
     assert.equal(git(lib, 'rev-parse', 'HEAD'), recorded);
     assert.equal(git(lib, 'rev-parse', 'main'), moved);
-    assert.equal(refreshed, 1);
+    assert.equal(refreshed, 2);
+    assert.deepEqual(reloads, [['lib']]);
     console.log('Sync to recorded handler smoke passed');
   } finally {
     rmSync(base, { recursive: true, force: true });

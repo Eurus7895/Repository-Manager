@@ -95,16 +95,21 @@ function startServer(workspace, otherFolder) {
   let ops = new GitOperations(workspace);
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
-  const listRepositories = async () => {
-    const parentRepo = await ops.getParentRepoInfo();
-    const submodules = await ops.getSubmodules();
+  const listRepositories = async (gitOps = ops) => {
+    const parentRepo = await gitOps.getParentRepoInfo();
+    const submodules = await gitOps.getSubmodules();
     return parentRepo ? [parentRepo, ...submodules] : submodules;
   };
   // Mirrors RepositoryManagerPanel: messages go to the real handler map, `refresh` is
   // handled by the panel itself, and replies are posted back into the page.
   const connect = async page => {
     const post = message => page.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined);
-    const refresh = async () => post({ type: 'updateSubmodules', payload: { submodules: await listRepositories() } });
+    // Like RepositoryManagerPanel._update: drop a result that a folder switch made stale.
+    const refresh = async () => {
+      const gitOps = ops;
+      const submodules = await listRepositories(gitOps);
+      if (gitOps === ops) await post({ type: 'updateSubmodules', payload: { submodules } });
+    };
     const ctx = {
       panel: { webview: { postMessage: async message => { await post(message); return true; } } },
       get gitOps() { return ops; }, prManager: {}, workspaceRoot: workspace, refresh,
@@ -205,6 +210,30 @@ async function main() {
     assert.equal(await page.locator('.history-row', { hasText: 'update app in two places' }).count(), 0);
     assert.equal(await libB.getAttribute('aria-current'), 'true');
     await snap(page, '03-linked-repository');
+
+    // Messages are dispatched synchronously so the switcher is read before any real refresh lands.
+    // A repository with no recorded commit is flagged and never counted as aligned.
+    const alignment = await page.evaluate(() => {
+      const list = window.__initialRepositories.map(repository => repository.path === 'lib-a'
+        ? Object.assign({}, repository, { atRecordedCommit: undefined, recordedCommit: '' }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      return {
+        summary: document.getElementById('repositoryAlignment').textContent,
+        libA: document.querySelector('.sidebar-repository-item[data-path="lib-a"]').textContent
+      };
+    });
+    assert.equal(alignment.summary, '0/2 aligned');
+    assert.match(alignment.libA, /unrecorded/);
+
+    // If the active repository disappears from the list, the dashboard falls back to the parent.
+    const fallback = await page.evaluate(() => {
+      const list = window.__initialRepositories.filter(repository => repository.path !== 'lib-b');
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      const active = document.querySelector('.sidebar-repository-item.active');
+      return active && active.dataset.path;
+    });
+    assert.equal(fallback, '.');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
 
     // Choosing another workspace folder loads its history and repositories without Refresh.
     await page.selectOption('#workspaceFolderSelect', other);

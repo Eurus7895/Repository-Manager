@@ -579,7 +579,22 @@ export async function handleSyncRepositoryToRecorded(
   if (choice !== confirm) {
     return;
   }
-  await handleSyncVersions(ctx, { submodules: [repositoryPath] });
+
+  // Act only on the commit the user confirmed; the parent may have moved while the modal was open.
+  if (await ctx.gitOps.getRecordedCommit(repositoryPath) !== recordedCommit) {
+    vscode.window.showErrorMessage(
+      `The recorded commit changed while confirming; ${repository.name} was not reset. Review it and try again.`
+    );
+    await ctx.refresh();
+    return;
+  }
+  const result = await ctx.gitOps.syncSubmodule(repositoryPath, recordedCommit);
+  showResult(result.success, result.success
+    ? `Reset ${repository.name} to the recorded commit ${recordedCommit.substring(0, 8)}`
+    : result.message);
+  await ctx.refresh();
+  // HEAD moved: reload history, refs and commit detail if this repository is on screen.
+  await ctx.reloadDashboardHistory([repositoryPath]);
 }
 
 /**
