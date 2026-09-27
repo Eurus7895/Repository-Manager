@@ -154,6 +154,9 @@ export interface ReviewResult {
   findings: ReviewFinding[];
   policyResults: PolicyRuleResult[];
   coverage: ReviewCoverage;
+  policyStatus: 'configured' | 'not_configured';
+  modelId?: string;
+  limitations: string[];
 }
 
 export interface PullRequestInfo {
