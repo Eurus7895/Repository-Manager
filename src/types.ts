@@ -101,6 +101,61 @@ export interface ChangeSummary {
   coverage: ChangeContextPacket['coverage'];
 }
 
+/** A review is bound to a Git commit and the exact policy content used for it. */
+export interface ReviewRequest {
+  repositoryPath: string;
+  targetSha: string;
+  baseSha?: string;
+  scope: 'changes' | 'branch';
+  categories: ('security' | 'compliance')[];
+  policyHash?: string;
+}
+
+export interface ReviewEvidence {
+  revision: string;
+  path: string;
+  side: 'target' | 'base';
+  startLine: number;
+  endLine: number;
+}
+
+export interface ReviewFinding {
+  id: string;
+  category: 'security' | 'compliance';
+  ruleId?: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  confidence: 'high' | 'medium' | 'low';
+  explanation: string;
+  impact: string;
+  suggestedAction: string;
+  evidence: ReviewEvidence[];
+  status: 'candidate' | 'verified' | 'hypothesis';
+}
+
+export interface ReviewCoverage {
+  surveyed: number;
+  analyzed: number;
+  skipped: { path: string; reason: string }[];
+  failed: { path: string; reason: string }[];
+  complete: boolean;
+}
+
+export type PolicyRuleResultStatus = 'pass' | 'violation' | 'insufficient_evidence' | 'not_applicable';
+
+export interface PolicyRuleResult {
+  ruleId: string;
+  status: PolicyRuleResultStatus;
+  reason: string;
+  evidence: ReviewEvidence[];
+}
+
+export interface ReviewResult {
+  request: ReviewRequest;
+  findings: ReviewFinding[];
+  policyResults: PolicyRuleResult[];
+  coverage: ReviewCoverage;
+}
+
 export interface PullRequestInfo {
   title: string;
   body: string;

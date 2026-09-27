@@ -53,6 +53,22 @@ export class GitCommandService {
     });
   }
 
+  /** Read a Git object without UTF-8 conversion (binary detection and byte limits). */
+  async execGitBuffer(args: string[], cwd?: string, timeoutMs = 30000): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      execFile('git', args, {
+        cwd: cwd || this.workspaceRoot, encoding: 'buffer',
+        maxBuffer: 2 * 1024 * 1024, timeout: timeoutMs, windowsHide: true
+      }, (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(error.killed ? `Git command timed out after ${timeoutMs}ms` : stderr.toString().trim() || error.message));
+        } else {
+          resolve(stdout);
+        }
+      });
+    });
+  }
+
   /**
    * Resolve a repository path inside the workspace boundary.
    */
