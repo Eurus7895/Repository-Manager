@@ -79,21 +79,37 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Verify release version
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
-        run: |
-          version=$(node -p "require('./package.json').version")
-          if [ "${RELEASE_TAG#v}" != "$version" ]; then
-            echo "::error::Release tag $RELEASE_TAG does not match package.json version $version"
-            exit 1
-          fi
-
       - name: Install dependencies
         run: npm ci
 
       - name: Compile, lint, and test
         run: npm test
+
+      # The release tag is the version of record. A release published before the version
+      # bump was merged (as happened for 1.5.0) used to fail here and ship no VSIX; now the
+      # tag's version is stamped into the build. A tag older than package.json is still
+      # refused, since that means the release points at the wrong commit.
+      - name: Use the release tag as the package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG#v}"
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag $RELEASE_TAG is not a version like 1.5.0 or v1.5.0"
+            exit 1
+          fi
+          version=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$version" ]; then
+            newest=$(printf '%s\n%s\n' "$version" "$tag" | sort -V | tail -n 1)
+            if [ "$newest" != "$tag" ]; then
+              echo "::error::Release tag $RELEASE_TAG is older than package.json version $version; the tag probably points at the wrong commit"
+              exit 1
+            fi
+            echo "::warning::package.json at $RELEASE_TAG says $version; packaging it as $tag. Bump package.json before publishing to avoid this."
+            npm version "$tag" --no-git-tag-version --allow-same-version > /dev/null
+          fi
+          echo "Packaging version $(node -p "require('./package.json').version")"
 
       - name: Package VSIX
         run: npm run package
