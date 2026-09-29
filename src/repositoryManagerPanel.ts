@@ -16,7 +16,7 @@ import { CopilotSummaryProvider } from './services/changeSummaryService';
 const READ_ONLY_MESSAGES = new Set([
   'getHistory', 'getCommitDetail', 'getFileDiff', 'getRepositoryRefs', 'getWorkingTreeChanges',
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
-  'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels'
+  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels'
 ]);
 
 export class RepositoryManagerPanel {

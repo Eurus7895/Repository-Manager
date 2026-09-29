@@ -341,6 +341,11 @@ export class GitOperations {
     return this.historyActionService.abort(repositoryPath, operation);
   }
 
+  /** The Git operation paused in the repository (rebase, merge, cherry-pick, ...), if any. */
+  async getPendingOperation(repositoryPath: string): Promise<string | undefined> {
+    return this.historyActionService.pendingOperation(repositoryPath);
+  }
+
   async previewHistoryRewrite(repositoryPath: string, commit: string, action: HistoryRewriteAction): Promise<HistoryRewritePreview> {
     return this.historyRewriteService.preview(repositoryPath, commit, action);
   }

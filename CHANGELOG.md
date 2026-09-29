@@ -18,14 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Hide Git's `diff --git`, `index`, `---`, and `+++` header lines in diffs; the panel title already names the file.
+- Dialogs close on Escape (an open dropdown closes first), move focus inside when they open, keep Tab within the dialog, and return focus to the button that opened them. They are announced as modal dialogs to screen readers.
+- The history context menu shows Continue rebase and Abort rebase only while a rebase is paused.
+- At narrow editor widths the history keeps a readable Message column (Author and Date shrink first), ref labels stay on one line and truncate, the Refresh, Fetch, Pull, Push, and Sync buttons and the Include remotes toggle stay visible, and repository badges move under the repository name in a narrow sidebar.
+- Publishing a release whose tag is newer than `package.json` now packages the VSIX with the tag's version and attaches it, instead of failing and attaching nothing (this is what left 1.5.0 without a VSIX). A tag older than `package.json` is still refused.
 
 ### Removed
 
 - Remove the unreachable repository selection bar; branch creation already selects repositories in its own dialog.
+- Remove the unreachable code left from the old repository cards: the inline branch panels, the checkout-branch and checkout-commit dialogs, the rebase marker, and about 630 lines of unused CSS.
 
 ### Fixed
 
 - Choosing another workspace folder now loads its history, branches, and repositories immediately instead of after Refresh.
+- The header Sync button now reloads the history of the repositories it moved.
 - Re-select all available repositories when opening New branch after creating a branch from a history commit.
 - Pull refuses a detached HEAD instead of merging the remote default branch into it.
 - Pull uses the branch's configured upstream, so branches tracking a differently named remote branch can be pulled.

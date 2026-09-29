@@ -546,6 +546,8 @@ export async function handleSyncVersions(
     );
   }
   await ctx.refresh();
+  // HEADs moved: reload history, refs and commit detail if one of these repositories is on screen.
+  await ctx.reloadDashboardHistory(Array.from(results.keys()));
 }
 
 /**
@@ -864,6 +866,16 @@ export async function handleRewriteHistoryCommit(ctx: MessageHandlerContext, pay
   }
 }
 
+/**
+ * Report which Git operation is paused in a repository, so the history menu only offers
+ * Continue/Abort rebase while a rebase is actually in progress.
+ */
+export async function handleGetPendingOperation(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const repositoryPath = requireString(requireRecord(payload), 'repositoryPath');
+  const operation = await ctx.gitOps.getPendingOperation(repositoryPath).catch(() => undefined);
+  await sendToWebview(ctx, { type: 'pendingOperationLoaded', payload: { repositoryPath, operation: operation || null } });
+}
+
 export async function handleResolveHistoryRebase(ctx: MessageHandlerContext, payload: {
   repositoryPath: string; command: 'continue' | 'abort'
 }): Promise<void> {
@@ -1023,6 +1035,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'applyHistoryCommit': (ctx, payload) => handleApplyHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; operation: HistoryAction }),
   'rewriteHistoryCommit': (ctx, payload) => handleRewriteHistoryCommit(ctx, payload as { repositoryPath: string; commit: string; action: HistoryRewriteAction }),
   'resolveHistoryRebase': (ctx, payload) => handleResolveHistoryRebase(ctx, payload as { repositoryPath: string; command: 'continue' | 'abort' }),
+  'getPendingOperation': (ctx, payload) => handleGetPendingOperation(ctx, payload),
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),

@@ -35,15 +35,14 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Open a repository in Explorer.
 - Open GitHub's pull-request creation flow.
 - Restore a linked repository to the commit recorded by the parent repository.
-- Mark rebase activity to reduce accidental synchronization during an active rebase.
 - Inspect merge and release commits against their first parent, including their changed files and per-file patches.
 - Right-click a history commit to rebase the current local branch onto it, reset to it (soft, mixed, or hard), or drop a commit from the current branch. Confirm the affected commits before running; hard reset and drop create a local backup branch.
-- Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
+- Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu; these items appear only while a rebase is paused. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
 
 ### Linked-repository synchronization
 
 - Initialize and update Git submodules when the workspace uses them.
-- Synchronize selected or all linked repositories to their recorded commits.
+- Synchronize all linked repositories to their recorded commits, or reset one repository from its row in the Repositories list.
 - Stage updated repository pointers in the parent repository.
 
 ## Repository model

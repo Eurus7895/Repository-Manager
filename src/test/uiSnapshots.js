@@ -46,7 +46,10 @@ function git(cwd, ...args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.com', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.com' }
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Fixed identity and dates give identical hashes and date labels on every run, so screenshots can be compared.
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.com', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.com',
+      GIT_AUTHOR_DATE: '2025-01-15T10:00:00Z', GIT_COMMITTER_DATE: '2025-01-15T10:00:00Z', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
   });
 }
 
@@ -58,7 +61,10 @@ function commitFile(repo, file, content, message) {
 }
 
 function createFixture() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'repository-manager-ui-'));
+  // A fixed path keeps submodule URLs, and therefore every commit hash, identical between runs.
+  const base = path.join(os.tmpdir(), 'repository-manager-ui-fixture');
+  fs.rmSync(base, { recursive: true, force: true });
+  fs.mkdirSync(base, { recursive: true });
   for (const name of ['lib-a', 'lib-b']) {
     const repo = path.join(base, 'origins', name);
     fs.mkdirSync(repo, { recursive: true });
@@ -73,6 +79,8 @@ function createFixture() {
   for (const name of ['lib-a', 'lib-b']) git(parent, 'submodule', 'add', '-q', path.join(base, 'origins', name), name);
   git(parent, 'commit', '-q', '-m', 'chore: add linked repositories');
   git(parent, 'checkout', '-q', '-b', 'feature/dashboard');
+  // Long ref names like real-world ones exercise ref-pill wrapping in narrow layouts.
+  git(parent, 'branch', 'claude/review-dashboard-layout-at-narrow-widths');
   lines[2] = 'line 3 changed';
   lines[35] = 'line 36 changed';
   lines.splice(20, 0, 'inserted line');
@@ -93,6 +101,7 @@ function createFixture() {
 
 function startServer(workspace, otherFolder) {
   let ops = new GitOperations(workspace);
+  let hostBusy = 0; // host messages still being handled
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -116,6 +125,8 @@ function startServer(workspace, otherFolder) {
       reloadDashboardHistory: async repositoryPaths => post({ type: 'reloadDashboardHistory', payload: { repositoryPaths } })
     };
     await page.exposeFunction('__postToHost', async message => {
+      hostBusy++;
+      try {
       if (message.type === 'switchWorkspaceFolder') {
         // Same as RepositoryManagerPanel._switchWorkspaceFolder.
         ops = new GitOperations(message.payload.folderPath);
@@ -126,11 +137,15 @@ function startServer(workspace, otherFolder) {
       } else if (messageHandlers[message.type]) {
         await messageHandlers[message.type](ctx, message.payload);
       }
+      } finally {
+        hostBusy--;
+      }
     });
   };
   const server = http.createServer(async (req, res) => {
     try {
       if (req.url === '/') {
+        ops = new GitOperations(workspace); // every page starts in the main workspace folder
         const html = getHtmlForWebview(await listRepositories(), {
           graphScriptUri: resource('/resources/historyGraph.js'),
           scriptUri: resource('/resources/webview.js'),
@@ -156,12 +171,12 @@ function startServer(workspace, otherFolder) {
       res.end(String(error));
     }
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect })));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect, isHostIdle: () => hostBusy === 0 })));
 }
 
 async function main() {
   const { base, parent, other } = createFixture();
-  const { server, connect } = await startServer(parent, other);
+  const { server, connect, isHostIdle } = await startServer(parent, other);
   const url = `http://127.0.0.1:${server.address().port}/`;
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
@@ -174,7 +189,20 @@ async function main() {
     await page.locator('.history-row').first().waitFor();
     return page;
   };
-  const snap = (page, name) => page.screenshot({ path: path.join(outputDir, `${name}.png`) });
+  // Screenshots wait until nothing is loading and no toolbar button is busy or flashing a result,
+  // so the same state renders to the same pixels on every run.
+  const settled = page => page.waitForFunction(() => !Array.from(document.querySelectorAll('.dashboard-loading, .is-busy, .is-success, .is-error'))
+    .some(element => element.getClientRects().length > 0));
+  const snap = async (page, name) => {
+    // Settled means: the host has answered everything, and the page shows no loading or result flash.
+    for (let stable = 0; stable < 2;) {
+      while (!isHostIdle()) await page.waitForTimeout(20);
+      await settled(page);
+      await page.waitForTimeout(150);
+      stable = isHostIdle() && await page.evaluate(() => !document.querySelector('.is-busy, .is-success, .is-error')) ? stable + 1 : 0;
+    }
+    await page.screenshot({ path: path.join(outputDir, `${name}.png`), animations: 'disabled', caret: 'hide' });
+  };
 
   try {
     const page = await openPage(1440, 900);
@@ -203,6 +231,50 @@ async function main() {
     const firstAddition = page.locator('#dashboardDiff .diff-addition').first();
     assert.equal(await firstAddition.locator('.diff-ln').nth(1).textContent(), '3');
     await snap(page, '02-commit-diff');
+
+    // History context menu.
+    await page.locator('.history-row', { hasText: 'add linked repositories' }).click({ button: 'right' });
+    await page.locator('#historyContextMenu').waitFor();
+    await snap(page, '05-context-menu');
+    await page.mouse.click(5, 5);
+    await page.locator('#historyContextMenu').waitFor({ state: 'hidden' });
+
+    // Dialogs: focus moves in, Tab stays inside, Escape closes (an open dropdown first), focus returns.
+    const activeInside = selector => page.evaluate(sel => document.querySelector(sel).contains(document.activeElement), selector);
+    const newBranchButton = page.locator('[data-action="openCreateBranchModal"]');
+    await newBranchButton.focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#createBranchModal.active').waitFor();
+    await page.waitForFunction(() => document.querySelector('#createBranchModal').contains(document.activeElement));
+    assert.equal(await page.getAttribute('#createBranchModal .modal', 'role'), 'dialog');
+    await snap(page, '06-create-branch-modal');
+    const firstFocused = await page.evaluate(() => document.activeElement.outerHTML);
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await activeInside('#createBranchModal'), true, 'Shift+Tab left the dialog');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.outerHTML), firstFocused, 'Tab did not wrap to the first control');
+    await page.click('#baseBranchInput');
+    await page.locator('#baseBranchDropdown.open').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('#baseBranchDropdown.open').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('#createBranchModal.active').count(), 1, 'Escape closed the dialog instead of the dropdown');
+    await page.keyboard.press('Escape');
+    await page.locator('#createBranchModal.active').waitFor({ state: 'detached' });
+    assert.equal(await newBranchButton.evaluate(button => button === document.activeElement), true, 'focus did not return to New branch');
+
+    await page.click('[data-action="openCommitChangesModal"]');
+    await page.locator('#commitChangesModal.active').waitFor();
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'commitMessage');
+    await snap(page, '07-commit-modal');
+    await page.keyboard.type('wip: draft message');
+    await page.keyboard.press('Escape');
+    await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
+    // Escape keeps the unsent message for the next time the dialog opens.
+    await page.click('[data-action="openCommitChangesModal"]');
+    await page.locator('#commitChangesModal.active').waitFor();
+    assert.equal(await page.inputValue('#commitMessage'), 'wip: draft message');
+    await page.keyboard.press('Escape');
+    await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
@@ -242,8 +314,39 @@ async function main() {
     assert.equal(await page.locator('.sidebar-repository-item').count(), 1);
     await snap(page, '03b-other-workspace-folder');
 
+    // Continue/Abort rebase are offered only while a rebase is paused.
+    const rebaseItems = page.locator('#historyContextMenu [data-requires-operation="rebase"]');
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.locator('#historyContextMenu').waitFor();
+    assert.equal(await rebaseItems.evaluateAll(items => items.filter(item => item.offsetParent).length), 0);
+    await page.mouse.click(5, 5);
+    git(other, 'checkout', '-q', '-b', 'topic');
+    commitFile(other, 'notes.md', 'topic\n', 'docs: topic notes');
+    git(other, 'checkout', '-q', 'main');
+    commitFile(other, 'notes.md', 'main\n', 'docs: main notes');
+    git(other, 'checkout', '-q', 'topic');
+    assert.throws(() => git(other, 'rebase', 'main'), 'expected the fixture rebase to stop on a conflict');
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.locator('#historyContextMenu [data-action="contextContinueRebase"]').waitFor({ state: 'visible' });
+    await page.locator('#historyContextMenu [data-action="contextAbortRebase"]').waitFor({ state: 'visible' });
+    await snap(page, '08-rebase-menu');
+    await page.mouse.click(5, 5);
+
     await page.close();
-    await snap(await openPage(820, 700), '04-narrow');
+    // Narrow editor splits: rows keep one-line ref pills, and the subject keeps a readable width.
+    for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
+      const narrow = await openPage(width, 700);
+      const layout = await narrow.evaluate(() => ({
+        tallestRow: Math.max(...Array.from(document.querySelectorAll('.history-row')).map(row => row.getBoundingClientRect().height)),
+        messageWidth: document.querySelector('.history-row .history-message').getBoundingClientRect().width,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+      }));
+      assert.ok(layout.tallestRow <= 80, `${width}px: a history row is ${layout.tallestRow}px tall`);
+      assert.ok(layout.messageWidth >= 150, `${width}px: the message column is only ${layout.messageWidth}px`);
+      assert.equal(layout.pageOverflow, 0, `${width}px: the page scrolls horizontally`);
+      await snap(narrow, name);
+      await narrow.close();
+    }
 
     assert.deepEqual(pageErrors, []);
     console.log(`UI snapshots written to ${path.relative(process.cwd(), outputDir)}`);
