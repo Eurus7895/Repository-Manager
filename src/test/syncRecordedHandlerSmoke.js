@@ -28,7 +28,7 @@ Module._load = function (request, parent, isMain) {
   if (request === 'vscode') return fakeVscode;
   return originalLoad.call(this, request, parent, isMain);
 };
-const { handleSyncRepositoryToRecorded } = require('../../out/handlers/webviewMessageHandler.js');
+const { handleSyncRepositoryToRecorded, handleSyncVersions } = require('../../out/handlers/webviewMessageHandler.js');
 const { GitOperations } = require('../../out/gitOperations.js');
 Module._load = originalLoad;
 
@@ -89,6 +89,12 @@ async function main() {
     assert.equal(git(lib, 'rev-parse', 'main'), moved);
     assert.equal(refreshed, 2);
     assert.deepEqual(reloads, [['lib']]);
+
+    // The header Sync also reloads the history of the repositories it moved.
+    git(lib, 'checkout', '-q', 'main');
+    await handleSyncVersions(ctx, { submodules: [] });
+    assert.equal(git(lib, 'rev-parse', 'HEAD'), recorded);
+    assert.deepEqual(reloads.at(-1), ['lib']);
     console.log('Sync to recorded handler smoke passed');
   } finally {
     rmSync(base, { recursive: true, force: true });

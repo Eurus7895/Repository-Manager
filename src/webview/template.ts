@@ -53,10 +53,10 @@ function renderModals(repositories: RepositoryInfo[]): string {
   return `
     <!-- Create Branch Modal -->
     <div class="modal-overlay" id="createBranchModal">
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="createBranchModalTitle">
         <div class="modal-header">
-          <div class="modal-heading"><span class="modal-title">Branch across repositories</span><span>One branch name, created from the same base in every selected repository.</span></div>
-          <button class="modal-close" data-action="closeModal" data-modal="createBranchModal">&times;</button>
+          <div class="modal-heading"><span class="modal-title" id="createBranchModalTitle">Branch across repositories</span><span>One branch name, created from the same base in every selected repository.</span></div>
+          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="createBranchModal">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
@@ -132,10 +132,10 @@ function renderModals(repositories: RepositoryInfo[]): string {
 
     <!-- Review Branch Modal -->
     <div class="modal-overlay" id="reviewBranchModal">
-      <div class="modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reviewBranchModalTitle">
         <div class="modal-header">
-          <span class="modal-title">Review Created Branch</span>
-          <button class="modal-close" data-action="closeModal" data-modal="reviewBranchModal">&times;</button>
+          <span class="modal-title" id="reviewBranchModalTitle">Review Created Branch</span>
+          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="reviewBranchModal">&times;</button>
         </div>
         <div class="modal-body">
           <div id="branchCreationResults" style="margin-bottom: 16px;"></div>
@@ -159,13 +159,13 @@ function renderModals(repositories: RepositoryInfo[]): string {
 
     <!-- Commit Changes Modal -->
     <div class="modal-overlay" id="commitChangesModal">
-      <div class="modal commit-changes-modal">
+      <div class="modal commit-changes-modal" role="dialog" aria-modal="true" aria-labelledby="commitChangesModalTitle">
         <div class="modal-header">
           <div class="modal-heading">
-            <span class="modal-title">Create Commit</span>
+            <span class="modal-title" id="commitChangesModalTitle">Create Commit</span>
             <span id="commitChangesRepository">Repository</span>
           </div>
-          <button class="modal-close" data-action="closeModal" data-modal="commitChangesModal">&times;</button>
+          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="commitChangesModal">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="commitChangesRepositoryPath">
@@ -191,7 +191,7 @@ function renderModals(repositories: RepositoryInfo[]): string {
           </div>
           <div class="form-group commit-message-group">
             <label class="form-label" for="commitMessage">Commit message</label>
-            <textarea class="form-input commit-message-input" id="commitMessage" rows="3" placeholder="Describe the changes"></textarea>
+            <textarea class="form-input commit-message-input" id="commitMessage" data-initial-focus rows="3" placeholder="Describe the changes"></textarea>
           </div>
           <div class="commit-result" id="commitChangesResult" role="status" aria-live="polite"></div>
         </div>
@@ -202,66 +202,12 @@ function renderModals(repositories: RepositoryInfo[]): string {
       </div>
     </div>
 
-    <!-- Checkout Branch Modal -->
-    <div class="modal-overlay" id="checkoutModal">
-      <div class="modal">
-        <div class="modal-header">
-          <span class="modal-title">Checkout Branch</span>
-          <button class="modal-close" data-action="closeModal" data-modal="checkoutModal">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Select Branch</label>
-            <select class="form-select" id="branchSelect">
-              <option value="">Loading branches...</option>
-            </select>
-          </div>
-          <input type="hidden" id="checkoutRepository">
-        </div>
-        <div class="modal-footer">
-          <button class="btn" data-action="closeModal" data-modal="checkoutModal">Cancel</button>
-          <button class="btn btn-primary" data-action="checkoutBranch">Checkout</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Checkout Commit Modal -->
-    <div class="modal-overlay" id="commitModal">
-      <div class="modal">
-        <div class="modal-header">
-          <span class="modal-title">Checkout Specific Commit</span>
-          <button class="modal-close" data-action="closeModal" data-modal="commitModal">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div id="recordedCommitInfo" class="form-group">
-            <!-- Will be populated dynamically -->
-          </div>
-          <div class="form-group">
-            <label class="form-label">Enter Commit Hash</label>
-            <input type="text" class="form-input" id="commitInput" placeholder="e.g., abc123def or full hash">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Or Select Recent Commit</label>
-            <select class="form-select" id="commitSelect">
-              <option value="">Loading commits...</option>
-            </select>
-          </div>
-          <input type="hidden" id="commitRepository">
-        </div>
-        <div class="modal-footer">
-          <button class="btn" data-action="closeModal" data-modal="commitModal">Cancel</button>
-          <button class="btn" data-action="useRecorded">Use Recorded</button>
-          <button class="btn btn-primary" data-action="checkoutCommit">Checkout</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Compare Branches Modal -->
     <div class="modal-overlay" id="branchCompareModal">
-      <div class="modal branch-compare-modal">
+      <div class="modal branch-compare-modal" role="dialog" aria-modal="true" aria-labelledby="branchCompareModalTitle">
         <div class="modal-header">
-          <div class="modal-heading"><span class="modal-title">Compare branches</span><span>Show the changes required to move from the base branch to the target branch.</span></div>
-          <button class="modal-close" data-action="closeModal" data-modal="branchCompareModal">&times;</button>
+          <div class="modal-heading"><span class="modal-title" id="branchCompareModalTitle">Compare branches</span><span>Show the changes required to move from the base branch to the target branch.</span></div>
+          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="branchCompareModal">&times;</button>
         </div>
         <div class="modal-body branch-compare-fields">
           <div class="form-group">
@@ -363,6 +309,11 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
+            <div class="review-entry review-release-group" role="group" aria-label="Review the release with Copilot">
+              <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
+              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review the changes since the latest release tag on the current branch"><span class="review-entry-word">Review </span>changes</button>
+              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>whole</button>
+            </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
@@ -386,7 +337,23 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="loadSummaryModels" id="loadSummaryModelsButton">Load models</button><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
-            <div class="commit-content">
+            <div class="detail-tabs" id="detailTabs" role="tablist" aria-label="Detail view" hidden>
+              <button type="button" role="tab" id="detailTabChanges" data-action="showDetailTab" data-tab="changes" aria-selected="true" aria-controls="commitContent">Changes</button>
+              <button type="button" role="tab" id="detailTabReview" data-action="showDetailTab" data-tab="review" aria-selected="false" aria-controls="reviewPanel">Review <span class="detail-tab-badge" id="reviewTabBadge"></span></button>
+            </div>
+            <div class="review-panel" id="reviewPanel" role="tabpanel" aria-labelledby="detailTabReview" hidden>
+              <div class="review-header">
+                <div class="review-title"><strong id="reviewTitle">Review</strong><span id="reviewMeta"></span></div>
+                <div class="review-actions">
+                  <span class="review-status" id="reviewStatus" role="status" aria-live="polite"></span>
+                  <button type="button" class="btn" data-action="cancelReview" id="cancelReviewButton" hidden>Cancel</button>
+                  <button type="button" class="btn" data-action="exportReview" data-format="copy" id="copyReviewButton" hidden>Copy Markdown</button>
+                  <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>
+                </div>
+              </div>
+              <div class="review-body" id="reviewBody"></div>
+            </div>
+            <div class="commit-content" id="commitContent">
               <div class="changed-files-panel">
                 <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>
                 <div class="changed-files-list" id="dashboardChangedFiles"></div>
@@ -436,11 +403,14 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextRebase">Rebase current branch onto this commit…</button>
     <button type="button" role="menuitem" data-action="contextReset">Reset current branch to this commit…</button>
     <button type="button" role="menuitem" data-action="contextDrop">Drop this commit…</button>
-    <button type="button" role="menuitem" data-action="contextContinueRebase">Continue rebase</button>
-    <button type="button" role="menuitem" data-action="contextAbortRebase">Abort rebase…</button>
+    <button type="button" role="menuitem" data-action="contextContinueRebase" data-requires-operation="rebase" hidden>Continue rebase</button>
+    <button type="button" role="menuitem" data-action="contextAbortRebase" data-requires-operation="rebase" hidden>Abort rebase…</button>
     <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
+    <div class="history-context-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent">Review changes in this commit</button>
+    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as of this commit">Review whole tree at this commit</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>

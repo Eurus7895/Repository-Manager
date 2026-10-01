@@ -31,6 +31,7 @@ Module._load = function (request, parent, isMain) {
 };
 const { GitOperations } = require(path.join(root, 'out/gitOperations'));
 const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessageHandler'));
+const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { getHtmlForWebview } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
@@ -46,7 +47,10 @@ function git(cwd, ...args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.com', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.com' }
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Fixed identity and dates give identical hashes and date labels on every run, so screenshots can be compared.
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.com', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.com',
+      GIT_AUTHOR_DATE: '2025-01-15T10:00:00Z', GIT_COMMITTER_DATE: '2025-01-15T10:00:00Z', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
   });
 }
 
@@ -58,7 +62,10 @@ function commitFile(repo, file, content, message) {
 }
 
 function createFixture() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'repository-manager-ui-'));
+  // A fixed path keeps submodule URLs, and therefore every commit hash, identical between runs.
+  const base = path.join(os.tmpdir(), 'repository-manager-ui-fixture');
+  fs.rmSync(base, { recursive: true, force: true });
+  fs.mkdirSync(base, { recursive: true });
   for (const name of ['lib-a', 'lib-b']) {
     const repo = path.join(base, 'origins', name);
     fs.mkdirSync(repo, { recursive: true });
@@ -72,7 +79,10 @@ function createFixture() {
   commitFile(parent, 'src/app.txt', lines.join('\n') + '\n', 'feat: add app');
   for (const name of ['lib-a', 'lib-b']) git(parent, 'submodule', 'add', '-q', path.join(base, 'origins', name), name);
   git(parent, 'commit', '-q', '-m', 'chore: add linked repositories');
+  git(parent, 'tag', '1.0.0'); // the release a release review starts from
   git(parent, 'checkout', '-q', '-b', 'feature/dashboard');
+  // Long ref names like real-world ones exercise ref-pill wrapping in narrow layouts.
+  git(parent, 'branch', 'claude/review-dashboard-layout-at-narrow-widths');
   lines[2] = 'line 3 changed';
   lines[35] = 'line 36 changed';
   lines.splice(20, 0, 'inserted line');
@@ -93,6 +103,11 @@ function createFixture() {
 
 function startServer(workspace, otherFolder) {
   let ops = new GitOperations(workspace);
+  let hostBusy = 0; // host messages still being handled
+  let currentRoot = workspace;
+  // The review runs through the real ReviewController with a scripted runner instead of Copilot.
+  // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
+  const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set() };
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -115,9 +130,32 @@ function startServer(workspace, otherFolder) {
       get gitOps() { return ops; }, prManager: {}, workspaceRoot: workspace, refresh,
       reloadDashboardHistory: async repositoryPaths => post({ type: 'reloadDashboardHistory', payload: { repositoryPaths } })
     };
+    const reviews = new ReviewController({
+      workspaceRoot: () => currentRoot,
+      post,
+      ask: async (message, detail, actions) => { reviewProbe.questions.push({ message, actions }); return reviewProbe.ask(actions); },
+      alwaysConfirm: () => false,
+      isConsentRemembered: root => reviewProbe.remembered.has(root),
+      rememberConsent: async root => { reviewProbe.remembered.add(root); },
+      createRunner: () => ({ review: (request, token, progress) => reviewProbe.runner(request, token, progress) }),
+      createCancellation: () => {
+        const token = { isCancellationRequested: false };
+        return { token, cancel() { token.isCancellationRequested = true; }, dispose() {} };
+      },
+      copyText: async text => { reviewProbe.copied = text; },
+      saveText: async () => true,
+      openText: async (content, revision, filePath, line) => { reviewProbe.opened = { revision, filePath, line }; },
+      notify: () => {}
+    });
     await page.exposeFunction('__postToHost', async message => {
-      if (message.type === 'switchWorkspaceFolder') {
+      hostBusy++;
+      try {
+      if (reviews.handles(message.type)) {
+        await reviews.handle(message);
+      } else if (message.type === 'switchWorkspaceFolder') {
         // Same as RepositoryManagerPanel._switchWorkspaceFolder.
+        reviews.cancel();
+        currentRoot = message.payload.folderPath;
         ops = new GitOperations(message.payload.folderPath);
         await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
       } else if (message.type === 'refresh') {
@@ -126,11 +164,16 @@ function startServer(workspace, otherFolder) {
       } else if (messageHandlers[message.type]) {
         await messageHandlers[message.type](ctx, message.payload);
       }
+      } finally {
+        hostBusy--;
+      }
     });
   };
   const server = http.createServer(async (req, res) => {
     try {
       if (req.url === '/') {
+        ops = new GitOperations(workspace); // every page starts in the main workspace folder
+        currentRoot = workspace;
         const html = getHtmlForWebview(await listRepositories(), {
           graphScriptUri: resource('/resources/historyGraph.js'),
           scriptUri: resource('/resources/webview.js'),
@@ -156,12 +199,12 @@ function startServer(workspace, otherFolder) {
       res.end(String(error));
     }
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect })));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect, isHostIdle: () => hostBusy === 0, reviewProbe })));
 }
 
 async function main() {
   const { base, parent, other } = createFixture();
-  const { server, connect } = await startServer(parent, other);
+  const { server, connect, isHostIdle, reviewProbe } = await startServer(parent, other);
   const url = `http://127.0.0.1:${server.address().port}/`;
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
@@ -174,7 +217,20 @@ async function main() {
     await page.locator('.history-row').first().waitFor();
     return page;
   };
-  const snap = (page, name) => page.screenshot({ path: path.join(outputDir, `${name}.png`) });
+  // Screenshots wait until nothing is loading and no toolbar button is busy or flashing a result,
+  // so the same state renders to the same pixels on every run.
+  const settled = page => page.waitForFunction(() => !Array.from(document.querySelectorAll('.dashboard-loading, .is-busy, .is-success, .is-error'))
+    .some(element => element.getClientRects().length > 0));
+  const snap = async (page, name) => {
+    // Settled means: the host has answered everything, and the page shows no loading or result flash.
+    for (let stable = 0; stable < 2;) {
+      while (!isHostIdle()) await page.waitForTimeout(20);
+      await settled(page);
+      await page.waitForTimeout(150);
+      stable = isHostIdle() && await page.evaluate(() => !document.querySelector('.is-busy, .is-success, .is-error')) ? stable + 1 : 0;
+    }
+    await page.screenshot({ path: path.join(outputDir, `${name}.png`), animations: 'disabled', caret: 'hide' });
+  };
 
   try {
     const page = await openPage(1440, 900);
@@ -203,6 +259,141 @@ async function main() {
     const firstAddition = page.locator('#dashboardDiff .diff-addition').first();
     assert.equal(await firstAddition.locator('.diff-ln').nth(1).textContent(), '3');
     await snap(page, '02-commit-diff');
+
+    // History context menu.
+    await page.locator('.history-row', { hasText: 'add linked repositories' }).click({ button: 'right' });
+    await page.locator('#historyContextMenu').waitFor();
+    await snap(page, '05-context-menu');
+    await page.mouse.click(5, 5);
+    await page.locator('#historyContextMenu').waitFor({ state: 'hidden' });
+
+    // Dialogs: focus moves in, Tab stays inside, Escape closes (an open dropdown first), focus returns.
+    const activeInside = selector => page.evaluate(sel => document.querySelector(sel).contains(document.activeElement), selector);
+    const newBranchButton = page.locator('[data-action="openCreateBranchModal"]');
+    await newBranchButton.focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#createBranchModal.active').waitFor();
+    await page.waitForFunction(() => document.querySelector('#createBranchModal').contains(document.activeElement));
+    assert.equal(await page.getAttribute('#createBranchModal .modal', 'role'), 'dialog');
+    await snap(page, '06-create-branch-modal');
+    const firstFocused = await page.evaluate(() => document.activeElement.outerHTML);
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await activeInside('#createBranchModal'), true, 'Shift+Tab left the dialog');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement.outerHTML), firstFocused, 'Tab did not wrap to the first control');
+    await page.click('#baseBranchInput');
+    await page.locator('#baseBranchDropdown.open').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('#baseBranchDropdown.open').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('#createBranchModal.active').count(), 1, 'Escape closed the dialog instead of the dropdown');
+    await page.keyboard.press('Escape');
+    await page.locator('#createBranchModal.active').waitFor({ state: 'detached' });
+    assert.equal(await newBranchButton.evaluate(button => button === document.activeElement), true, 'focus did not return to New branch');
+
+    await page.click('[data-action="openCommitChangesModal"]');
+    await page.locator('#commitChangesModal.active').waitFor();
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'commitMessage');
+    await snap(page, '07-commit-modal');
+    await page.keyboard.type('wip: draft message');
+    await page.keyboard.press('Escape');
+    await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
+    // Escape keeps the unsent message for the next time the dialog opens.
+    await page.click('[data-action="openCommitChangesModal"]');
+    await page.locator('#commitChangesModal.active').waitFor();
+    assert.equal(await page.inputValue('#commitMessage'), 'wip: draft message');
+    await page.keyboard.press('Escape');
+    await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
+
+    // W6–W7: release review from the latest release tag, results, evidence jump and export.
+    reviewProbe.runner = async (request, token, progress) => {
+      progress('Reviewing component 1/1: src');
+      const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
+      const finding = (id, severity, status, explanation) => ({ id, category: 'security', severity, confidence: 'high', status,
+        explanation, impact: 'Untrusted input reaches a sensitive sink', suggestedAction: 'Validate the input first', evidence });
+      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1',
+        findings: [finding('high-verified', 'high', 'verified', 'Changed line passes input to eval'),
+          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input')],
+        limitations: ['Scripted review used by the UI test.'],
+        coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
+    };
+    // Every entry point offers "Review changes" and "Review whole"; one click starts, no dialog.
+    assert.equal(await page.locator('.review-release-group button').count(), 2);
+    assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
+    // The consent question is held open so the header can be checked while it waits.
+    let answerConsent;
+    reviewProbe.ask = () => new Promise(resolve => { answerConsent = resolve; });
+    await page.click('.review-release-group [data-action="reviewRelease"][data-scope="changes"]');
+    assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
+    // The extension resolved the release range and reported it back.
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
+    assert.equal(await page.textContent('#reviewStatus'), 'Waiting for confirmation…');
+    assert.deepEqual(reviewProbe.questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
+    // Not snap(): the host is busy on purpose, waiting for the answer.
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
+    answerConsent('Always allow for this repository');
+    await page.locator('.review-readiness.readiness-blocked').waitFor();
+    const blocking = await page.locator('.review-body section').nth(0).textContent();
+    const attention = await page.locator('.review-body section').nth(1).locator('.review-finding').first().textContent();
+    assert.match(blocking, /Changed line passes input to eval/);
+    assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
+    assert.match(attention, /hypothesis/);
+    await snap(page, '10-review-results');
+    await page.click('[data-action="exportReview"][data-format="copy"]');
+    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
+    assert.match(reviewProbe.copied || '', /^# Release review — Diff: 1\.0\.0 → feature\/dashboard/);
+    // Evidence opens the cited line in the dashboard diff.
+    await page.locator('.review-body section').nth(0).locator('[data-action="reviewEvidence"]').first().click();
+    await page.locator('#dashboardDiff .diff-line-highlight').waitFor();
+    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true');
+    assert.equal(await page.locator('#dashboardDiff .diff-line-highlight .diff-ln').nth(1).textContent(), '3');
+    await snap(page, '11-review-evidence');
+
+    // From here on the repository is allowed: a question would fail the test.
+    const questionsAsked = reviewProbe.questions.length;
+    reviewProbe.ask = () => undefined;
+    const runs = [];
+    const record = request => { runs.push(request); return { request, findings: [], policyResults: [], policyStatus: 'not_configured',
+      limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }; };
+    reviewProbe.runner = async request => record(request);
+    // Base/Target selection: both buttons sit in the comparison status.
+    const nodes = page.locator('.graph-node-control');
+    const [baseHash, targetHash] = [await nodes.nth(1).getAttribute('data-commit'), await nodes.nth(0).getAttribute('data-commit')];
+    await nodes.nth(1).click();
+    await nodes.nth(0).click();
+    const compareButtons = page.locator('#commitCompareStatus .review-entry button');
+    await compareButtons.first().waitFor();
+    assert.deepEqual(await compareButtons.allTextContents(), ['Review changes', 'Review whole']);
+    await snap(page, '12-compare-review-buttons');
+    await compareButtons.nth(0).click();
+    await page.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
+    await page.click('#detailTabChanges');
+    await page.locator('#commitCompareStatus .review-entry button').nth(1).click();
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Whole: '));
+    for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['branch', undefined, targetHash]);
+    assert.deepEqual(runs.at(-1).categories, ['security', 'compliance']);
+
+    // History menu: "changes" reviews the commit against its parent; "whole" every file at it.
+    await page.locator('.history-row').first().click({ button: 'right' });
+    assert.match(await page.textContent('#historyContextMenu [data-action="contextReviewCommit"]'), /Review changes/);
+    await page.click('#historyContextMenu [data-action="contextReviewCommit"]');
+    for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['changes', undefined]);
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Diff: parent → '));
+    // Cancelling a running whole-tree review.
+    reviewProbe.runner = (request, token) => new Promise((resolve, reject) => {
+      const timer = setInterval(() => { if (token.isCancellationRequested) { clearInterval(timer); reject(new Error('Cancelled')); } }, 20);
+    });
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.click('#historyContextMenu [data-action="contextReviewSnapshot"]');
+    await page.locator('#cancelReviewButton').waitFor({ state: 'visible' });
+    assert.match(await page.textContent('#reviewMeta'), /^Whole: /);
+    await page.click('#cancelReviewButton');
+    await page.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
+    assert.equal(reviewProbe.questions.length, questionsAsked, 'asked for consent after "Always allow"');
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
@@ -242,8 +433,61 @@ async function main() {
     assert.equal(await page.locator('.sidebar-repository-item').count(), 1);
     await snap(page, '03b-other-workspace-folder');
 
+    // Continue/Abort rebase are offered only while a rebase is paused.
+    const rebaseItems = page.locator('#historyContextMenu [data-requires-operation="rebase"]');
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.locator('#historyContextMenu').waitFor();
+    assert.equal(await rebaseItems.evaluateAll(items => items.filter(item => item.offsetParent).length), 0);
+    await page.mouse.click(5, 5);
+    git(other, 'checkout', '-q', '-b', 'topic');
+    commitFile(other, 'notes.md', 'topic\n', 'docs: topic notes');
+    git(other, 'checkout', '-q', 'main');
+    commitFile(other, 'notes.md', 'main\n', 'docs: main notes');
+    git(other, 'checkout', '-q', 'topic');
+    assert.throws(() => git(other, 'rebase', 'main'), 'expected the fixture rebase to stop on a conflict');
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.locator('#historyContextMenu [data-action="contextContinueRebase"]').waitFor({ state: 'visible' });
+    await page.locator('#historyContextMenu [data-action="contextAbortRebase"]').waitFor({ state: 'visible' });
+    await snap(page, '08-rebase-menu');
+    await page.mouse.click(5, 5);
+
     await page.close();
-    await snap(await openPage(820, 700), '04-narrow');
+    // Narrow editor splits: rows keep one-line ref pills, and the subject keeps a readable width.
+    for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
+      const narrow = await openPage(width, 700);
+      const layout = await narrow.evaluate(() => ({
+        tallestRow: Math.max(...Array.from(document.querySelectorAll('.history-row')).map(row => row.getBoundingClientRect().height)),
+        messageWidth: document.querySelector('.history-row .history-message').getBoundingClientRect().width,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        // The review buttons must be fully on screen (the controls row clips, it does not scroll).
+        releaseRight: document.querySelector('.review-release-group').getBoundingClientRect().right,
+        controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right,
+        releaseText: document.querySelector('.review-release-group').innerText.replace(/\s+/g, ' ').trim()
+      }));
+      assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
+      assert.equal(layout.releaseText.toLowerCase(), '◈ changes whole');
+      // With a Base/Target selection, the comparison pill keeps both review buttons on screen too.
+      if (width > 760) {
+        await narrow.locator('.graph-node-control').nth(1).click();
+        await narrow.locator('.graph-node-control').nth(0).click();
+        await narrow.locator('#commitCompareStatus .review-entry').waitFor();
+        const pill = await narrow.evaluate(() => ({
+          right: document.querySelector('#commitCompareStatus [data-action="clearCommitComparison"]').getBoundingClientRect().right,
+          statusRight: document.getElementById('commitCompareStatus').getBoundingClientRect().right,
+          controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right
+        }));
+        assert.ok(pill.right <= pill.statusRight && pill.statusRight <= pill.controlsRight, `${width}px: the comparison review buttons are cut off`);
+        assert.equal(await narrow.locator('.review-release-group').isVisible(), false, `${width}px: two sets of review buttons`);
+        await snap(narrow, `${name}-compare`);
+        await narrow.click('[data-action="clearCommitComparison"]');
+        await narrow.locator('.review-release-group').waitFor();
+      }
+      assert.ok(layout.tallestRow <= 80, `${width}px: a history row is ${layout.tallestRow}px tall`);
+      assert.ok(layout.messageWidth >= 150, `${width}px: the message column is only ${layout.messageWidth}px`);
+      assert.equal(layout.pageOverflow, 0, `${width}px: the page scrolls horizontally`);
+      await snap(narrow, name);
+      await narrow.close();
+    }
 
     assert.deepEqual(pageErrors, []);
     console.log(`UI snapshots written to ${path.relative(process.cwd(), outputDir)}`);

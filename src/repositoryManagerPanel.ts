@@ -11,12 +11,20 @@ import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessag
 import { GitCommandService } from './services/gitCommandService';
 import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
 import { CopilotSummaryProvider } from './services/changeSummaryService';
+import { SecurityReviewService } from './services/securityReviewService';
+import { ReviewController, ReviewRunner } from './reviewController';
+import { ReviewConsentStore } from './reviewConsent';
+
+/** Read-only documents for opening review evidence at the reviewed revision. */
+const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
 
 /** Webview requests that only read Git state and may run during a background fetch. */
 const READ_ONLY_MESSAGES = new Set([
   'getHistory', 'getCommitDetail', 'getFileDiff', 'getRepositoryRefs', 'getWorkingTreeChanges',
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
-  'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels'
+  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels',
+  // Reviews read pinned commits only; they never touch refs a background fetch updates.
+  'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence'
 ]);
 
 export class RepositoryManagerPanel {
@@ -28,6 +36,8 @@ export class RepositoryManagerPanel {
   private _disposables: vscode.Disposable[] = [];
   private _workspaceRoot: string;
   private readonly _summaryProvider = new CopilotSummaryProvider();
+  private readonly _reviews: ReviewController;
+  private readonly _evidenceDocuments = new Map<string, string>();
   private _summaryToken?: vscode.CancellationTokenSource;
   private _summaryRequest = 0;
   private _autoFetchTimer?: NodeJS.Timeout;
@@ -35,7 +45,7 @@ export class RepositoryManagerPanel {
   private _lastAutoFetch = 0;
   private _messagesInFlight = 0;
 
-  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string) {
+  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento) {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
@@ -61,20 +71,58 @@ export class RepositoryManagerPanel {
     RepositoryManagerPanel.currentPanel = new RepositoryManagerPanel(
       panel,
       extensionUri,
-      workspaceRoot
+      workspaceRoot,
+      workspaceState
     );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
-    workspaceRoot: string
+    workspaceRoot: string,
+    workspaceState?: vscode.Memento
   ) {
     this._panel = panel;
     this._extensionUri = extensionUri;
     this._workspaceRoot = workspaceRoot;
     this._gitOps = new GitOperations(workspaceRoot);
     this._prManager = new PRManager(workspaceRoot);
+
+    const consent = new ReviewConsentStore(workspaceState);
+    this._reviews = new ReviewController({
+      workspaceRoot: () => this._workspaceRoot,
+      post: async message => { await this._panel.webview.postMessage(message); },
+      ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
+      alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
+      isConsentRemembered: root => consent.has(root),
+      rememberConsent: root => consent.allow(root),
+      createRunner: root => new SecurityReviewService(new GitCommandService(root)) as unknown as ReviewRunner,
+      createCancellation: () => new vscode.CancellationTokenSource(),
+      copyText: text => Promise.resolve(vscode.env.clipboard.writeText(text)),
+      saveText: async (fileName, text) => {
+        const folder = vscode.Uri.file(this._workspaceRoot);
+        // The filter key is the label VS Code shows in the dialog.
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(folder, fileName), filters: { Markdown: ['md'] } });
+        if (!target) { return false; }
+        await vscode.workspace.fs.writeFile(target, Buffer.from(text, 'utf8'));
+        return true;
+      },
+      openText: async (content, revision, filePath, line) => {
+        // The path keeps the file extension, so VS Code picks the right language.
+        const uri = vscode.Uri.from({ scheme: REVIEW_EVIDENCE_SCHEME, path: `/${revision.slice(0, 8)}/${filePath}` });
+        this._evidenceDocuments.set(uri.toString(), content);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const position = new vscode.Position(Math.min(line, document.lineCount) - 1, 0);
+        await vscode.window.showTextDocument(document, { preview: true, selection: new vscode.Range(position, position) });
+      },
+      notify: (message, isError) => {
+        void (isError ? vscode.window.showErrorMessage(message) : vscode.window.showInformationMessage(message));
+      }
+    });
+    this._disposables.push(vscode.workspace.registerTextDocumentContentProvider(REVIEW_EVIDENCE_SCHEME, {
+      provideTextDocumentContent: uri => this._evidenceDocuments.get(uri.toString()) || ''
+    }));
 
     this._update();
 
@@ -165,6 +213,7 @@ export class RepositoryManagerPanel {
    */
   private async _switchWorkspaceFolder(folderPath: string): Promise<void> {
     this._cancelSummary();
+    this._reviews.cancel();
     const folders = vscode.workspace.workspaceFolders || [];
     const targetFolder = folders.find(f => f.uri.fsPath === folderPath);
     if (!targetFolder) {
@@ -264,6 +313,10 @@ export class RepositoryManagerPanel {
 
   private async _dispatchMessage(message: { type: string; payload?: unknown }) {
     try {
+      if (this._reviews.handles(message.type)) {
+        await this._reviews.handle(message);
+        return;
+      }
       if (message.type === 'cancelChangeSummary') {
         this._cancelSummary();
         return;
@@ -333,6 +386,7 @@ export class RepositoryManagerPanel {
 
   public dispose() {
     this._cancelSummary();
+    this._reviews.cancel();
     if (this._autoFetchTimer) {
       clearInterval(this._autoFetchTimer);
     }

@@ -35,15 +35,22 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Open a repository in Explorer.
 - Open GitHub's pull-request creation flow.
 - Restore a linked repository to the commit recorded by the parent repository.
-- Mark rebase activity to reduce accidental synchronization during an active rebase.
 - Inspect merge and release commits against their first parent, including their changed files and per-file patches.
 - Right-click a history commit to rebase the current local branch onto it, reset to it (soft, mixed, or hard), or drop a commit from the current branch. Confirm the affected commits before running; hard reset and drop create a local backup branch.
-- Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
+- Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu; these items appear only while a rebase is paused. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
+
+### Security and compliance review
+
+- Every entry point has two buttons: **Review changes** (the diff) and **Review whole** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the tree at that commit), and in **◈ Release** (since the latest release tag, or the whole current branch).
+- One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
+- Results are classified as blocked, needs attention, or no blocking findings.
+- Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
+- Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
 
 ### Linked-repository synchronization
 
 - Initialize and update Git submodules when the workspace uses them.
-- Synchronize selected or all linked repositories to their recorded commits.
+- Synchronize all linked repositories to their recorded commits, or reset one repository from its row in the Repositories list.
 - Stage updated repository pointers in the parent repository.
 
 ## Repository model
@@ -97,7 +104,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 
 ### Synchronize recorded versions
 
-Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. You can synchronize all repositories or operate on an individual repository from its card.
+Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. To reset one repository, use **Reset to recorded** on its row in the Repositories list.
 
 ## Configuration
 
@@ -124,6 +131,7 @@ Use `Cmd` instead of `Ctrl` on macOS.
 - VS Code 1.74.0 or newer
 - Git 2.20.0 or newer
 - Node.js for development only
+- For security and compliance reviews: VS Code 1.91 or newer and GitHub Copilot
 
 ## Development
 

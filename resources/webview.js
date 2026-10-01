@@ -7,7 +7,6 @@
 
   // Restore state from previous session
   const previousState = vscode.getState() || {};
-  let rebasingRepositories = new Set(previousState.rebasingRepositories || previousState.rebasingSubmodules || []);
   let repositoryData = previousState.repositoryData || previousState.submoduleData || (window.__initialRepositories || []);
   let activeDashboardRepository = previousState.activeDashboardRepository || (repositoryData[0] && repositoryData[0].path) || '.';
   let selectedDashboardCommit = previousState.selectedDashboardCommit || null;
@@ -43,6 +42,8 @@
   let historyColumnMinimums = [52, 80, 58, 54, 52];
   const runningToolbarOperations = new Set();
   let workingTreeChanges = [];
+  // Repository whose unsent commit message is kept in the Commit dialog (Escape or Cancel keep the draft).
+  let commitDraftRepository = null;
   let previewedWorkingTreeFile = null;
   let workingTreePreviewMode = 'unstaged';
   let workingTreePreviewRequestId = 0;
@@ -58,17 +59,39 @@
     document.getElementById('historyContextMenu').hidden = true;
   }
 
+  // Operation paused in each repository ('rebase', 'merge', ...), as last reported by the extension.
+  const pendingOperations = {};
+  let historyContextMenuPoint = null;
+
+  // Show menu items such as Continue/Abort rebase only while their operation is in progress.
+  function applyHistoryMenuOperation() {
+    const operation = pendingOperations[activeDashboardRepository] || null;
+    document.querySelectorAll('#historyContextMenu [data-requires-operation]').forEach(item => {
+      item.hidden = item.dataset.requiresOperation !== operation;
+    });
+  }
+
+  function positionHistoryContextMenu() {
+    const menu = document.getElementById('historyContextMenu');
+    if (!menu || !historyContextMenuPoint) return;
+    const width = window.innerWidth || document.documentElement.clientWidth;
+    const height = window.innerHeight || document.documentElement.clientHeight;
+    menu.style.left = `${Math.max(0, Math.min(historyContextMenuPoint.x, width - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(0, Math.min(historyContextMenuPoint.y, height - menu.offsetHeight - 8))}px`;
+  }
+
   function showHistoryContextMenu(element, x, y) {
     const commit = loadedHistoryCommits.find(item => item.hash === element.dataset.commit);
     if (!commit) return false;
     historyContextTarget = { repositoryPath: activeDashboardRepository, hash: commit.hash };
     const menu = document.getElementById('historyContextMenu');
+    historyContextMenuPoint = { x, y };
+    applyHistoryMenuOperation();
     menu.hidden = false;
-    const width = window.innerWidth || document.documentElement.clientWidth;
-    const height = window.innerHeight || document.documentElement.clientHeight;
-    menu.style.left = `${Math.max(0, Math.min(x, width - menu.offsetWidth - 8))}px`;
-    menu.style.top = `${Math.max(0, Math.min(y, height - menu.offsetHeight - 8))}px`;
-    menu.querySelector('button').focus();
+    positionHistoryContextMenu();
+    menu.querySelector('button:not([hidden])').focus();
+    // The cached state can be stale (e.g. a rebase continued in a terminal); refresh it while the menu is open.
+    postMessage('getPendingOperation', { repositoryPath: activeDashboardRepository });
     return true;
   }
 
@@ -177,7 +200,6 @@
   // Save state helper
   function saveState() {
     vscode.setState({
-      rebasingRepositories: Array.from(rebasingRepositories),
       repositoryData,
       activeDashboardRepository,
       selectedDashboardCommit,
@@ -335,13 +357,10 @@
       restoreChangeSummary();
     },
     refresh: () => runToolbarOperation('refresh', 'refresh'),
-    initAll: () => postMessage('initSubmodules'),
-    updateAll: () => postMessage('updateSubmodules'),
 
     pullActiveRepository: () => runToolbarOperation('pull', 'pullChanges'),
     pushActiveRepository: () => runToolbarOperation('push', 'pushChanges'),
     fetchActiveRepository: () => runToolbarOperation('fetch', 'fetchUpdates'),
-    openActiveRepository: () => postMessage('openSubmodule', { submodule: activeDashboardRepository }),
 
     loadMoreHistory: () => {
       if (historyNextOffset !== null) requestDashboardHistory(historyNextOffset, true);
@@ -452,10 +471,6 @@
 
     toggleCommitCompareNode: (el) => toggleCommitCompareNode(el.dataset.commit),
 
-    checkoutDashboardBranch: (el) => {
-      requestBranchCheckout(el.dataset.branch, el);
-    },
-
     previewWorkingTreeFile: (el) => {
       selectWorkingTreePreview(el.dataset.path);
     },
@@ -489,7 +504,8 @@
       if (previewModes) previewModes.hidden = true;
       if (previewDiff) previewDiff.innerHTML = '<span class="diff-placeholder">Select a file to preview its changes.</span>';
       if (truncated) truncated.textContent = '';
-      if (message) message.value = '';
+      if (message && commitDraftRepository !== activeDashboardRepository) message.value = '';
+      commitDraftRepository = activeDashboardRepository;
       if (result) result.textContent = '';
       if (selectAll) selectAll.checked = true;
       if (commitButton) commitButton.disabled = false;
@@ -624,136 +640,40 @@
       document.getElementById('reviewBranchModal').classList.remove('active');
     },
 
-    openCheckoutModal: (el) => {
-      const repository = el.dataset.repository;
-      document.getElementById('checkoutRepository').value = repository;
-      document.getElementById('branchSelect').innerHTML = '<option value="">Loading branches...</option>';
-      document.getElementById('checkoutModal').classList.add('active');
-      postMessage('getBranches', { submodule: repository });
+    // Every entry point offers the same two choices and starts at once: "changes" reviews the
+    // diff Base → Target, "branch" (whole) reviews every file at Target.
+    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'branch' ? 'branch' : 'changes' }),
+
+    reviewComparison: (el) => el.dataset.scope === 'branch'
+      ? startReview({ scope: 'branch', target: el.dataset.target })
+      : startReview({ scope: 'changes', base: el.dataset.base, target: el.dataset.target }),
+
+    contextReviewCommit: () => {
+      if (!historyContextTarget) return;
+      hideHistoryContextMenu();
+      // No base: the extension reviews the commit against its parent.
+      startReview({ scope: 'changes', target: historyContextTarget.hash });
     },
 
-    checkoutBranch: () => {
-      const repository = document.getElementById('checkoutRepository').value;
-      const branch = document.getElementById('branchSelect').value;
-      if (!branch) return;
-      postMessage('checkoutBranch', { submodule: repository, branch });
-      document.getElementById('checkoutModal').classList.remove('active');
+    contextReviewSnapshot: () => {
+      if (!historyContextTarget) return;
+      hideHistoryContextMenu();
+      startReview({ scope: 'branch', target: historyContextTarget.hash });
     },
 
-    openCommitModal: (el) => {
-      const repository = el.dataset.repository;
-      document.getElementById('commitRepository').value = repository;
-      document.getElementById('commitSelect').innerHTML = '<option value="">Loading commits...</option>';
-      document.getElementById('commitInput').value = '';
-      document.getElementById('commitModal').classList.add('active');
-      postMessage('getCommits', { submodule: repository });
-      postMessage('getRecordedCommit', { submodule: repository });
-    },
+    cancelReview: () => postMessage('cancelReview', {}),
 
-    checkoutCommit: () => {
-      const repository = document.getElementById('commitRepository').value;
-      const commitInput = document.getElementById('commitInput').value.trim();
-      const commitSelect = document.getElementById('commitSelect').value;
-      const commit = commitInput || commitSelect;
-      if (!commit) return;
-      postMessage('checkoutCommit', { submodule: repository, commit });
-      document.getElementById('commitModal').classList.remove('active');
-    },
-
-    useRecorded: () => {
-      const repository = document.getElementById('commitRepository').value;
-      postMessage('updateToRecorded', { submodule: repository });
-      document.getElementById('commitModal').classList.remove('active');
-    },
-
-    toggleRebaseStatus: (el) => {
-      const repository = el.dataset.repository;
-      const isCurrentlyRebasing = rebasingRepositories.has(repository);
-      if (isCurrentlyRebasing) {
-        rebasingRepositories.delete(repository);
-      } else {
-        rebasingRepositories.add(repository);
-      }
-      saveState();
-      postMessage('setRebaseStatus', { submodule: repository, isRebasing: !isCurrentlyRebasing });
-      updateRebaseUI();
-    },
-
-    pullChanges: (el) => postMessage('pullChanges', { submodule: el.dataset.repository }),
-    pushChanges: (el) => postMessage('pushChanges', { submodule: el.dataset.repository }),
-    createPR: (el) => postMessage('createPR', { submodule: el.dataset.repository }),
-    openRepository: (el) => postMessage('openSubmodule', { submodule: el.dataset.repository }),
-    stageSubmodule: (el) => postMessage('stageSubmodule', { submodule: el.dataset.repository }),
-    syncAll: () => postMessage('syncVersions', { submodules: [] }),
-
-    toggleBranches: (el) => {
-      const repository = el.dataset.repository;
-      const panelId = 'branches-' + repository.replace(/[\\/.]/g, '-');
-      const panel = document.getElementById(panelId);
-      if (!panel) return;
-
-      const card = panel.closest('.repository-card');
-      if (panel.style.display === 'none') {
-        panel.style.display = 'block';
-        panel.innerHTML = '<div class="branches-loading">Loading branches...</div>';
-        if (card) card.classList.add('branches-open');
-        postMessage('getBranches', { submodule: repository });
-      } else {
-        panel.style.display = 'none';
-        if (card) card.classList.remove('branches-open');
+    exportReview: (el) => {
+      if (reviewState && reviewState.status === 'completed') {
+        postMessage('exportReviewReport', { requestId: reviewState.requestId, format: el.dataset.format === 'save' ? 'save' : 'copy' });
       }
     },
 
-    checkoutBranchInline: (el) => {
-      const repository = el.dataset.repository;
-      const branch = el.dataset.branch;
-      if (repository && branch) {
-        // Optimistic UI: immediately highlight the selected branch
-        const panelId = 'branches-' + repository.replace(/[\\/.]/g, '-');
-        const panel = document.getElementById(panelId);
-        if (panel) {
-          panel.querySelectorAll('.branch-item').forEach(function (item) {
-            const itemBranch = item.getAttribute('data-branch');
-            if (itemBranch === branch) {
-              item.classList.add('current');
-              var icon = item.querySelector('.branch-icon');
-              if (icon) icon.textContent = '\u2713';
-              // Remove delete button from the now-current branch
-              var del = item.querySelector('.branch-delete');
-              if (del) del.remove();
-            } else {
-              item.classList.remove('current');
-              var icon2 = item.querySelector('.branch-icon');
-              if (icon2 && icon2.textContent === '\u2713') {
-                icon2.textContent = item.classList.contains('remote') ? '\u2601' : '\u238B';
-              }
-              // Restore delete button for branches that were previously current
-              if (!item.querySelector('.branch-delete')) {
-                var delBtn = document.createElement('span');
-                delBtn.className = 'branch-delete';
-                delBtn.setAttribute('data-action', 'deleteBranchInline');
-                delBtn.setAttribute('data-repository', item.getAttribute('data-repository') || repository);
-                delBtn.setAttribute('data-branch', itemBranch || '');
-                delBtn.title = 'Delete ' + (itemBranch || '');
-                delBtn.textContent = '\u2715';
-                item.appendChild(delBtn);
-              }
-            }
-          });
-        }
-        postMessage('checkoutBranch', { submodule: repository, branch });
-      }
-    },
+    showDetailTab: (el) => showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes'),
 
-    deleteBranchInline: (el) => {
-      const repository = el.dataset.repository;
-      const branch = el.dataset.branch;
-      if (!repository || !branch) return;
+    reviewEvidence: (el) => jumpToReviewEvidence(Number(el.dataset.finding), Number(el.dataset.evidence)),
 
-      const deleteRemote = confirm('Also delete the remote branch?');
-      // Server-side handler will show a VS Code modal confirmation before actually deleting
-      postMessage('deleteBranch', { submodule: repository, branch, deleteRemote });
-    }
+    syncAll: () => postMessage('syncVersions', { submodules: [] })
   };
 
   function updateCommitSelectionCount() {
@@ -918,7 +838,8 @@
     const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned'
       && repository.atRecordedCommit === true).length;
     if (summary) {
-      summary.textContent = linked.length ? `${aligned}/${linked.length} aligned` : '';
+      // The word is hidden in a narrow sidebar; the tooltip keeps the full meaning.
+      summary.innerHTML = linked.length ? `${aligned}/${linked.length}<span class="alignment-word"> aligned</span>` : '';
       summary.classList.toggle('drifted', aligned < linked.length);
     }
 
@@ -1042,7 +963,7 @@
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span>${reviewButtons(commitCompareSelection[0], commitCompareSelection[1])} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
   }
 
   function loadParentCommitDetail(commitHash) {
@@ -1105,7 +1026,8 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      status.innerHTML = `${source === 'branches' ? 'Branches' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision)}`;
+      status.innerHTML = `<span class="compare-range">${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     }
     saveState();
     postMessage('getCommitDetail', {
@@ -1492,7 +1414,12 @@
     if (count) count.textContent = String((detail.files || []).length);
     if (files) {
       files.innerHTML = (detail.files || []).map(file => `<button class="changed-file-item status-${escapeHtml(file.status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(file.path)}"><span class="file-status-glyph">${changedFileGlyph(file.status)}</span><span class="file-path"><strong>${escapeHtml(file.path.split('/').pop())}</strong><small>${escapeHtml(file.oldPath ? `${file.oldPath} → ${file.path}` : file.path)}</small></span><span>›</span></button>`).join('') || '<div class="dashboard-empty">No changed files.</div>';
-      const firstFile = files.querySelector('.changed-file-item');
+      const jumpFile = pendingEvidenceJump && (detail.files || []).find(file =>
+        file.path === pendingEvidenceJump.path || file.oldPath === pendingEvidenceJump.path);
+      const firstFile = jumpFile
+        ? Array.from(files.querySelectorAll('.changed-file-item')).find(item => item.dataset.path === jumpFile.path)
+        : files.querySelector('.changed-file-item');
+      if (!jumpFile) pendingEvidenceJump = null;
       if (firstFile) actions.selectChangedFile(firstFile);
     }
   }
@@ -1504,6 +1431,7 @@
     if (!diff) return;
     diff.innerHTML = renderPatchLines(payload.patch);
     if (truncated) truncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
+    highlightEvidenceLine();
   }
 
   function renderDashboardError(payload) {
@@ -1553,17 +1481,6 @@
       }
       el = el.parentElement;
     }
-
-    // If no action was found, check if the click was on a repository row to toggle branches.
-    const row = e.target.closest('.repository-row');
-    if (row) {
-      const card = row.closest('.repository-card');
-      if (card && card.dataset.path) {
-        // Don't toggle if clicked on a button, input, or link
-        if (e.target.closest('.row-actions') || e.target.closest('.row-checkbox')) return;
-        actions.toggleBranches({ dataset: { repository: card.dataset.path } });
-      }
-    }
   });
 
   document.body.addEventListener('contextmenu', function (e) {
@@ -1607,35 +1524,6 @@
       const folderPath = e.target.value;
       if (folderPath) {
         postMessage('switchWorkspaceFolder', { folderPath });
-      }
-    });
-  }
-
-  // Handle search input
-  const searchInput = document.getElementById('searchInput');
-  if (searchInput) {
-    searchInput.addEventListener('input', function (e) {
-      const query = (e.target.value || '').toLowerCase();
-      document.querySelectorAll('.repository-card').forEach(function (row) {
-        const name = (row.dataset.name || '').toLowerCase();
-        const path = (row.dataset.path || '').toLowerCase();
-        const branchEl = row.querySelector('.branch');
-        const branch = branchEl ? (branchEl.textContent || '').toLowerCase() : '';
-        const visible = name.includes(query) || path.includes(query) || branch.includes(query);
-        row.style.display = visible ? 'block' : 'none';
-      });
-    });
-  }
-
-  function updateRebaseUI() {
-    document.querySelectorAll('.repository-card').forEach(row => {
-      const path = row.dataset.path;
-      const rebaseIndicator = row.querySelector('.rebase-indicator');
-
-      if (rebasingRepositories.has(path)) {
-        if (rebaseIndicator) rebaseIndicator.style.display = 'inline-block';
-      } else {
-        if (rebaseIndicator) rebaseIndicator.style.display = 'none';
       }
     });
   }
@@ -1730,114 +1618,38 @@
           if (result) result.textContent = message.payload.message || '';
           if (commitButton) commitButton.disabled = false;
           if (message.payload.success) {
+            const draft = document.getElementById('commitMessage');
+            if (draft) draft.value = '';
             document.getElementById('commitChangesModal').classList.remove('active');
           }
           break;
         }
 
-        case 'branches': {
-          const branchSelect = document.getElementById('branchSelect');
-          const branches = (message.payload && message.payload.branches) || [];
-          const branchRepository = message.payload && message.payload.submodule;
-
-          // Update checkout modal if open - just list all branches
-          if (branchSelect) {
-            if (branches.length === 0) {
-              branchSelect.innerHTML = '<option value="">No branches found</option>';
-            } else {
-              branchSelect.innerHTML = branches.map(b =>
-                `<option value="${b.name}">${b.name}${b.isCurrent ? ' (current)' : ''}${b.isRemote ? ' (remote)' : ''}</option>`
-              ).join('');
-            }
+        case 'reviewProgress':
+        case 'reviewCompleted':
+        case 'reviewFailed': {
+          const payload = message.payload || {};
+          if (!reviewState || payload.requestId !== reviewState.requestId) break;
+          if (message.type === 'reviewProgress') {
+            reviewState.progress = payload.message;
+            // The extension resolves the release range, so it reports the labels it settled on.
+            if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
+          } else if (message.type === 'reviewCompleted') {
+            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context });
+          } else {
+            Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
           }
-
-          // Update inline branches panel if exists
-          if (branchRepository) {
-            const panelId = 'branches-' + branchRepository.replace(/[\\/.]/g, '-');
-            const panel = document.getElementById(panelId);
-            if (panel) {
-              if (branches.length === 0) {
-                panel.innerHTML = '<div class="branches-loading">No branches found</div>';
-              } else {
-                const filterId = 'branch-filter-' + branchRepository.replace(/[\\/.]/g, '-');
-                const listId = 'branch-list-' + branchRepository.replace(/[\\/.]/g, '-');
-                const countId = 'branch-count-' + branchRepository.replace(/[\\/.]/g, '-');
-                panel.innerHTML =
-                  '<div class="branches-filter">' +
-                    '<input type="text" class="branches-filter-input" id="' + filterId + '" placeholder="Filter branches..." />' +
-                    '<span class="branches-filter-count" id="' + countId + '">' + branches.length + ' branches</span>' +
-                  '</div>' +
-                  '<div class="branches-list" id="' + listId + '">' + branches.map(b => {
-                  let tags = '';
-                  if (b.isRemote) {
-                    tags = '<span class="branch-tag tag-remote">remote</span>';
-                    if (b.hasLocal) {
-                      tags += '<span class="branch-tag tag-local">local</span>';
-                    }
-                  } else {
-                    tags = '<span class="branch-tag tag-local">local</span>';
-                    if (b.hasRemote) {
-                      tags += '<span class="branch-tag tag-remote">remote</span>';
-                    }
-                  }
-                  return `<div class="branch-item ${b.isCurrent ? 'current' : ''}" data-branch-name="${b.name.toLowerCase()}" data-repository="${branchRepository}" data-branch="${b.name}">
-                    <span class="branch-icon" data-action="checkoutBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Checkout ${b.name}">${b.isCurrent ? '\u2713' : (b.isRemote ? '\u2601' : '\u238B')}</span>
-                    <span class="branch-name" data-action="checkoutBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Checkout ${b.name}">${b.name}</span>
-                    <span class="branch-tags">${tags}</span>
-                    ${!b.isCurrent ? `<span class="branch-delete" data-action="deleteBranchInline" data-repository="${branchRepository}" data-branch="${b.name}" title="Delete ${b.name}">\u2715</span>` : ''}
-                  </div>`;
-                }).join('') + '</div>';
-
-                // Attach filter event
-                const filterInput = document.getElementById(filterId);
-                const branchListEl = document.getElementById(listId);
-                const countEl = document.getElementById(countId);
-                if (filterInput && branchListEl) {
-                  filterInput.addEventListener('input', function () {
-                    const query = filterInput.value.toLowerCase();
-                    let visibleCount = 0;
-                    branchListEl.querySelectorAll('.branch-item').forEach(function (item) {
-                      const name = item.getAttribute('data-branch-name') || '';
-                      const visible = name.includes(query);
-                      item.style.display = visible ? 'flex' : 'none';
-                      if (visible) visibleCount++;
-                    });
-                    if (countEl) {
-                      countEl.textContent = visibleCount + ' of ' + branches.length + ' branches';
-                    }
-                  });
-                }
-              }
-            }
-          }
+          renderReviewPanel();
           break;
         }
 
-        case 'commits': {
-          const commitSelect = document.getElementById('commitSelect');
-          const commits = (message.payload && message.payload.commits) || [];
-          if (commitSelect) {
-            commitSelect.innerHTML = '<option value="">Select a commit...</option>' +
-              commits.map(c =>
-                `<option value="${c.hash}">${c.shortHash} - ${c.message.substring(0, 50)}</option>`
-              ).join('');
-          }
-          break;
-        }
-
-        case 'recordedCommit': {
-          const recordedInfo = document.getElementById('recordedCommitInfo');
-          if (recordedInfo && message.payload) {
-            const { recordedCommit, currentCommit, isMatching } = message.payload;
-            const statusClass = isMatching ? 'success' : 'warning';
-            const statusIcon = isMatching ? '\u2713' : '\u26A0';
-            recordedInfo.innerHTML = `
-              <div class="recorded-commit-status ${statusClass}">
-                <span>${statusIcon} Parent expects: <code>${recordedCommit ? recordedCommit.substring(0, 8) : 'N/A'}</code></span>
-                <span>Current: <code>${currentCommit ? currentCommit.substring(0, 8) : 'N/A'}</code></span>
-                ${!isMatching ? '<span class="mismatch-warning">Commits do not match!</span>' : ''}
-              </div>
-            `;
+        case 'pendingOperationLoaded': {
+          const payload = message.payload || {};
+          pendingOperations[payload.repositoryPath] = payload.operation || null;
+          const menu = document.getElementById('historyContextMenu');
+          if (menu && !menu.hidden && payload.repositoryPath === activeDashboardRepository) {
+            applyHistoryMenuOperation();
+            positionHistoryContextMenu();
           }
           break;
         }
@@ -1846,6 +1658,9 @@
           // Paths such as '.' now point into a different folder: forget everything tied to the old one.
           repositoryData = (message.payload && message.payload.repositories) || [];
           dashboardHistoryState = {};
+          Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
+          reviewState = null;
+          renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
           activeDashboardRepository = null;
@@ -1933,11 +1748,6 @@
           renderDashboardError(message.payload);
           break;
 
-        case 'rebaseStatusUpdated': {
-          updateRebaseUI();
-          break;
-        }
-
         case 'branchCreationResults': {
           const createdBranch = message.payload.branchName;
           const results = message.payload.results;
@@ -2011,41 +1821,7 @@
           aheadCount.hidden = repository.ahead <= 0;
         }
       }
-      const row = document.querySelector(`.repository-card[data-path="${repository.path}"]`);
-      if (row) {
-        const statusEl = row.querySelector('.row-status');
-        if (statusEl) {
-          statusEl.className = 'row-status status-' + repository.status;
-          statusEl.innerHTML = getStatusIcon(repository.status) + ' ' + repository.status.toUpperCase();
-        }
-
-        const branchEl = row.querySelector('.branch');
-        if (branchEl) branchEl.textContent = repository.currentBranch || '(detached)';
-
-        const commitEl = row.querySelector('.commit');
-        if (commitEl) commitEl.textContent = repository.currentCommit || 'N/A';
-
-        const syncEl = row.querySelector('.row-sync');
-        if (syncEl) {
-          let syncHtml = '';
-          if (repository.ahead > 0) syncHtml += `<span class="ahead">\u2191${repository.ahead}</span>`;
-          if (repository.behind > 0) syncHtml += `<span class="behind">\u2193${repository.behind}</span>`;
-          syncEl.innerHTML = syncHtml;
-        }
-      }
     });
-  }
-
-  function getStatusIcon(status) {
-    const icons = {
-      'clean': '\u2713',
-      'modified': '\u25CF',
-      'uninitialized': '\u25CB',
-      'detached': '\u25CE',
-      'conflict': '\u26A0',
-      'unknown': '?'
-    };
-    return icons[status] || '?';
   }
 
   // Branch naming tool functions
@@ -2285,13 +2061,6 @@
     });
   }
 
-  // Ensure all branch panels are closed on load
-  function closeAllBranchPanels() {
-    document.querySelectorAll('.branches-panel').forEach(panel => {
-      panel.style.display = 'none';
-    });
-  }
-
   const dashboardSearch = document.getElementById('dashboardSearch');
   const summaryModelSelect = document.getElementById('summaryModelSelect');
   if (summaryModelSelect) {
@@ -2376,11 +2145,18 @@
     });
     let remaining = available - next.reduce((sum, width) => sum + width, 0);
     if (remaining < 0) {
-      for (const index of [1, 2, 3, 4, 0]) {
-        const reduction = Math.min(-remaining, next[index] - historyColumnMinimums[index]);
-        next[index] -= reduction;
-        remaining += reduction;
-        if (remaining >= 0) break;
+      // When space runs out, give up Author and Date before Message, then Commit, then Graph.
+      // Message keeps a proportional share here (it is the column people read), but a user can
+      // still drag it narrower: the resize minimum stays historyColumnMinimums.
+      const messageShare = Math.max(historyColumnMinimums[1], Math.floor(available * .35));
+      // Second pass drops the Message share so the columns always fit.
+      for (const floorOf of [index => (index === 1 ? messageShare : historyColumnMinimums[index]), index => historyColumnMinimums[index]]) {
+        for (const index of [2, 3, 1, 4, 0]) {
+          if (remaining >= 0) break;
+          const reduction = Math.max(0, Math.min(-remaining, next[index] - floorOf(index)));
+          next[index] -= reduction;
+          remaining += reduction;
+        }
       }
     } else {
       next[1] += remaining;
@@ -2540,11 +2316,238 @@
     });
   }
 
+  // ---- Security and compliance review (MVP 2, W6–W7) ----
+  // The extension runs the review and classifies readiness; this code only collects input
+  // and displays results, so the dashboard and the exported report always agree.
+  let reviewRequestId = 0;
+  let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
+  let pendingEvidenceJump = null;
+  const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+  function reviewButtons(base, target) {
+    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}" title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}" title="Review every file at Target"><span class="review-entry-word">Review </span>whole</button></span>`;
+  }
+
+  // Starts at once with security and team policy, using the model chosen for AI summaries;
+  // the extension asks for consent until it is allowed for the repository.
+  function startReview(options) {
+    if (!activeDashboardRepository) return;
+    const scope = options.scope;
+    const kind = options.kind || 'review';
+    reviewRequestId += 1;
+    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+      baseLabel: scope === 'changes' ? (options.base || '') : '', targetLabel: options.target || '', status: 'running' };
+    renderReviewPanel();
+    showDetailTab('review');
+    postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+      baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
+      baseLabel: scope === 'changes' && options.base ? shortRevision(options.base) : undefined,
+      targetLabel: options.target ? shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
+  }
+
+  function showDetailTab(tab) {
+    const review = tab === 'review';
+    const panel = document.getElementById('reviewPanel');
+    const content = document.getElementById('commitContent');
+    if (panel) panel.hidden = !review;
+    if (content) content.hidden = review;
+    document.querySelectorAll('#detailTabs [role="tab"]').forEach(button => {
+      button.setAttribute('aria-selected', button.dataset.tab === tab ? 'true' : 'false');
+    });
+  }
+
+  function reviewEvidenceButton(evidence, findingIndex, evidenceIndex) {
+    const lines = evidence.startLine === evidence.endLine ? `${evidence.startLine}` : `${evidence.startLine}-${evidence.endLine}`;
+    return `<button type="button" class="review-evidence" data-action="reviewEvidence" data-finding="${findingIndex}" data-evidence="${evidenceIndex}" title="${escapeHtml(`${evidence.side} ${shortRevision(evidence.revision)}`)}">${escapeHtml(`${evidence.path}:${lines}`)}</button>`;
+  }
+
+  function renderReviewFinding(finding, index) {
+    const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
+    return `<li class="review-finding severity-${escapeHtml(finding.severity)}">
+      <div class="review-finding-head"><span class="review-severity">${escapeHtml(finding.severity)}</span><span>${escapeHtml(finding.category)}${rule}</span><span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span><span class="review-confidence">confidence ${escapeHtml(finding.confidence)}</span></div>
+      <p>${escapeHtml(finding.explanation)}</p>
+      <dl><dt>Impact</dt><dd>${escapeHtml(finding.impact)}</dd><dt>Suggested action</dt><dd>${escapeHtml(finding.suggestedAction)}</dd></dl>
+      <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
+    </li>`;
+  }
+
+  function renderReviewItems(items, findings) {
+    if (!items.length) return '<p class="review-none">None.</p>';
+    return `<ul class="review-list">${items.map(item => {
+      const index = item.findingId ? findings.findIndex(finding => finding.id === item.findingId) : -1;
+      return index >= 0
+        ? renderReviewFinding(findings[index], index)
+        : `<li class="review-item"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`;
+    }).join('')}</ul>`;
+  }
+
+  function renderReviewPanel() {
+    const tabs = document.getElementById('detailTabs');
+    const badge = document.getElementById('reviewTabBadge');
+    const title = document.getElementById('reviewTitle');
+    const meta = document.getElementById('reviewMeta');
+    const status = document.getElementById('reviewStatus');
+    const body = document.getElementById('reviewBody');
+    if (!tabs || !body) return;
+    tabs.hidden = !reviewState;
+    if (!reviewState) {
+      showDetailTab('changes');
+      return;
+    }
+    const running = reviewState.status === 'running';
+    const done = reviewState.status === 'completed';
+    document.getElementById('cancelReviewButton').hidden = !running;
+    document.getElementById('copyReviewButton').hidden = !done;
+    document.getElementById('saveReviewButton').hidden = !done;
+    // A release review's ends are unknown until the extension has resolved them.
+    const release = reviewState.kind === 'release';
+    const target = reviewState.targetLabel || (release ? 'current branch' : '');
+    const label = reviewState.scope === 'changes'
+      ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
+      : `Whole: ${target}`;
+    title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
+    meta.textContent = label;
+    if (running) {
+      if (badge) badge.textContent = '…';
+      status.textContent = reviewState.progress || 'Starting…';
+      body.innerHTML = '<div class="dashboard-loading">Reviewing with Copilot. Large reviews can take several minutes.</div>';
+      return;
+    }
+    if (!done) {
+      if (badge) badge.textContent = '';
+      status.textContent = '';
+      body.innerHTML = `<div class="${reviewState.cancelled ? 'dashboard-empty' : 'dashboard-error'}">${escapeHtml(reviewState.message || 'Review failed.')}</div>`;
+      return;
+    }
+    const { result, readiness } = reviewState;
+    const findings = result.findings || [];
+    if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
+    status.textContent = result.modelId ? `Model ${result.modelId}` : '';
+    const banner = {
+      blocked: `Blocked: ${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`,
+      needs_attention: `Needs attention: ${readiness.attention.length} item${readiness.attention.length === 1 ? '' : 's'}`,
+      no_blocking_findings: 'No blocking findings in what was reviewed'
+    }[readiness.status];
+    const coverage = result.coverage;
+    const gaps = coverage.skipped.map(item => ['skipped', item]).concat(coverage.failed.map(item => ['failed', item]));
+    const policy = (result.policyResults || []).length
+      ? `<section><h4>Policy</h4><table class="review-policy"><thead><tr><th>Rule</th><th>Result</th><th>Reason</th></tr></thead><tbody>${result.policyResults.map(item =>
+        `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
+      : '';
+    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
+      <section><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
+      <section><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${policy}
+      <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
+        ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
+      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}`;
+  }
+
+  // Show the cited line in the dashboard diff when the review compared two commits of the
+  // active repository; otherwise open the file at the reviewed revision in an editor.
+  function jumpToReviewEvidence(findingIndex, evidenceIndex) {
+    if (!reviewState || !reviewState.result) return;
+    const finding = reviewState.result.findings[findingIndex];
+    const evidence = finding && finding.evidence[evidenceIndex];
+    if (!evidence) return;
+    const request = reviewState.result.request;
+    if (request.scope === 'changes' && request.baseSha && reviewState.repositoryPath === activeDashboardRepository) {
+      pendingEvidenceJump = { path: evidence.path, side: evidence.side, line: evidence.startLine };
+      showDetailTab('changes');
+      commitCompareSelection = [];
+      updateCommitCompareUI();
+      loadComparison(request.baseSha, request.targetSha, 'review');
+      return;
+    }
+    postMessage('openReviewEvidence', { repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
+  }
+
+  function highlightEvidenceLine() {
+    if (!pendingEvidenceJump) return;
+    const column = pendingEvidenceJump.side === 'base' ? 0 : 1;
+    const row = Array.from(document.querySelectorAll('#dashboardDiff .diff-line')).find(line => {
+      const number = line.querySelectorAll('.diff-ln')[column];
+      return number && number.textContent === String(pendingEvidenceJump.line);
+    });
+    pendingEvidenceJump = null;
+    if (!row) return;
+    document.querySelectorAll('#dashboardDiff .diff-line-highlight').forEach(line => line.classList.remove('diff-line-highlight'));
+    row.classList.add('diff-line-highlight');
+    row.scrollIntoView({ block: 'center' });
+  }
+
+  // Dialog behaviour for every .modal-overlay: move focus in when it opens, keep Tab inside,
+  // close on Escape through the dialog's own close button, and return focus when it closes.
+  const FOCUSABLE = 'button, [href], input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+  const dialogReturnFocus = new Map();
+
+  function focusableIn(container) {
+    return Array.from(container.querySelectorAll(FOCUSABLE))
+      .filter(element => !element.disabled && element.getClientRects().length > 0);
+  }
+
+  function topOpenDialog() {
+    const open = Array.from(document.querySelectorAll('.modal-overlay.active'));
+    return open.length ? open[open.length - 1] : null;
+  }
+
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    new MutationObserver(() => {
+      const isOpen = overlay.classList.contains('active');
+      if (isOpen && !dialogReturnFocus.has(overlay)) {
+        dialogReturnFocus.set(overlay, document.activeElement);
+        // Wait a frame so fields shown while opening (e.g. by prefix rules) are focusable.
+        requestAnimationFrame(() => {
+          if (!overlay.classList.contains('active') || overlay.contains(document.activeElement)) return;
+          const preferred = overlay.querySelector('[data-initial-focus]');
+          const target = preferred && preferred.getClientRects().length
+            ? preferred
+            : focusableIn(overlay).find(element => !element.classList.contains('modal-close'));
+          if (target) target.focus();
+        });
+      } else if (!isOpen && dialogReturnFocus.has(overlay)) {
+        const opener = dialogReturnFocus.get(overlay);
+        dialogReturnFocus.delete(overlay);
+        if (opener && opener.isConnected && typeof opener.focus === 'function' && !topOpenDialog()) opener.focus();
+      }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  document.addEventListener('keydown', function (event) {
+    const dialog = topOpenDialog();
+    if (!dialog) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      // An open dropdown inside the dialog closes first.
+      const dropdown = dialog.querySelector('.branch-dropdown.open');
+      if (dropdown) {
+        dropdown.classList.remove('open');
+        return;
+      }
+      const close = dialog.querySelector('.modal-close');
+      if (close) close.click();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const items = focusableIn(dialog);
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!dialog.contains(document.activeElement)) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
   // Initialize UI on load
   setupHistoryColumnResizers();
   setupDashboardSplitters();
-  updateRebaseUI();
-  closeAllBranchPanels();
   if (repositoryData.length > 0) {
     if (!getRepository(activeDashboardRepository)) activeDashboardRepository = repositoryData[0].path;
     activateDashboardRepository(activeDashboardRepository);
