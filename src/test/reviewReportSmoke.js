@@ -1,0 +1,55 @@
+const assert = require('node:assert/strict');
+const { assessReadiness, renderReviewMarkdown } = require('../../out/services/reviewReport.js');
+
+const target = 'b'.repeat(40);
+const base = 'a'.repeat(40);
+const finding = (id, severity, status, extra = {}) => ({
+  id, category: 'security', severity, confidence: 'medium', status,
+  explanation: `Finding ${id}`, impact: 'Impact', suggestedAction: 'Fix it',
+  evidence: [{ revision: target, path: 'src/app.js', side: 'target', startLine: 3, endLine: 3 }], ...extra
+});
+const result = (overrides = {}) => ({
+  request: { repositoryPath: '.', targetSha: target, baseSha: base, scope: 'changes', categories: ['security'] },
+  findings: [], policyResults: [], policyStatus: 'not_configured', modelId: 'mock:1', limitations: [],
+  coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true }, ...overrides
+});
+
+// Clean result.
+assert.equal(assessReadiness(result()).status, 'no_blocking_findings');
+
+// Verified critical/high and violations block; hypotheses and lower severities need attention,
+// most severe first, so a critical hypothesis leads the attention list without blocking.
+const mixed = assessReadiness(result({
+  findings: [finding('low-verified', 'low', 'verified'), finding('high-verified', 'high', 'verified'),
+    finding('crit-hypo', 'critical', 'hypothesis'), finding('med-verified', 'medium', 'verified')],
+  policyResults: [{ ruleId: 'R-1', status: 'violation', reason: 'eval', evidence: [] },
+    { ruleId: 'R-2', status: 'insufficient_evidence', reason: 'manual', evidence: [] },
+    { ruleId: 'R-3', status: 'pass', reason: 'ok', evidence: [] }]
+}));
+assert.equal(mixed.status, 'blocked');
+assert.deepEqual(mixed.blocking.map(item => item.findingId || item.ruleId), ['high-verified', 'R-1']);
+assert.equal(mixed.attention[0].findingId, 'crit-hypo');
+assert.deepEqual(mixed.attention.map(item => item.findingId || item.ruleId).sort(), ['R-2', 'crit-hypo', 'low-verified', 'med-verified']);
+
+// Unconfigured compliance and incomplete coverage are never silently clean.
+const gaps = assessReadiness(result({
+  request: { ...result().request, categories: ['security', 'compliance'] },
+  coverage: { surveyed: 3, analyzed: 1, skipped: [{ path: 'x', reason: 'budget' }], failed: [], complete: false }
+}));
+assert.equal(gaps.status, 'needs_attention');
+assert.deepEqual(gaps.attention.map(item => item.kind).sort(), ['coverage', 'policy']);
+
+// Markdown names the range and readiness, and escapes untrusted model text.
+const markdown = renderReviewMarkdown(result({
+  findings: [finding('x', 'high', 'verified', { explanation: '<script>alert(1)</script> a|b' })],
+  policyResults: [{ ruleId: 'R-1', status: 'violation', reason: 'pipe | in reason', evidence: [] }],
+  policyStatus: 'configured', request: { ...result().request, policyHash: 'c'.repeat(64) }
+}), { kind: 'release', repositoryName: 'repo', baseLabel: '1.5.0', targetLabel: 'main', generatedAt: new Date('2026-10-01T00:00:00Z') });
+assert.match(markdown, /^# Release review: 1\.5\.0 → main/);
+assert.match(markdown, /\*\*Readiness: Blocked\*\* \(2 blocking/);
+assert.match(markdown, /`1\.5\.0` \(aaaaaaaa\) → `main` \(bbbbbbbb\)/);
+assert.doesNotMatch(markdown, /<script>/);
+assert.match(markdown, /&lt;script&gt;/);
+assert.match(markdown, /pipe \\\| in reason/);
+assert.match(markdown, /No findings does not mean no vulnerabilities/);
+console.log('Review report smoke passed');

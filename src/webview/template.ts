@@ -202,6 +202,48 @@ function renderModals(repositories: RepositoryInfo[]): string {
       </div>
     </div>
 
+    <!-- Security and compliance review -->
+    <div class="modal-overlay" id="reviewModal">
+      <div class="modal review-modal" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
+        <div class="modal-header">
+          <div class="modal-heading"><span class="modal-title" id="reviewModalTitle">Security and compliance review</span><span>Copilot reviews the selected commits. Results are advisory.</span></div>
+          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="reviewModal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <fieldset class="form-group review-scope">
+            <legend class="form-label">What to review</legend>
+            <label><input type="radio" name="reviewScope" value="changes" checked> Changes between two revisions</label>
+            <label><input type="radio" name="reviewScope" value="branch"> Every file at one revision</label>
+          </fieldset>
+          <div class="branch-form-grid branch-form-grid-equal">
+            <div class="form-group" id="reviewBaseGroup">
+              <label class="form-label" for="reviewBase">Base</label>
+              <input type="text" class="form-input" id="reviewBase" list="reviewRevisions" placeholder="Parent commit" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="reviewTarget">Target</label>
+              <input type="text" class="form-input" id="reviewTarget" list="reviewRevisions" autocomplete="off">
+            </div>
+          </div>
+          <datalist id="reviewRevisions"></datalist>
+          <fieldset class="form-group review-categories">
+            <legend class="form-label">Check</legend>
+            <label><input type="checkbox" id="reviewSecurity" checked> Security</label>
+            <label><input type="checkbox" id="reviewCompliance" checked> Team policy (compliance)</label>
+          </fieldset>
+          <div class="form-group">
+            <label class="form-label" for="reviewModel">Model</label>
+            <select class="form-select" id="reviewModel"><option value="">Default Copilot model</option></select>
+          </div>
+          <div class="form-hint" id="reviewHint" role="status"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" data-action="closeModal" data-modal="reviewModal">Cancel</button>
+          <button class="btn btn-primary" data-action="startReview" id="startReviewButton">Start review</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Compare Branches Modal -->
     <div class="modal-overlay" id="branchCompareModal">
       <div class="modal branch-compare-modal" role="dialog" aria-modal="true" aria-labelledby="branchCompareModalTitle">
@@ -309,6 +351,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
+            <button class="compare-branches-button review-release-button" type="button" data-action="openReleaseReview" title="Review the changes since the last release with Copilot">◈ Review release</button>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
@@ -332,7 +375,23 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="loadSummaryModels" id="loadSummaryModelsButton">Load models</button><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
-            <div class="commit-content">
+            <div class="detail-tabs" id="detailTabs" role="tablist" aria-label="Detail view" hidden>
+              <button type="button" role="tab" id="detailTabChanges" data-action="showDetailTab" data-tab="changes" aria-selected="true" aria-controls="commitContent">Changes</button>
+              <button type="button" role="tab" id="detailTabReview" data-action="showDetailTab" data-tab="review" aria-selected="false" aria-controls="reviewPanel">Review <span class="detail-tab-badge" id="reviewTabBadge"></span></button>
+            </div>
+            <div class="review-panel" id="reviewPanel" role="tabpanel" aria-labelledby="detailTabReview" hidden>
+              <div class="review-header">
+                <div class="review-title"><strong id="reviewTitle">Review</strong><span id="reviewMeta"></span></div>
+                <div class="review-actions">
+                  <span class="review-status" id="reviewStatus" role="status" aria-live="polite"></span>
+                  <button type="button" class="btn" data-action="cancelReview" id="cancelReviewButton" hidden>Cancel</button>
+                  <button type="button" class="btn" data-action="exportReview" data-format="copy" id="copyReviewButton" hidden>Copy Markdown</button>
+                  <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>
+                </div>
+              </div>
+              <div class="review-body" id="reviewBody"></div>
+            </div>
+            <div class="commit-content" id="commitContent">
               <div class="changed-files-panel">
                 <div class="panel-title"><span>Changed files</span><span id="changedFileCount">0</span></div>
                 <div class="changed-files-list" id="dashboardChangedFiles"></div>
@@ -387,6 +446,9 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
+    <div class="history-context-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="contextReviewCommit">Review this commit…</button>
+    <button type="button" role="menuitem" data-action="contextReviewSnapshot">Review files at this commit…</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>

@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reset a single linked repository to the commit the parent records from its row in the Repositories list, after a confirmation that explains the resulting detached HEAD. It resets only the commit you confirmed and needs no network when that commit is already local.
 - Show old and new file line numbers in commit and working-tree diffs.
 - Fetch all repositories in the background every `repositoryManager.autoFetchInterval` minutes (default 5) while the dashboard is visible, so ahead/behind counts stay current. Background fetches never prune; only the Fetch button removes deleted remote branches. The existing `repositoryManager.autoFetch` setting, which previously had no effect, turns this on or off.
+- Run a security and compliance review with GitHub Copilot from the dashboard: from a Base/Target selection, a branch comparison, or the history menu (one commit, or every file at a commit). Results open in a Review tab with findings, policy results, coverage and limitations; evidence links jump to the cited line in the diff.
+- **Review release** reviews everything since the latest release tag and reports readiness: blocked (verified critical or high findings, policy violations), needs attention, or no blocking findings. Copy or save the report as Markdown.
 - Add `npm run test:ui`, which renders the dashboard in headless Chromium against a fixture workspace and writes screenshots to `ui-snapshots/`.
 
 ### Changed

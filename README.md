@@ -39,6 +39,13 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Right-click a history commit to rebase the current local branch onto it, reset to it (soft, mixed, or hard), or drop a commit from the current branch. Confirm the affected commits before running; hard reset and drop create a local backup branch.
 - Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu; these items appear only while a rebase is paused. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
 
+### Security and compliance review
+
+- Review the changes between two commits, a branch comparison, one commit, or every file at a commit with a GitHub Copilot model.
+- **Review release** checks everything since the latest release tag and classifies the result as blocked, needs attention, or no blocking findings.
+- Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
+- Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
+
 ### Linked-repository synchronization
 
 - Initialize and update Git submodules when the workspace uses them.
@@ -96,7 +103,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 
 ### Synchronize recorded versions
 
-Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. You can synchronize all repositories or operate on an individual repository from its card.
+Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. To reset one repository, use **Reset to recorded** on its row in the Repositories list.
 
 ## Configuration
 
@@ -123,6 +130,7 @@ Use `Cmd` instead of `Ctrl` on macOS.
 - VS Code 1.74.0 or newer
 - Git 2.20.0 or newer
 - Node.js for development only
+- For security and compliance reviews: VS Code 1.91 or newer and GitHub Copilot
 
 ## Development
 

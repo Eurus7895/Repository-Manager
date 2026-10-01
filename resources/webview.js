@@ -640,6 +640,56 @@
       document.getElementById('reviewBranchModal').classList.remove('active');
     },
 
+    openReleaseReview: () => openReviewDialog({ kind: 'release', scope: 'changes' }),
+
+    // From the Base/Target commit selection or a branch comparison.
+    reviewComparison: (el) => openReviewDialog({ scope: 'changes', base: el.dataset.base, target: el.dataset.target }),
+
+    contextReviewCommit: () => {
+      if (!historyContextTarget) return;
+      hideHistoryContextMenu();
+      openReviewDialog({ scope: 'changes', target: historyContextTarget.hash,
+        hint: 'Leave Base empty to review this commit against its parent.' });
+    },
+
+    contextReviewSnapshot: () => {
+      if (!historyContextTarget) return;
+      hideHistoryContextMenu();
+      openReviewDialog({ scope: 'branch', target: historyContextTarget.hash });
+    },
+
+    startReview: () => {
+      const scope = (document.querySelector('input[name="reviewScope"]:checked') || {}).value || 'changes';
+      const base = document.getElementById('reviewBase').value.trim();
+      const target = document.getElementById('reviewTarget').value.trim();
+      const categories = [['reviewSecurity', 'security'], ['reviewCompliance', 'compliance']]
+        .filter(([id]) => document.getElementById(id).checked).map(([, category]) => category);
+      const hint = document.getElementById('reviewHint');
+      if (!target) { hint.textContent = 'Enter the target revision to review.'; return; }
+      if (!categories.length) { hint.textContent = 'Choose security, team policy, or both.'; return; }
+      reviewRequestId += 1;
+      reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind: reviewDialogKind,
+        baseLabel: scope === 'changes' ? base : '', targetLabel: target, status: 'running' };
+      document.getElementById('reviewModal').classList.remove('active');
+      renderReviewPanel();
+      showDetailTab('review');
+      postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope,
+        baseRevision: scope === 'changes' ? base : undefined, targetRevision: target, categories, kind: reviewDialogKind,
+        baseLabel: base || undefined, targetLabel: target, modelId: document.getElementById('reviewModel').value || undefined });
+    },
+
+    cancelReview: () => postMessage('cancelReview', {}),
+
+    exportReview: (el) => {
+      if (reviewState && reviewState.status === 'completed') {
+        postMessage('exportReviewReport', { requestId: reviewState.requestId, format: el.dataset.format === 'save' ? 'save' : 'copy' });
+      }
+    },
+
+    showDetailTab: (el) => showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes'),
+
+    reviewEvidence: (el) => jumpToReviewEvidence(Number(el.dataset.finding), Number(el.dataset.evidence)),
+
     syncAll: () => postMessage('syncVersions', { submodules: [] })
   };
 
@@ -930,7 +980,7 @@
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      : `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" class="compare-review-button" data-action="reviewComparison" data-base="${escapeHtml(commitCompareSelection[0])}" data-target="${escapeHtml(commitCompareSelection[1])}">Review</button> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
   }
 
   function loadParentCommitDetail(commitHash) {
@@ -993,7 +1043,8 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      status.innerHTML = `${source === 'branches' ? 'Branches' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      const reviewButton = source === 'review' ? '' : ` <button type="button" class="compare-review-button" data-action="reviewComparison" data-base="${escapeHtml(baseRevision)}" data-target="${escapeHtml(targetRevision)}">Review</button>`;
+      status.innerHTML = `${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     }
     saveState();
     postMessage('getCommitDetail', {
@@ -1380,7 +1431,12 @@
     if (count) count.textContent = String((detail.files || []).length);
     if (files) {
       files.innerHTML = (detail.files || []).map(file => `<button class="changed-file-item status-${escapeHtml(file.status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(file.path)}"><span class="file-status-glyph">${changedFileGlyph(file.status)}</span><span class="file-path"><strong>${escapeHtml(file.path.split('/').pop())}</strong><small>${escapeHtml(file.oldPath ? `${file.oldPath} → ${file.path}` : file.path)}</small></span><span>›</span></button>`).join('') || '<div class="dashboard-empty">No changed files.</div>';
-      const firstFile = files.querySelector('.changed-file-item');
+      const jumpFile = pendingEvidenceJump && (detail.files || []).find(file =>
+        file.path === pendingEvidenceJump.path || file.oldPath === pendingEvidenceJump.path);
+      const firstFile = jumpFile
+        ? Array.from(files.querySelectorAll('.changed-file-item')).find(item => item.dataset.path === jumpFile.path)
+        : files.querySelector('.changed-file-item');
+      if (!jumpFile) pendingEvidenceJump = null;
       if (firstFile) actions.selectChangedFile(firstFile);
     }
   }
@@ -1392,6 +1448,7 @@
     if (!diff) return;
     diff.innerHTML = renderPatchLines(payload.patch);
     if (truncated) truncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
+    highlightEvidenceLine();
   }
 
   function renderDashboardError(payload) {
@@ -1506,6 +1563,12 @@
             selectedSummaryModelId = '';
           }
           select.value = selectedSummaryModelId;
+          const reviewModels = document.getElementById('reviewModel');
+          if (reviewModels) {
+            const chosen = reviewModels.value;
+            reviewModels.innerHTML = select.innerHTML;
+            reviewModels.value = Array.from(reviewModels.options || []).some(option => option.value === chosen) ? chosen : '';
+          }
           const button = document.getElementById('loadSummaryModelsButton');
           button.disabled = false;
           button.textContent = 'Reload models';
@@ -1585,6 +1648,33 @@
           break;
         }
 
+        case 'reviewProgress':
+        case 'reviewCompleted':
+        case 'reviewFailed': {
+          const payload = message.payload || {};
+          if (!reviewState || payload.requestId !== reviewState.requestId) break;
+          if (message.type === 'reviewProgress') {
+            reviewState.progress = payload.message;
+          } else if (message.type === 'reviewCompleted') {
+            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context });
+          } else {
+            Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
+          }
+          renderReviewPanel();
+          break;
+        }
+
+        case 'reviewDefaultsLoaded': {
+          reviewDefaults = message.payload || null;
+          const list = document.getElementById('reviewRevisions');
+          if (list && reviewDefaults) {
+            const names = [reviewDefaults.currentBranch].concat(reviewDefaults.branches || [], reviewDefaults.tags || []);
+            list.innerHTML = Array.from(new Set(names.filter(Boolean))).map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
+          }
+          applyReleaseDefaults();
+          break;
+        }
+
         case 'pendingOperationLoaded': {
           const payload = message.payload || {};
           pendingOperations[payload.repositoryPath] = payload.operation || null;
@@ -1601,6 +1691,9 @@
           repositoryData = (message.payload && message.payload.repositories) || [];
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
+          reviewState = null;
+          reviewDefaults = null;
+          renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
           activeDashboardRepository = null;
@@ -2255,6 +2348,183 @@
       if (filesPanelWidth > 0) applyFilesPanelWidth(filesPanelWidth);
     });
   }
+
+  // ---- Security and compliance review (MVP 2, W6–W7) ----
+  // The extension runs the review and classifies readiness; this code only collects input
+  // and displays results, so the dashboard and the exported report always agree.
+  let reviewRequestId = 0;
+  let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
+  let reviewDialogKind = 'review';
+  let reviewDefaults = null;
+  let pendingEvidenceJump = null;
+  const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+
+  function setReviewScope(scope) {
+    document.querySelectorAll('input[name="reviewScope"]').forEach(input => { input.checked = input.value === scope; });
+    const baseGroup = document.getElementById('reviewBaseGroup');
+    if (baseGroup) baseGroup.hidden = scope !== 'changes';
+  }
+
+  function applyReleaseDefaults() {
+    if (reviewDialogKind !== 'release' || !reviewDefaults || reviewDefaults.repositoryPath !== activeDashboardRepository) return;
+    const base = document.getElementById('reviewBase');
+    const target = document.getElementById('reviewTarget');
+    const hint = document.getElementById('reviewHint');
+    if (base && !base.value && reviewDefaults.latestReleaseTag) base.value = reviewDefaults.latestReleaseTag;
+    if (target && !target.value) target.value = reviewDefaults.currentBranch || 'HEAD';
+    if (hint) {
+      hint.textContent = reviewDefaults.latestReleaseTag
+        ? `Changes since the latest release tag, ${reviewDefaults.latestReleaseTag}. Change either end if needed.`
+        : 'No release tag like 1.5.0 or v1.5.0 was found on this branch; enter a base revision.';
+    }
+  }
+
+  function openReviewDialog(options) {
+    reviewDialogKind = options.kind || 'review';
+    setReviewScope(options.scope || 'changes');
+    document.getElementById('reviewBase').value = options.base || '';
+    document.getElementById('reviewTarget').value = options.target || '';
+    document.getElementById('reviewHint').textContent = options.hint || '';
+    document.getElementById('reviewModalTitle').textContent = reviewDialogKind === 'release'
+      ? 'Release review' : 'Security and compliance review';
+    document.getElementById('reviewModal').classList.add('active');
+    postMessage('getReviewDefaults', { repositoryPath: activeDashboardRepository });
+    const models = document.getElementById('reviewModel');
+    if (models && models.options.length <= 1) postMessage('loadSummaryModels', {});
+    applyReleaseDefaults();
+  }
+
+  function showDetailTab(tab) {
+    const review = tab === 'review';
+    const panel = document.getElementById('reviewPanel');
+    const content = document.getElementById('commitContent');
+    if (panel) panel.hidden = !review;
+    if (content) content.hidden = review;
+    document.querySelectorAll('#detailTabs [role="tab"]').forEach(button => {
+      button.setAttribute('aria-selected', button.dataset.tab === tab ? 'true' : 'false');
+    });
+  }
+
+  function reviewEvidenceButton(evidence, findingIndex, evidenceIndex) {
+    const lines = evidence.startLine === evidence.endLine ? `${evidence.startLine}` : `${evidence.startLine}-${evidence.endLine}`;
+    return `<button type="button" class="review-evidence" data-action="reviewEvidence" data-finding="${findingIndex}" data-evidence="${evidenceIndex}" title="${escapeHtml(`${evidence.side} ${shortRevision(evidence.revision)}`)}">${escapeHtml(`${evidence.path}:${lines}`)}</button>`;
+  }
+
+  function renderReviewFinding(finding, index) {
+    const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
+    return `<li class="review-finding severity-${escapeHtml(finding.severity)}">
+      <div class="review-finding-head"><span class="review-severity">${escapeHtml(finding.severity)}</span><span>${escapeHtml(finding.category)}${rule}</span><span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span><span class="review-confidence">confidence ${escapeHtml(finding.confidence)}</span></div>
+      <p>${escapeHtml(finding.explanation)}</p>
+      <dl><dt>Impact</dt><dd>${escapeHtml(finding.impact)}</dd><dt>Suggested action</dt><dd>${escapeHtml(finding.suggestedAction)}</dd></dl>
+      <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
+    </li>`;
+  }
+
+  function renderReviewItems(items, findings) {
+    if (!items.length) return '<p class="review-none">None.</p>';
+    return `<ul class="review-list">${items.map(item => {
+      const index = item.findingId ? findings.findIndex(finding => finding.id === item.findingId) : -1;
+      return index >= 0
+        ? renderReviewFinding(findings[index], index)
+        : `<li class="review-item"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`;
+    }).join('')}</ul>`;
+  }
+
+  function renderReviewPanel() {
+    const tabs = document.getElementById('detailTabs');
+    const badge = document.getElementById('reviewTabBadge');
+    const title = document.getElementById('reviewTitle');
+    const meta = document.getElementById('reviewMeta');
+    const status = document.getElementById('reviewStatus');
+    const body = document.getElementById('reviewBody');
+    if (!tabs || !body) return;
+    tabs.hidden = !reviewState;
+    if (!reviewState) {
+      showDetailTab('changes');
+      return;
+    }
+    const running = reviewState.status === 'running';
+    const done = reviewState.status === 'completed';
+    document.getElementById('cancelReviewButton').hidden = !running;
+    document.getElementById('copyReviewButton').hidden = !done;
+    document.getElementById('saveReviewButton').hidden = !done;
+    const label = reviewState.scope === 'changes'
+      ? `${reviewState.baseLabel || 'parent'} → ${reviewState.targetLabel}`
+      : `all files at ${reviewState.targetLabel}`;
+    title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
+    meta.textContent = label;
+    if (running) {
+      if (badge) badge.textContent = '…';
+      status.textContent = reviewState.progress || 'Waiting for confirmation…';
+      body.innerHTML = '<div class="dashboard-loading">Reviewing with Copilot. Large reviews can take several minutes.</div>';
+      return;
+    }
+    if (!done) {
+      if (badge) badge.textContent = '';
+      status.textContent = '';
+      body.innerHTML = `<div class="${reviewState.cancelled ? 'dashboard-empty' : 'dashboard-error'}">${escapeHtml(reviewState.message || 'Review failed.')}</div>`;
+      return;
+    }
+    const { result, readiness } = reviewState;
+    const findings = result.findings || [];
+    if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
+    status.textContent = result.modelId ? `Model ${result.modelId}` : '';
+    const banner = {
+      blocked: `Blocked: ${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`,
+      needs_attention: `Needs attention: ${readiness.attention.length} item${readiness.attention.length === 1 ? '' : 's'}`,
+      no_blocking_findings: 'No blocking findings in what was reviewed'
+    }[readiness.status];
+    const coverage = result.coverage;
+    const gaps = coverage.skipped.map(item => ['skipped', item]).concat(coverage.failed.map(item => ['failed', item]));
+    const policy = (result.policyResults || []).length
+      ? `<section><h4>Policy</h4><table class="review-policy"><thead><tr><th>Rule</th><th>Result</th><th>Reason</th></tr></thead><tbody>${result.policyResults.map(item =>
+        `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
+      : '';
+    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
+      <section><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
+      <section><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${policy}
+      <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
+        ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
+      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}`;
+  }
+
+  // Show the cited line in the dashboard diff when the review compared two commits of the
+  // active repository; otherwise open the file at the reviewed revision in an editor.
+  function jumpToReviewEvidence(findingIndex, evidenceIndex) {
+    if (!reviewState || !reviewState.result) return;
+    const finding = reviewState.result.findings[findingIndex];
+    const evidence = finding && finding.evidence[evidenceIndex];
+    if (!evidence) return;
+    const request = reviewState.result.request;
+    if (request.scope === 'changes' && request.baseSha && reviewState.repositoryPath === activeDashboardRepository) {
+      pendingEvidenceJump = { path: evidence.path, side: evidence.side, line: evidence.startLine };
+      showDetailTab('changes');
+      commitCompareSelection = [];
+      updateCommitCompareUI();
+      loadComparison(request.baseSha, request.targetSha, 'review');
+      return;
+    }
+    postMessage('openReviewEvidence', { repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
+  }
+
+  function highlightEvidenceLine() {
+    if (!pendingEvidenceJump) return;
+    const column = pendingEvidenceJump.side === 'base' ? 0 : 1;
+    const row = Array.from(document.querySelectorAll('#dashboardDiff .diff-line')).find(line => {
+      const number = line.querySelectorAll('.diff-ln')[column];
+      return number && number.textContent === String(pendingEvidenceJump.line);
+    });
+    pendingEvidenceJump = null;
+    if (!row) return;
+    document.querySelectorAll('#dashboardDiff .diff-line-highlight').forEach(line => line.classList.remove('diff-line-highlight'));
+    row.classList.add('diff-line-highlight');
+    row.scrollIntoView({ block: 'center' });
+  }
+
+  document.querySelectorAll('input[name="reviewScope"]').forEach(input => {
+    input.addEventListener('change', () => setReviewScope(input.value));
+  });
 
   // Dialog behaviour for every .modal-overlay: move focus in when it opens, keep Tab inside,
   // close on Escape through the dialog's own close button, and return focus when it closes.

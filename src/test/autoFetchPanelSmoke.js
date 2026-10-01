@@ -41,7 +41,8 @@ const fakeVscode = {
   workspace: {
     workspaceFolders: [],
     getConfiguration: () => ({ get: (key, fallback) => (key in settings ? settings[key] : fallback) }),
-    onDidChangeConfiguration: noopEvent
+    onDidChangeConfiguration: noopEvent,
+    registerTextDocumentContentProvider: noopEvent
   },
   lm: { selectChatModels: async () => [] },
   LanguageModelChatMessage: { User: text => text },

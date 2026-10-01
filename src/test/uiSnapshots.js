@@ -31,6 +31,7 @@ Module._load = function (request, parent, isMain) {
 };
 const { GitOperations } = require(path.join(root, 'out/gitOperations'));
 const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessageHandler'));
+const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { getHtmlForWebview } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
@@ -78,6 +79,7 @@ function createFixture() {
   commitFile(parent, 'src/app.txt', lines.join('\n') + '\n', 'feat: add app');
   for (const name of ['lib-a', 'lib-b']) git(parent, 'submodule', 'add', '-q', path.join(base, 'origins', name), name);
   git(parent, 'commit', '-q', '-m', 'chore: add linked repositories');
+  git(parent, 'tag', '1.0.0'); // the release a release review starts from
   git(parent, 'checkout', '-q', '-b', 'feature/dashboard');
   // Long ref names like real-world ones exercise ref-pill wrapping in narrow layouts.
   git(parent, 'branch', 'claude/review-dashboard-layout-at-narrow-widths');
@@ -102,6 +104,9 @@ function createFixture() {
 function startServer(workspace, otherFolder) {
   let ops = new GitOperations(workspace);
   let hostBusy = 0; // host messages still being handled
+  let currentRoot = workspace;
+  // The review runs through the real ReviewController with a scripted runner instead of Copilot.
+  const reviewProbe = { runner: null, copied: null, opened: null };
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -124,11 +129,29 @@ function startServer(workspace, otherFolder) {
       get gitOps() { return ops; }, prManager: {}, workspaceRoot: workspace, refresh,
       reloadDashboardHistory: async repositoryPaths => post({ type: 'reloadDashboardHistory', payload: { repositoryPaths } })
     };
+    const reviews = new ReviewController({
+      workspaceRoot: () => currentRoot,
+      post,
+      confirm: async () => true,
+      createRunner: () => ({ review: (request, token, progress) => reviewProbe.runner(request, token, progress) }),
+      createCancellation: () => {
+        const token = { isCancellationRequested: false };
+        return { token, cancel() { token.isCancellationRequested = true; }, dispose() {} };
+      },
+      copyText: async text => { reviewProbe.copied = text; },
+      saveText: async () => true,
+      openText: async (content, revision, filePath, line) => { reviewProbe.opened = { revision, filePath, line }; },
+      notify: () => {}
+    });
     await page.exposeFunction('__postToHost', async message => {
       hostBusy++;
       try {
-      if (message.type === 'switchWorkspaceFolder') {
+      if (reviews.handles(message.type)) {
+        await reviews.handle(message);
+      } else if (message.type === 'switchWorkspaceFolder') {
         // Same as RepositoryManagerPanel._switchWorkspaceFolder.
+        reviews.cancel();
+        currentRoot = message.payload.folderPath;
         ops = new GitOperations(message.payload.folderPath);
         await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
       } else if (message.type === 'refresh') {
@@ -146,6 +169,7 @@ function startServer(workspace, otherFolder) {
     try {
       if (req.url === '/') {
         ops = new GitOperations(workspace); // every page starts in the main workspace folder
+        currentRoot = workspace;
         const html = getHtmlForWebview(await listRepositories(), {
           graphScriptUri: resource('/resources/historyGraph.js'),
           scriptUri: resource('/resources/webview.js'),
@@ -171,12 +195,12 @@ function startServer(workspace, otherFolder) {
       res.end(String(error));
     }
   });
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect, isHostIdle: () => hostBusy === 0 })));
+  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, connect, isHostIdle: () => hostBusy === 0, reviewProbe })));
 }
 
 async function main() {
   const { base, parent, other } = createFixture();
-  const { server, connect, isHostIdle } = await startServer(parent, other);
+  const { server, connect, isHostIdle, reviewProbe } = await startServer(parent, other);
   const url = `http://127.0.0.1:${server.address().port}/`;
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
@@ -275,6 +299,59 @@ async function main() {
     assert.equal(await page.inputValue('#commitMessage'), 'wip: draft message');
     await page.keyboard.press('Escape');
     await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
+
+    // W6–W7: release review from the latest release tag, results, evidence jump and export.
+    reviewProbe.runner = async (request, token, progress) => {
+      progress('Reviewing component 1/1: src');
+      const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
+      const finding = (id, severity, status, explanation) => ({ id, category: 'security', severity, confidence: 'high', status,
+        explanation, impact: 'Untrusted input reaches a sensitive sink', suggestedAction: 'Validate the input first', evidence });
+      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1',
+        findings: [finding('high-verified', 'high', 'verified', 'Changed line passes input to eval'),
+          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input')],
+        limitations: ['Scripted review used by the UI test.'],
+        coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
+    };
+    await page.click('[data-action="openReleaseReview"]');
+    await page.locator('#reviewModal.active').waitFor();
+    await page.waitForFunction(() => document.getElementById('reviewBase').value === '1.0.0');
+    assert.equal(await page.inputValue('#reviewTarget'), 'feature/dashboard');
+    assert.match(await page.textContent('#reviewHint'), /latest release tag, 1\.0\.0/);
+    await page.uncheck('#reviewCompliance');
+    await snap(page, '09-release-review-dialog');
+    await page.click('[data-action="startReview"]');
+    await page.locator('.review-readiness.readiness-blocked').waitFor();
+    assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
+    const blocking = await page.locator('.review-body section').nth(0).textContent();
+    const attention = await page.locator('.review-body section').nth(1).locator('.review-finding').first().textContent();
+    assert.match(blocking, /Changed line passes input to eval/);
+    assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
+    assert.match(attention, /hypothesis/);
+    await snap(page, '10-review-results');
+    await page.click('[data-action="exportReview"][data-format="copy"]');
+    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
+    assert.match(reviewProbe.copied || '', /^# Release review: 1\.0\.0 → feature\/dashboard/);
+    // Evidence opens the cited line in the dashboard diff.
+    await page.locator('.review-body section').nth(0).locator('[data-action="reviewEvidence"]').first().click();
+    await page.locator('#dashboardDiff .diff-line-highlight').waitFor();
+    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true');
+    assert.equal(await page.locator('#dashboardDiff .diff-line-highlight .diff-ln').nth(1).textContent(), '3');
+    await snap(page, '11-review-evidence');
+
+    // A whole-branch review from the history menu hides the base field.
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.click('#historyContextMenu [data-action="contextReviewSnapshot"]');
+    await page.locator('#reviewModal.active').waitFor();
+    assert.equal(await page.isChecked('input[name="reviewScope"][value="branch"]'), true);
+    assert.equal(await page.isVisible('#reviewBase'), false);
+    // Cancelling a running review.
+    reviewProbe.runner = (request, token) => new Promise((resolve, reject) => {
+      const timer = setInterval(() => { if (token.isCancellationRequested) { clearInterval(timer); reject(new Error('Cancelled')); } }, 20);
+    });
+    await page.click('[data-action="startReview"]');
+    await page.locator('#cancelReviewButton').waitFor({ state: 'visible' });
+    await page.click('#cancelReviewButton');
+    await page.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
