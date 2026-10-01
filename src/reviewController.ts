@@ -68,7 +68,7 @@ export class ReviewController {
   private active?: { requestId: number; repositoryPath: string };
   private readonly reviews = new Map<number, StoredReview>();
   /** At most one auto-fix: being proposed (`running`) or waiting for Apply/Discard (`proposal`). */
-  private fix?: { requestId: number; workspaceRoot: string; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
+  private fix?: { requestId: number; workspaceRoot: string; findingIds: string[]; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
 
   constructor(private readonly host: ReviewControllerHost) {}
 
@@ -240,6 +240,14 @@ export class ReviewController {
     if (payload.decision === null || payload.decision === undefined) { delete next[findingId]; }
     else { next[findingId] = { decision: payload.decision, reason: payload.reason } as ReviewTriage[string]; }
     stored.triage = normalizeTriage(stored.result, next);
+    // A proposal fixes exactly the findings marked when it was requested: changing which findings
+    // need fixing makes it stale, whether it is still being proposed or waiting for Apply.
+    const fix = this.fix;
+    if (fix && fix.requestId === requestId && (fix.findingIds.includes(findingId) || stored.triage[findingId]?.decision === 'fix')) {
+      this.cancelFixQuietly();
+      await this.host.post({ type: 'reviewFixFailed', payload: { requestId,
+        message: 'The findings marked "Needs fix" changed, so the proposed fix was discarded. Propose it again.' } });
+    }
     await this.host.post({ type: 'reviewTriageUpdated', payload: { requestId, triage: stored.triage,
       readiness: assessReadiness(stored.result, stored.triage) } });
   }
@@ -269,7 +277,8 @@ export class ReviewController {
     }
     this.cancelFixQuietly();
     const cancellation = this.host.createCancellation();
-    const fix: NonNullable<ReviewController['fix']> = { requestId, workspaceRoot: stored.workspaceRoot, running: cancellation };
+    const findingIds = Object.entries(stored.triage).filter(([, triage]) => triage.decision === 'fix').map(([id]) => id);
+    const fix: NonNullable<ReviewController['fix']> = { requestId, workspaceRoot: stored.workspaceRoot, findingIds, running: cancellation };
     this.fix = fix;
     const reply = async (type: string, extra: Record<string, unknown>) => {
       if (this.fix === fix) { await this.host.post({ type, payload: { requestId, ...extra } }); }
@@ -280,7 +289,6 @@ export class ReviewController {
       return done;
     };
     try {
-      const findingIds = Object.entries(stored.triage).filter(([, triage]) => triage.decision === 'fix').map(([id]) => id);
       const service = new ReviewFixService(this.git(stored.workspaceRoot));
       // Fail fast on the selection and the working tree before asking for consent or calling the model.
       const { root, findings } = await service.prepare({ repositoryPath: stored.result.request.repositoryPath, result: stored.result,

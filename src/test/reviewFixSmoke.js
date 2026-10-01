@@ -24,6 +24,10 @@ async function main() {
     git('init', '-q', '-b', 'main');
     write('app.js', 'const input = read();\neval(input);\nmodule.exports = input;\n');
     write('util.js', 'exports.x = 1;\n');
+    fs.mkdirSync(path.join(repo, 'src'));
+    write('src/paths.js', "const target = 'a/paths.js';\neval(target);\n");
+    fs.writeFileSync(path.join(repo, 'latin1.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+    write('bom.js', '\uFEFFeval(x);\n');
     git('add', '.');
     git('commit', '-qm', 'one');
     const head = git('rev-parse', 'HEAD');
@@ -101,6 +105,51 @@ async function main() {
     assert.equal(git('diff', '--name-only'), 'app.js');
     git('checkout', '--', 'app.js');
 
+    // The preview relabels only the header: content mentioning a/<name> is shown as written.
+    response = { edits: [{ path: 'src/paths.js', find: 'eval(target);', replace: "require('./' + target);" },
+      { path: 'src/paths.js', find: "'a/paths.js'", replace: "'b/paths.js'" }] };
+    const nested = await propose({ result: { ...result, findings: [finding('n1', 'src/paths.js', 2)] }, findingIds: ['n1'] });
+    const patch = nested.files[0].patch;
+    assert.match(patch, /^--- a\/src\/paths\.js$/m);
+    assert.match(patch, /^\+\+\+ b\/src\/paths\.js$/m);
+    assert.match(patch, /^-const target = 'a\/paths\.js';$/m, 'hunk content was relabelled');
+    assert.match(patch, /^\+const target = 'b\/paths\.js';$/m, 'hunk content was relabelled');
+
+    // Encodings: a non-UTF-8 file is refused rather than silently re-encoded; a BOM survives.
+    await rejects(propose({ result: { ...result, findings: [finding('l1', 'latin1.txt', 1)] }, findingIds: ['l1'] }), /not UTF-8 text/);
+    response = { edits: [{ path: 'bom.js', find: 'eval(x);', replace: 'JSON.parse(x);' }] };
+    const bom = await propose({ result: { ...result, findings: [finding('m1', 'bom.js', 1)] }, findingIds: ['m1'] });
+    await service.apply(bom, () => false);
+    assert.deepEqual([...fs.readFileSync(path.join(repo, 'bom.js')).subarray(0, 3)], [0xef, 0xbb, 0xbf], 'the BOM was lost');
+    assert.equal(read('bom.js'), '\uFEFFJSON.parse(x);\n');
+    git('checkout', '--', 'bom.js');
+
+    // A malformed entry in the edits array is rejected on its own; the valid edits still apply.
+    response = { edits: [null, 7, [], { path: 'app.js', find: 'eval(input);', replace: 'JSON.parse(input);' }] };
+    const tolerant = await propose();
+    assert.equal(tolerant.rejected.filter(item => /not an object/.test(item)).length, 3);
+    assert.match(tolerant.files[0].after, /JSON\.parse/);
+
+    // Apply is all or nothing: when the second file cannot be replaced, the first is restored.
+    response = { edits: [{ path: 'app.js', find: 'eval(input);', replace: 'JSON.parse(input);' },
+      { path: 'util.js', find: 'exports.x = 1;', replace: 'exports.x = 2;' }] };
+    const pair = await propose({ findingIds: ['f1', 'f2'] });
+    assert.deepEqual(pair.files.map(file => file.path), ['app.js', 'util.js']);
+    let renames = 0;
+    const flaky = new ReviewFixService(new GitCommandService(repo), {
+      writeFile: (file, data, mode) => fs.writeFileSync(file, data, mode === undefined ? undefined : { mode }),
+      rename: (from, to) => { if (++renames === 2) { throw new Error('disk full'); } fs.renameSync(from, to); },
+      remove: file => fs.rmSync(file, { force: true })
+    });
+    await rejects(flaky.apply(pair, () => false), /disk full.*nothing was changed/);
+    assert.equal(read('app.js'), 'const input = read();\neval(input);\nmodule.exports = input;\n', 'the first file kept the partial fix');
+    assert.equal(read('util.js'), 'exports.x = 1;\n');
+    assert.equal(git('status', '--porcelain'), '', 'apply left files or temporary copies behind');
+    // The same proposal still applies once the failure is gone.
+    assert.deepEqual(await service.apply(pair, () => false), ['app.js', 'util.js']);
+    assert.equal(git('status', '--porcelain'), 'M app.js\n M util.js'.trim());
+    git('checkout', '--', 'app.js', 'util.js');
+
     // Through the controller: consent, preview, apply, refresh.
     const posts = [];
     const questions = [];
@@ -150,6 +199,20 @@ async function main() {
     assert.deepEqual(proposed.files.map(file => file.path), ['app.js']);
     assert.deepEqual(proposed.findingIds, ['f1']);
     assert.equal(read('app.js').includes('eval(input)'), true);
+    // Changing the triage of a finding in the proposal discards it: Apply then does nothing.
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: null } });
+    assert.match(of('reviewFixFailed').at(-1).payload.message, /changed, so the proposed fix was discarded/);
+    await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
+    assert.equal(of('reviewFixApplied').length, 0, 'applied a fix for a finding no longer marked Needs fix');
+    assert.equal(read('app.js').includes('eval(input)'), true);
+    // Marking another finding Needs fix also makes a proposal stale.
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fix' } });
+    await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
+    assert.equal(of('reviewFixProposed').length, 2);
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'other', decision: 'fix' } });
+    assert.match(of('reviewFixFailed').at(-1).payload.message, /discarded/);
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'other', decision: null } });
+    await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
     await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
     assert.deepEqual(of('reviewFixApplied').at(-1).payload.paths, ['app.js']);
     assert.equal(refreshed, 1);

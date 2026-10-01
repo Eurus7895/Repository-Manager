@@ -46,6 +46,22 @@ export interface FixProposal {
 /** A refusal the user can act on (as opposed to an unexpected failure). */
 export class FixError extends Error {}
 
+/** The file operations Apply uses; replaceable so tests can make a write fail part-way. */
+export interface FixFileOps {
+  writeFile(filePath: string, data: Buffer, mode?: number): void;
+  rename(from: string, to: string): void;
+  remove(filePath: string): void;
+}
+
+const nodeFileOps: FixFileOps = {
+  writeFile: (filePath, data, mode) => fs.writeFileSync(filePath, data, mode === undefined ? undefined : { mode }),
+  rename: (from, to) => fs.renameSync(from, to),
+  remove: filePath => fs.rmSync(filePath, { force: true })
+};
+
+// Lossless: invalid UTF-8 throws instead of becoming U+FFFD, and a BOM stays in the text so it is written back.
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
 const short = (sha: string) => sha.slice(0, 8);
 
 function safeRelativePath(filePath: string): boolean {
@@ -60,7 +76,7 @@ function occurrences(haystack: string, needle: string): number {
 }
 
 export class ReviewFixService {
-  constructor(private readonly git: GitCommandService) {}
+  constructor(private readonly git: GitCommandService, private readonly files: FixFileOps = nodeFileOps) {}
 
   /** Files a set of findings cites at the reviewed commit (the code a fix would change). */
   static citedPaths(result: ReviewResult, findings: ReviewFinding[]): string[] {
@@ -97,7 +113,10 @@ export class ReviewFixService {
       try { stat = fs.statSync(absolute); } catch { throw new FixError(`${filePath} no longer exists in the working tree.`); }
       if (!stat.isFile()) { throw new FixError(`${filePath} is not a regular file.`); }
       if (stat.size > MAX_FIX_FILE_BYTES) { throw new FixError(`${filePath} is larger than ${MAX_FIX_FILE_BYTES / 1024} KB; fix it by hand.`); }
-      contents.set(filePath, fs.readFileSync(absolute, 'utf8'));
+      const bytes = fs.readFileSync(absolute);
+      if (bytes.includes(0)) { throw new FixError(`${filePath} looks like a binary file; auto-fix only edits text.`); }
+      try { contents.set(filePath, UTF8.decode(bytes)); }
+      catch { throw new FixError(`${filePath} is not UTF-8 text; auto-fix only edits UTF-8 files, so fix it by hand.`); }
     }
     return { headSha, contents };
   }
@@ -141,6 +160,7 @@ export class ReviewFixService {
     if (Array.isArray(response.edits) && response.edits.length > MAX_EDITS) { rejected.push(`Only the first ${MAX_EDITS} edits were considered.`); }
     const after = new Map(contents);
     for (const raw of edits) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { rejected.push('An edit was ignored: it is not an object.'); continue; }
       const edit = raw as Record<string, unknown>;
       const filePath = typeof edit.path === 'string' ? edit.path : '';
       if (!after.has(filePath)) { rejected.push(`An edit to ${filePath || 'an unnamed file'} was ignored: it is not one of the cited files.`); continue; }
@@ -166,14 +186,47 @@ export class ReviewFixService {
     return { repositoryPath, headSha, findingIds: findings.map(finding => finding.id), files, notes, rejected, modelId };
   }
 
-  /** Writes a proposal after checking nothing it was based on has changed since. */
+  /**
+   * Writes a proposal after checking nothing it was based on has changed since. All or nothing:
+   * every file is first written beside its target, then the copies replace the targets; if any
+   * step fails, the files already replaced get their previous content back.
+   */
   async apply(proposal: FixProposal, isDirtyInEditor: (absolutePath: string) => boolean): Promise<string[]> {
     const root = this.git.resolveRepositoryPath(proposal.repositoryPath);
     const { contents } = await this.checkWorkingTree(root, proposal.headSha, proposal.files.map(file => file.path), isDirtyInEditor);
     for (const file of proposal.files) {
       if (contents.get(file.path) !== file.before) { throw new FixError(`${file.path} changed since the fix was proposed. Propose the fix again.`); }
+      try { fs.accessSync(path.join(root, file.path), fs.constants.W_OK); }
+      catch { throw new FixError(`${file.path} is read-only; nothing was changed.`); }
     }
-    for (const file of proposal.files) { fs.writeFileSync(path.join(root, file.path), file.after, 'utf8'); }
+    const staged: Array<{ file: FixFile; target: string; temp: string }> = [];
+    const removeTemps = () => staged.forEach(item => { try { this.files.remove(item.temp); } catch { /* best effort */ } });
+    try {
+      proposal.files.forEach((file, index) => {
+        const target = path.join(root, file.path);
+        const temp = `${target}.repository-manager-fix-${process.pid}-${index}`;
+        staged.push({ file, target, temp });
+        this.files.writeFile(temp, Buffer.from(file.after, 'utf8'), fs.statSync(target).mode & 0o7777);
+      });
+    } catch (error) {
+      removeTemps();
+      throw new FixError(`Could not write the fix (${error instanceof Error ? error.message : String(error)}); nothing was changed.`);
+    }
+    const replaced: typeof staged = [];
+    try {
+      for (const item of staged) {
+        this.files.rename(item.temp, item.target);
+        replaced.push(item);
+      }
+    } catch (error) {
+      const unrestored: string[] = [];
+      for (const item of replaced) {
+        try { this.files.writeFile(item.target, Buffer.from(item.file.before, 'utf8')); } catch { unrestored.push(item.file.path); }
+      }
+      removeTemps();
+      throw new FixError(`Could not apply the fix (${error instanceof Error ? error.message : String(error)}); ` +
+        (unrestored.length ? `could not restore ${unrestored.join(', ')}, check them.` : 'nothing was changed.'));
+    }
     return proposal.files.map(file => file.path);
   }
 
@@ -188,7 +241,11 @@ export class ReviewFixService {
       fs.writeFileSync(path.join(directory, 'b', name), after);
       const patch = await this.git.execGitRaw(['diff', '--no-index', '--no-prefix', '--no-color', '--no-ext-diff', '--', `a/${name}`, `b/${name}`],
         directory, 10000, true);
-      return patch.split(`a/${name}`).join(`a/${filePath}`).split(`b/${name}`).join(`b/${filePath}`);
+      // Relabel the header only: hunk lines are file content and may mention a/<name> themselves.
+      const lines = patch.split('\n');
+      const firstHunk = lines.findIndex(line => line.startsWith('@@'));
+      return lines.map((line, index) => (firstHunk >= 0 && index >= firstHunk) || !/^(diff --git |--- |\+\+\+ )/.test(line) ? line
+        : line.split(`a/${name}`).join(`a/${filePath}`).split(`b/${name}`).join(`b/${filePath}`)).join('\n');
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
