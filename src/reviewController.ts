@@ -6,14 +6,15 @@
  */
 
 import * as path from 'path';
-import { ReviewRequest, ReviewResult } from './types';
+import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } from './types';
 import { GitCommandService } from './services/gitCommandService';
-import { assessReadiness, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
+import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
+import { FixError, FixModel, FixProposal, ReviewFixService } from './services/reviewFixService';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
 
 export interface ReviewRunner {
-  review(request: ReviewRequest, token: CancellationLike, progress: (message: string) => void, modelId?: string): Promise<ReviewResult>;
+  review(request: ReviewRequest, token: CancellationLike, progress: ReviewProgressCallback, modelId?: string): Promise<ReviewResult>;
 }
 
 export interface ReviewControllerHost {
@@ -33,16 +34,23 @@ export interface ReviewControllerHost {
   saveText(defaultFileName: string, text: string): Promise<boolean>;
   openText(content: string, revision: string, filePath: string, line: number): Promise<void>;
   notify(message: string, isError?: boolean): void;
+  /** The model that proposes auto-fixes (the same Copilot model the dashboard selected). */
+  createFixModel(modelId?: string): FixModel;
+  /** True when an open editor has unsaved changes for this file. */
+  isDirtyInEditor(absolutePath: string): boolean;
+  /** Files in the working tree changed (an auto-fix was applied); refresh the dashboard. */
+  workingTreeChanged(): void;
 }
 
-const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence']);
+const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
+  'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix']);
 const START = 'Start review';
 const ALWAYS = 'Always allow for this repository';
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
 const RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
 const MAX_STORED_REVIEWS = 10;
 
-interface StoredReview { result: ReviewResult; context: ReviewReportContext }
+interface StoredReview { result: ReviewResult; context: ReviewReportContext; triage: ReviewTriage }
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -55,6 +63,8 @@ export class ReviewController {
   /** The review the dashboard is waiting on, from request until result. */
   private active?: { requestId: number; repositoryPath: string };
   private readonly reviews = new Map<number, StoredReview>();
+  /** At most one auto-fix: being proposed (`running`) or waiting for Apply/Discard (`proposal`). */
+  private fix?: { requestId: number; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
 
   constructor(private readonly host: ReviewControllerHost) {}
 
@@ -69,11 +79,17 @@ export class ReviewController {
       case 'cancelReview': return this.cancelFromDashboard();
       case 'exportReviewReport': return this.export(payload);
       case 'openReviewEvidence': return this.openEvidence(payload);
+      case 'setFindingTriage': return this.setTriage(payload);
+      case 'proposeReviewFix': return this.proposeFix(payload);
+      case 'applyReviewFix': return this.applyFix(payload);
+      case 'discardReviewFix': return this.discardFix(payload);
+      case 'cancelReviewFix': return this.cancelFix();
     }
   }
 
   /** Stop a running review, e.g. when the panel closes or the workspace folder changes. */
   cancel(): void {
+    this.cancelFixQuietly();
     this.generation++;
     this.running?.cancel();
     this.running?.dispose();
@@ -173,10 +189,10 @@ export class ReviewController {
     try {
       const modelId = optionalString(payload.modelId);
       const result = await this.host.createRunner(this.host.workspaceRoot())
-        .review(request, cancellation.token, message => { void reply('reviewProgress', { message }); }, modelId);
+        .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
-      this.reviews.set(requestId, { result, context });
+      this.reviews.set(requestId, { result, context, triage: {} });
       while (this.reviews.size > MAX_STORED_REVIEWS) { this.reviews.delete(this.reviews.keys().next().value as number); }
       await reply('reviewCompleted', { result, readiness: assessReadiness(result),
         context: { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() } });
@@ -196,7 +212,7 @@ export class ReviewController {
       this.host.notify('That review is no longer available to export. Run it again.', true);
       return;
     }
-    const markdown = renderReviewMarkdown(stored.result, stored.context);
+    const markdown = renderReviewMarkdown(stored.result, stored.context, stored.triage);
     if (payload.format === 'save') {
       const label = `${stored.context.baseLabel ? `${stored.context.baseLabel}-` : ''}${stored.context.targetLabel}`.replace(/[^A-Za-z0-9._-]+/g, '-');
       if (await this.host.saveText(`${stored.context.kind}-review-${label}.md`, markdown)) {
@@ -205,6 +221,110 @@ export class ReviewController {
     } else {
       await this.host.copyText(markdown);
       this.host.notify('Review report copied as Markdown.');
+    }
+  }
+
+  /** A reviewer's decision on one finding; `decision: null` clears it. Readiness is recomputed here. */
+  private async setTriage(payload: Record<string, unknown>): Promise<void> {
+    const requestId = payload.requestId;
+    const stored = typeof requestId === 'number' ? this.reviews.get(requestId) : undefined;
+    const findingId = optionalString(payload.findingId);
+    if (!stored || !findingId || !stored.result.findings.some(finding => finding.id === findingId)) { return; }
+    const next = { ...stored.triage };
+    if (payload.decision === null || payload.decision === undefined) { delete next[findingId]; }
+    else { next[findingId] = { decision: payload.decision, reason: payload.reason } as ReviewTriage[string]; }
+    stored.triage = normalizeTriage(stored.result, next);
+    await this.host.post({ type: 'reviewTriageUpdated', payload: { requestId, triage: stored.triage,
+      readiness: assessReadiness(stored.result, stored.triage) } });
+  }
+
+  private cancelFixQuietly(): void {
+    this.fix?.running?.cancel();
+    this.fix?.running?.dispose();
+    this.fix = undefined;
+  }
+
+  private async cancelFix(): Promise<void> {
+    const requestId = this.fix?.requestId;
+    const wasRunning = Boolean(this.fix?.running);
+    this.cancelFixQuietly();
+    if (requestId !== undefined && wasRunning) {
+      await this.host.post({ type: 'reviewFixFailed', payload: { requestId, cancelled: true, message: 'Auto-fix cancelled.' } });
+    }
+  }
+
+  /** Asks Copilot for edits that fix the findings marked "Needs fix", for preview in the dashboard. */
+  private async proposeFix(payload: Record<string, unknown>): Promise<void> {
+    const requestId = payload.requestId;
+    const stored = typeof requestId === 'number' ? this.reviews.get(requestId) : undefined;
+    if (!stored || typeof requestId !== 'number') {
+      this.host.notify('That review is no longer available. Run it again to fix its findings.', true);
+      return;
+    }
+    this.cancelFixQuietly();
+    const cancellation = this.host.createCancellation();
+    const fix: NonNullable<ReviewController['fix']> = { requestId, running: cancellation };
+    this.fix = fix;
+    const reply = async (type: string, extra: Record<string, unknown>) => {
+      if (this.fix === fix) { await this.host.post({ type, payload: { requestId, ...extra } }); }
+    };
+    const fail = (message: string, cancelled = false) => {
+      const done = reply('reviewFixFailed', { message, cancelled });
+      if (this.fix === fix) { this.fix = undefined; }
+      return done;
+    };
+    try {
+      const findingIds = Object.entries(stored.triage).filter(([, triage]) => triage.decision === 'fix').map(([id]) => id);
+      const service = new ReviewFixService(this.git());
+      // Fail fast on the selection and the working tree before asking for consent or calling the model.
+      const { root, findings } = await service.prepare({ repositoryPath: stored.result.request.repositoryPath, result: stored.result,
+        findingIds, isDirtyInEditor: absolute => this.host.isDirtyInEditor(absolute) });
+      if (this.host.alwaysConfirm() || !this.host.isConsentRemembered(root)) {
+        const actions = this.host.alwaysConfirm() ? [START] : [START, ALWAYS];
+        const answer = await this.host.ask(`Ask Copilot to fix ${findings.length} finding${findings.length === 1 ? '' : 's'} in ${path.basename(root)}?`,
+          'The cited files and the findings are sent to the selected Copilot model. You see the proposed changes before anything is written, and nothing is committed.',
+          actions);
+        if (this.fix !== fix) { return; }
+        if (answer !== START && answer !== ALWAYS) { await fail('Auto-fix cancelled.', true); return; }
+        if (answer === ALWAYS) { await this.host.rememberConsent(root); }
+      }
+      await reply('reviewFixProgress', { message: 'Asking Copilot for a fix…' });
+      const proposal = await service.propose({ repositoryPath: stored.result.request.repositoryPath, result: stored.result, findingIds,
+        model: this.host.createFixModel(optionalString(payload.modelId)), token: cancellation.token,
+        isDirtyInEditor: absolute => this.host.isDirtyInEditor(absolute) });
+      if (this.fix !== fix) { return; }
+      fix.running = undefined;
+      fix.proposal = proposal;
+      await reply('reviewFixProposed', { files: proposal.files.map(file => ({ path: file.path, patch: file.patch })),
+        notes: proposal.notes, rejected: proposal.rejected, findingIds: proposal.findingIds, modelId: proposal.modelId });
+    } catch (error) {
+      if (cancellation.token.isCancellationRequested) { return; }
+      await fail(error instanceof FixError ? error.message : `Auto-fix failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      cancellation.dispose();
+    }
+  }
+
+  private async applyFix(payload: Record<string, unknown>): Promise<void> {
+    const fix = this.fix;
+    if (!fix?.proposal || fix.requestId !== payload.requestId) { return; }
+    try {
+      const paths = await new ReviewFixService(this.git()).apply(fix.proposal, absolute => this.host.isDirtyInEditor(absolute));
+      this.fix = undefined;
+      await this.host.post({ type: 'reviewFixApplied', payload: { requestId: fix.requestId, paths } });
+      this.host.notify(`Applied the fix to ${paths.length} file${paths.length === 1 ? '' : 's'}. Nothing was committed.`);
+      this.host.workingTreeChanged();
+    } catch (error) {
+      // The proposal stays, so the user can discard it or fix the cause and apply again.
+      await this.host.post({ type: 'reviewFixFailed', payload: { requestId: fix.requestId, keepProposal: true,
+        message: error instanceof FixError ? error.message : `Could not apply the fix: ${error instanceof Error ? error.message : String(error)}` } });
+    }
+  }
+
+  private async discardFix(payload: Record<string, unknown>): Promise<void> {
+    if (this.fix && this.fix.requestId === payload.requestId) {
+      this.cancelFixQuietly();
+      await this.host.post({ type: 'reviewFixDiscarded', payload: { requestId: payload.requestId } });
     }
   }
 

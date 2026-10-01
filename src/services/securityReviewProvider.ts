@@ -102,6 +102,27 @@ export class SecurityReviewProvider {
     return verdicts;
   }
 
+  /** One request with no tools, for callers outside a review (e.g. proposing a fix). */
+  async requestJson(instructions: string, input: unknown, selectedModelId: string | undefined,
+    token: vscode.CancellationToken, maxResponseChars = 60000): Promise<{ modelId: string; response: Record<string, unknown> }> {
+    const model = await this.selectModel(selectedModelId);
+    const prompts = [instructions, JSON.stringify(input)];
+    const size = (await Promise.all(prompts.map(message => model.countTokens(message)))).reduce((sum, count) => sum + count, 0);
+    if (size > model.maxInputTokens - 2048) { throw new Error('The selected model cannot fit these files; mark fewer findings.'); }
+    const response = await model.sendRequest(prompts.map(message => this.api.LanguageModelChatMessage!.User(message)), {}, token);
+    let text = '';
+    for await (const part of response.text) {
+      if (token.isCancellationRequested) { throw new Error('Cancelled'); }
+      text += part;
+      if (text.length > maxResponseChars) { throw new Error('AI response exceeds size limit'); }
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, '')); }
+    catch { throw new Error('AI returned invalid JSON'); }
+    if (!record(parsed)) { throw new Error('AI returned an invalid JSON object'); }
+    return { modelId: `${model.id}:${model.version}`, response: parsed };
+  }
+
   private async conversation(instructions: string, input: unknown, plan: ReviewPlan, model: ReviewChatModel,
     token: vscode.CancellationToken, progress: (message: string) => void, maxTools: number): Promise<Record<string, unknown>> {
     const prompts = [instructions, JSON.stringify(input)];

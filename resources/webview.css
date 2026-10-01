@@ -1613,6 +1613,8 @@ button.reference-detail-item:hover { background: #222730; }
 .graph-lane-6 { stroke: #6fc2e8; }
 .graph-lane-7 { stroke: #a9c36b; }
 .graph-node { fill: var(--bg-primary); stroke-width: 2; }
+/* HEAD: a hollow, heavier ring, as in Git Graph. */
+.graph-node-head { fill: var(--bg-primary); stroke-width: 3; }
 .graph-node-core.graph-lane-0 { fill: var(--warning); }
 .graph-node-core.graph-lane-1 { fill: var(--accent); }
 .graph-node-core.graph-lane-2 { fill: #a48bf0; }
@@ -2626,3 +2628,54 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .commit-compare-status .review-entry button { display: block; width: auto; height: 18px; margin: 0; padding: 0 6px; color: inherit; background: transparent; font-size: 10px; line-height: 16px; }
 .diff-viewer > .diff-line-highlight { box-shadow: inset 3px 0 0 #e5a547; background: rgba(229, 165, 71, .16); }
 
+
+/* A running review keeps the dashboard on it: switches are paused until it finishes or is cancelled. */
+.review-running [aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.review-running .sidebar-repository-item[aria-disabled="true"]:hover { background: transparent; }
+.review-lock-note { margin: 0 0 10px; color: var(--text-muted); font-size: 12px; }
+.review-progress-block { display: grid; gap: 6px; margin-bottom: 12px; }
+.review-progress-where { color: var(--text-primary); }
+.review-progress { height: 6px; overflow: hidden; border-radius: 3px; background: var(--bg-tertiary); }
+.review-progress-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+.review-progress-counts, .review-progress-message { color: var(--text-muted); font-size: 12px; }
+.review-steps { max-height: 220px; margin: 0 0 12px; padding: 0; overflow: auto; list-style: none; border: 1px solid var(--border); border-radius: 6px; }
+.review-step { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 3px 10px; color: var(--text-muted); font-size: 12px; }
+.review-step code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-step-done .review-step-mark { color: var(--accent); }
+.review-step-current { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
+.review-step-current .review-step-mark { color: #e5a547; }
+.review-triage { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.review-triage button { padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.review-triage button:hover { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
+.review-triage button[data-decision="fix"][aria-pressed="true"] { border-color: #e5a547; color: #f0c07a; background: rgba(229, 165, 71, .14); }
+.review-triage button[data-decision="dismiss"][aria-pressed="true"] { border-color: var(--text-muted); color: var(--text-primary); background: var(--bg-tertiary); }
+.review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
+.review-finding.triage-dismiss { opacity: .7; }
+.review-finding.triage-fix { box-shadow: inset 3px 0 0 #e5a547; }
+.review-triage-summary { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 12px; }
+.review-triage-summary strong { color: var(--text-primary); }
+.review-triage-summary .review-fix-action { margin-left: auto; }
+.review-fix { margin: 10px 0; padding: 10px 12px; border: 1px solid rgba(229, 165, 71, .45); border-radius: 6px; background: rgba(229, 165, 71, .05); }
+.review-fix h4 { margin-top: 0; }
+.review-fix-note { color: var(--text-muted); font-size: 12px; }
+.review-fix-rejected { color: #f0c07a; }
+.review-fix-file { margin: 8px 0; }
+.review-fix-file summary { cursor: pointer; }
+.review-fix-file .diff-viewer { max-height: 320px; overflow: auto; margin-top: 6px; }
+.review-fix-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.review-fix-applied { border-color: rgba(60, 199, 166, .45); background: rgba(60, 199, 166, .06); }
+
+/* Branch list as a folder tree: feature/a and feature/b sit under "feature". */
+.sidebar-branch-folder { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; align-items: center; gap: 5px; width: 100%;
+  min-height: 25px; padding: 3px 7px; border: 0; border-radius: 4px; color: var(--text-secondary); background: transparent;
+  font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.sidebar-branch-folder:hover { background: var(--vscode-list-hoverBackground); color: var(--text-primary); }
+.sidebar-branch-folder:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.sidebar-branch-folder span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-branch-folder small { color: var(--text-muted); }
+.branch-depth-1 { padding-left: 12px; }
+.branch-depth-2 { padding-left: 24px; }
+.branch-depth-3 { padding-left: 36px; }
+.branch-depth-4 { padding-left: 48px; }
+.branch-depth-5 { padding-left: 60px; }
+.branch-depth-6 { padding-left: 72px; }

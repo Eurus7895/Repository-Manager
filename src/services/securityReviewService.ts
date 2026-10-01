@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { PolicyRuleResult, ReviewFinding, ReviewRequest, ReviewResult } from '../types';
+import { PolicyRuleResult, ReviewFinding, ReviewProgressCallback, ReviewProgressDetail, ReviewRequest, ReviewResult } from '../types';
 import { GitCommandService } from './gitCommandService';
 import { validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
 import { appliesToPath, ReviewSurveyService } from './reviewSurveyService';
@@ -12,9 +12,15 @@ export class SecurityReviewService {
   }
 
   async review(request: ReviewRequest, token: vscode.CancellationToken,
-    progress: (message: string) => void, selectedModelId?: string): Promise<ReviewResult> {
+    progress: ReviewProgressCallback, selectedModelId?: string): Promise<ReviewResult> {
+    const state: ReviewProgressDetail = { phase: 'planning', unit: 0, units: 0, filesDone: 0, filesTotal: 0, candidates: 0 };
+    progress('Planning the review…', { ...state });
     const plan = await this.survey.plan(request);
     const { coverage, policy } = plan;
+    state.units = plan.units.length;
+    state.filesTotal = plan.units.reduce((total, unit) => total + unit.paths.length, 0);
+    // Messages from inside a step (tool reads, verification) carry the step's position.
+    const report = (message: string) => progress(message, { ...state });
     const findings = new Map<string, ReviewFinding>();
     const results = new Map<string, PolicyRuleResult[]>();
     const limitations: string[] = [];
@@ -28,11 +34,14 @@ export class SecurityReviewService {
     }
     const model = await this.provider.selectModel(selectedModelId);
     const modelId = `${model.id}:${model.version}`;
+    progress(`Planned ${plan.units.length} component(s), ${state.filesTotal} file(s)`, { ...state,
+      components: plan.units.map(unit => ({ component: unit.component, files: unit.paths.length })) });
     for (const [index, unit] of plan.units.entries()) {
       if (token.isCancellationRequested) { throw new Error('Cancelled'); }
-      progress(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
+      Object.assign(state, { phase: 'analyzing', unit: index + 1, component: unit.component });
+      report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
       try {
-        const raw = await this.provider.analyze(plan, unit, model, token, progress);
+        const raw = await this.provider.analyze(plan, unit, model, token, report);
         const candidates: ReviewFinding[] = [];
         for (const item of raw.findings.slice(0, 20)) {
           const finding = await validateReviewFinding(item, plan, unit);
@@ -48,9 +57,11 @@ export class SecurityReviewService {
           coverage.failed.push({ path: unit.component, reason: 'AI finding limit exceeded' });
         }
         let verdicts = new Map<string, 'supported' | 'uncertain' | 'rejected'>();
+        state.candidates += candidates.length;
         if (candidates.length) {
+          state.phase = 'verifying';
           try {
-            verdicts = await this.provider.verify(plan, candidates, model, token, progress);
+            verdicts = await this.provider.verify(plan, candidates, model, token, report);
             // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
             const missing = candidates.filter(candidate => !verdicts.has(candidate.id)).length;
             if (missing) {
@@ -113,7 +124,10 @@ export class SecurityReviewService {
           coverage.failed.push({ path, reason: error instanceof Error ? error.message : 'Review failed' });
         }
       }
+      state.filesDone += unit.paths.length;
     }
+    Object.assign(state, { phase: 'finishing', component: undefined });
+    report('Collecting results…');
     const policyResults: PolicyRuleResult[] = [];
     if (policy.status === 'configured') {
       for (const rule of policy.policy.rules) {

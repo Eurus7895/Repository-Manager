@@ -4,7 +4,7 @@
  * report always agree.
  */
 
-import { ReviewFinding, ReviewResult } from '../types';
+import { DismissReason, FindingTriage, ReviewFinding, ReviewResult, ReviewTriage } from '../types';
 
 export type ReadinessStatus = 'blocked' | 'needs_attention' | 'no_blocking_findings';
 
@@ -15,13 +15,28 @@ export interface ReadinessItem {
   detail: string;
   findingId?: string;
   ruleId?: string;
+  triage?: FindingTriage;
 }
 
 export interface ReviewReadiness {
   status: ReadinessStatus;
   blocking: ReadinessItem[];
   attention: ReadinessItem[];
+  /** Findings the reviewer dismissed; they no longer count toward readiness, but stay on record. */
+  dismissed: ReadinessItem[];
+  /** Findings the reviewer marked to fix, and findings with no decision yet. */
+  toFix: number;
+  untriaged: number;
 }
+
+// The keys are the stored DismissReason values, shared with the dashboard.
+/* eslint-disable @typescript-eslint/naming-convention */
+export const DISMISS_REASONS: Record<DismissReason, string> = {
+  false_positive: 'False positive',
+  accepted_risk: 'Accepted risk',
+  not_applicable: 'Not applicable'
+};
+/* eslint-enable @typescript-eslint/naming-convention */
 
 export interface ReviewReportContext {
   /** 'release' for a release-range review. */
@@ -55,16 +70,39 @@ function findingItem(finding: ReviewFinding): ReadinessItem {
 const bySeverity = (a: ReadinessItem, b: ReadinessItem) =>
   SEVERITY_ORDER[a.severity || 'low'] - SEVERITY_ORDER[b.severity || 'low'];
 
+/** Keeps only well-formed decisions for findings that exist in the result. */
+export function normalizeTriage(result: ReviewResult, triage: unknown): ReviewTriage {
+  const normalized: ReviewTriage = {};
+  if (!triage || typeof triage !== 'object') { return normalized; }
+  const ids = new Set(result.findings.map(finding => finding.id));
+  for (const [id, value] of Object.entries(triage as Record<string, unknown>)) {
+    const entry = value as Partial<FindingTriage> | undefined;
+    if (!ids.has(id) || !entry || (entry.decision !== 'fix' && entry.decision !== 'dismiss')) { continue; }
+    if (entry.decision === 'fix') { normalized[id] = { decision: 'fix' }; continue; }
+    const reason = entry.reason && entry.reason in DISMISS_REASONS ? entry.reason : 'false_positive';
+    normalized[id] = { decision: 'dismiss', reason };
+  }
+  return normalized;
+}
+
 /**
  * Blocking: verified critical/high findings and policy violations.
  * Needs attention: everything else that is not a clean result, most severe first, so an
  * unconfirmed critical hypothesis is listed ahead of everything else without blocking.
+ * A finding the reviewer dismissed moves to `dismissed` and no longer affects readiness.
  */
-export function assessReadiness(result: ReviewResult): ReviewReadiness {
+export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {}): ReviewReadiness {
   const blocking: ReadinessItem[] = [];
   const attention: ReadinessItem[] = [];
+  const dismissed: ReadinessItem[] = [];
+  let toFix = 0;
+  let untriaged = 0;
   for (const finding of result.findings) {
     const item = findingItem(finding);
+    const decision = triage[finding.id];
+    if (decision) { item.triage = decision; }
+    if (decision?.decision === 'dismiss') { dismissed.push(item); continue; }
+    if (decision?.decision === 'fix') { toFix++; } else { untriaged++; }
     if (finding.status === 'verified' && BLOCKING_SEVERITIES.has(finding.severity)) { blocking.push(item); }
     else { attention.push(item); }
   }
@@ -86,8 +124,9 @@ export function assessReadiness(result: ReviewResult): ReviewReadiness {
   }
   blocking.sort(bySeverity);
   attention.sort(bySeverity);
+  dismissed.sort(bySeverity);
   const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length ? 'needs_attention' : 'no_blocking_findings';
-  return { status, blocking, attention };
+  return { status, blocking, attention, dismissed, toFix, untriaged };
 }
 
 export function readinessLabel(status: ReadinessStatus): string {
@@ -106,13 +145,18 @@ function code(value: string): string {
 }
 const short = (sha?: string) => (sha ? sha.slice(0, 8) : '');
 
-function findingMarkdown(finding: ReviewFinding): string[] {
+function triageLabel(triage?: FindingTriage): string {
+  if (!triage) { return 'not triaged'; }
+  return triage.decision === 'fix' ? 'marked to fix' : `dismissed: ${DISMISS_REASONS[triage.reason || 'false_positive'].toLowerCase()}`;
+}
+
+function findingMarkdown(finding: ReviewFinding, triage?: FindingTriage): string[] {
   const rule = finding.ruleId ? ` · ${code(finding.ruleId)}` : '';
   const evidence = finding.evidence
     .map(item => `${code(`${item.path}:${item.startLine === item.endLine ? item.startLine : `${item.startLine}-${item.endLine}`}`)} (${item.side} ${short(item.revision)})`)
     .join(', ');
   return [
-    `- **${finding.severity.toUpperCase()} ${finding.category}**${rule} · ${finding.status} · confidence ${finding.confidence}  `,
+    `- **${finding.severity.toUpperCase()} ${finding.category}**${rule} · ${finding.status} · confidence ${finding.confidence} · ${triageLabel(triage)}  `,
     `  ${text(finding.explanation)}  `,
     `  Evidence: ${evidence}  `,
     `  Impact: ${text(finding.impact)}  `,
@@ -120,15 +164,15 @@ function findingMarkdown(finding: ReviewFinding): string[] {
   ];
 }
 
-export function renderReviewMarkdown(result: ReviewResult, context: ReviewReportContext): string {
-  const readiness = assessReadiness(result);
+export function renderReviewMarkdown(result: ReviewResult, context: ReviewReportContext, triage: ReviewTriage = {}): string {
+  const readiness = assessReadiness(result, triage);
   const { request, coverage } = result;
   const range = request.scope === 'changes'
     ? `${code(context.baseLabel || short(request.baseSha) || 'parent')} (${short(request.baseSha) || 'root'}) → ${code(context.targetLabel)} (${short(request.targetSha)})`
     : `Every file at ${code(context.targetLabel)} (${short(request.targetSha)})`;
   const title = `${context.kind === 'release' ? 'Release review' : 'Security and compliance review'} — ${request.scope === 'changes'
     ? `Diff: ${context.baseLabel || short(request.baseSha) || 'parent'} → ${context.targetLabel}`
-    : `Whole: ${context.targetLabel}`}`;
+    : `Branch: ${context.targetLabel}`}`;
   const findingsById = new Map(result.findings.map(finding => [finding.id, finding]));
   const lines: string[] = [
     `# ${text(title)}`,
@@ -144,6 +188,8 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     '',
     `**Readiness: ${readinessLabel(readiness.status)}** (${readiness.blocking.length} blocking, ${readiness.attention.length} needing attention)`,
     '',
+    `Triage: ${readiness.toFix} marked to fix, ${readiness.dismissed.length} dismissed, ${readiness.untriaged} not triaged.`,
+    '',
     '> Advisory AI-assisted review. "Verified" means the cited evidence passed mechanical checks and a second AI ' +
       'assessment supported the finding; it is not proof of exploitability. No findings does not mean no vulnerabilities, ' +
       'and checks that were not run or not completed are not passes.',
@@ -154,13 +200,14 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     if (!items.length) { lines.push('None.', ''); return; }
     for (const item of items) {
       const finding = item.findingId ? findingsById.get(item.findingId) : undefined;
-      if (finding) { lines.push(...findingMarkdown(finding)); }
+      if (finding) { lines.push(...findingMarkdown(finding, item.triage)); }
       else { lines.push(`- **${text(item.title)}**  `, `  ${text(item.detail)}`); }
     }
     lines.push('');
   };
   section('Blocking', readiness.blocking);
   section('Needs attention', readiness.attention);
+  if (readiness.dismissed.length) { section('Dismissed by reviewer', readiness.dismissed); }
   if (result.policyResults.length) {
     lines.push('## Policy results', '', '| Rule | Result | Reason |', '|---|---|---|');
     for (const policy of result.policyResults) {

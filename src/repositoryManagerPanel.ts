@@ -12,6 +12,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
 import { CopilotSummaryProvider } from './services/changeSummaryService';
 import { SecurityReviewService } from './services/securityReviewService';
+import { SecurityReviewProvider } from './services/securityReviewProvider';
 import { ReviewController, ReviewRunner } from './reviewController';
 import { ReviewConsentStore } from './reviewConsent';
 
@@ -24,7 +25,8 @@ const READ_ONLY_MESSAGES = new Set([
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
   'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
-  'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence'
+  'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
+  'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix'
 ]);
 
 export class RepositoryManagerPanel {
@@ -118,7 +120,15 @@ export class RepositoryManagerPanel {
       },
       notify: (message, isError) => {
         void (isError ? vscode.window.showErrorMessage(message) : vscode.window.showInformationMessage(message));
-      }
+      },
+      createFixModel: modelId => {
+        const provider = new SecurityReviewProvider();
+        return { request: (instructions, input, token) =>
+          provider.requestJson(instructions, input, modelId, token as vscode.CancellationToken) };
+      },
+      isDirtyInEditor: absolutePath => vscode.workspace.textDocuments.some(document =>
+        document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === absolutePath),
+      workingTreeChanged: () => { this.refresh(); }
     });
     this._disposables.push(vscode.workspace.registerTextDocumentContentProvider(REVIEW_EVIDENCE_SCHEME, {
       provideTextDocumentContent: uri => this._evidenceDocuments.get(uri.toString()) || ''

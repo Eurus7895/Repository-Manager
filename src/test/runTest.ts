@@ -17,8 +17,9 @@ import { renderDashboardToolbar } from '../webview/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const historyGraph = require('../../resources/historyGraph.js') as {
-  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[] }>) => {
-    rows: Array<{ lane: number; parentLanes: number[]; isMerge: boolean }>;
+  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[]; refs?: Array<{ name: string; isCurrent?: boolean }> }>) => {
+    rows: Array<{ lane: number; color: number; parentLanes: number[]; incomingLanes: number[]; isMerge: boolean; isHead: boolean;
+      before: Array<string | null>; after: Array<string | null> }>;
     laneCount: number;
     width: number;
   };
@@ -117,6 +118,33 @@ function testHistoryGraph(): void {
   assert.equal(merge.rows[0].isMerge, true);
   assert.deepEqual(merge.rows[0].parentLanes, [0, 1]);
   assert.equal(merge.rows[2].lane, 1);
+
+  // Git Graph style: the current branch stays in column 0 even when another branch's tip is newer,
+  // and each branch keeps one colour; a branch forked from HEAD's tip curves into it.
+  const head = { name: 'main', isCurrent: true };
+  const branchy = historyGraph.buildGraphModel([
+    { hash: 'f2', parentHashes: ['f1'], refs: [{ name: 'feature' }] },
+    { hash: 'm2', parentHashes: ['m1', 'f1'], refs: [head] },
+    { hash: 'f1', parentHashes: ['m1'] },
+    { hash: 'm1', parentHashes: ['m0'] },
+    { hash: 'm0', parentHashes: [] }
+  ]);
+  assert.deepEqual(branchy.rows.map(row => row.lane), [1, 0, 1, 0, 0]);
+  assert.equal(branchy.rows[1].isHead, true);
+  assert.deepEqual(branchy.rows.filter(row => row.lane === 0).map(row => row.color), [0, 0, 0]);
+  assert.equal(branchy.rows[0].color, branchy.rows[2].color, 'feature changed colour along its path');
+  assert.notEqual(branchy.rows[0].color, 0);
+  // f1 is expected by both f2 (lane 1) and the merge m2: one lane, never a dangling duplicate.
+  assert.equal(branchy.rows[2].after.filter(hash => hash === 'm1').length, 1);
+  assert.deepEqual(branchy.rows[3].incomingLanes, [], 'm1 is reached through the merge of f1 into lane 0');
+  const forked = historyGraph.buildGraphModel([
+    { hash: 'x1', parentHashes: ['h'], refs: [{ name: 'topic' }] },
+    { hash: 'h', parentHashes: ['r'], refs: [head] },
+    { hash: 'r', parentHashes: [] }
+  ]);
+  assert.deepEqual(forked.rows.map(row => row.lane), [1, 0, 0]);
+  assert.deepEqual(forked.rows[1].incomingLanes, [1], 'the topic branch does not curve into HEAD');
+  assert.deepEqual(forked.rows[1].after.filter(Boolean), ['r'], 'a lane was left dangling');
 
   const octopusParents = Array.from({ length: 8 }, (_, index) => `parent-${index}`);
   const octopus = historyGraph.buildGraphModel([

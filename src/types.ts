@@ -149,6 +149,32 @@ export interface PolicyRuleResult {
   evidence: ReviewEvidence[];
 }
 
+/** A reviewer's decision on one finding: fix it, or dismiss it with a reason. */
+export type DismissReason = 'false_positive' | 'accepted_risk' | 'not_applicable';
+export interface FindingTriage {
+  decision: 'fix' | 'dismiss';
+  reason?: DismissReason;
+}
+/** Triage by finding id. */
+export type ReviewTriage = Record<string, FindingTriage>;
+
+/** Where a running review is, for the dashboard's progress display. */
+export interface ReviewProgressDetail {
+  phase: 'planning' | 'analyzing' | 'verifying' | 'finishing';
+  /** 1-based index of the component being reviewed, and the number of components. */
+  unit: number;
+  units: number;
+  component?: string;
+  filesDone: number;
+  filesTotal: number;
+  /** Candidate findings that passed evidence checks so far. */
+  candidates: number;
+  /** Sent once the plan exists: every component with its file count. */
+  components?: Array<{ component: string; files: number }>;
+}
+
+export type ReviewProgressCallback = (message: string, detail?: ReviewProgressDetail) => void;
+
 export interface ReviewResult {
   request: ReviewRequest;
   findings: ReviewFinding[];
