@@ -41,6 +41,11 @@ export class ReviewSnapshot {
     return { entries: entries.slice(0, limit), totalEntries: entries.length, truncated: this.tree.truncated || entries.length > limit };
   }
 
+  /** Tree entry for an exact repository path, in constant time. */
+  entry(filePath: string): SnapshotEntry | undefined {
+    return this.byPath.get(filePath);
+  }
+
   fileExists(filePath: string): boolean {
     return this.byPath.has(this.safePath(filePath));
   }
