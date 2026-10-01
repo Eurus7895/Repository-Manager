@@ -95,13 +95,15 @@ export class ReviewSurveyService {
     });
     const skipped: ReviewCoverage['skipped'] = [];
     const groups = new Map<string, string[]>();
+    // Constant-time lookups and a running count keep planning linear on large trees.
+    let grouped = 0;
     for (const path of sorted) {
-      const entry = snapshot.tree.entries.find(item => item.path === path) || base?.tree.entries.find(item => item.path === path);
+      const entry = snapshot.entry(path) || base?.entry(path);
       if (!entry || entry.type !== 'blob' || entry.mode === '120000') {
         skipped.push({ path, reason: 'gitlink, symlink or missing source blob' });
         continue;
       }
-      if (Array.from(groups.values()).reduce((sum, paths) => sum + paths.length, 0) >= MAX_REVIEW_FILES) {
+      if (grouped >= MAX_REVIEW_FILES) {
         skipped.push({ path, reason: 'review file budget' });
         continue;
       }
@@ -109,6 +111,7 @@ export class ReviewSurveyService {
       const paths = groups.get(name) || [];
       paths.push(path);
       groups.set(name, paths);
+      grouped++;
     }
     const units: ReviewWorkUnit[] = [];
     for (const [name, paths] of groups) {

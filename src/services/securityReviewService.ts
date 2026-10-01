@@ -49,8 +49,14 @@ export class SecurityReviewService {
         }
         let verdicts = new Map<string, 'supported' | 'uncertain' | 'rejected'>();
         if (candidates.length) {
-          try { verdicts = await this.provider.verify(plan, candidates, model, token, progress); }
-          catch (error) {
+          try {
+            verdicts = await this.provider.verify(plan, candidates, model, token, progress);
+            // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
+            const missing = candidates.filter(candidate => !verdicts.has(candidate.id)).length;
+            if (missing) {
+              coverage.failed.push({ path: unit.component, reason: `No verification verdict for ${missing} of ${candidates.length} finding(s)` });
+            }
+          } catch (error) {
             if (token.isCancellationRequested) { throw error; }
             coverage.failed.push({ path: unit.component, reason: `Finding verification failed: ${String(error)}` });
           }
@@ -58,7 +64,9 @@ export class SecurityReviewService {
         for (const candidate of candidates) {
           const verdict = verdicts.get(candidate.id);
           if (verdict === 'rejected') { continue; }
-          candidate.status = verdict === 'supported' ? 'verified' : 'hypothesis';
+          // A rule the policy marks manual or static cannot be verified by an AI check.
+          const rule = candidate.category === 'compliance' ? unit.rules.find(item => item.id === candidate.ruleId) : undefined;
+          candidate.status = verdict === 'supported' && (!rule || rule.verification === 'ai') ? 'verified' : 'hypothesis';
           if (!findings.has(candidate.id) || candidate.status === 'verified') {
             findings.set(candidate.id, candidate);
           }
@@ -120,16 +128,21 @@ export class SecurityReviewService {
           continue;
         }
         const violations = entries.filter(item => item.status === 'violation');
-        const unavailable = rule.verification !== 'ai' || entries.some(item => item.status !== 'pass') ||
+        // not_applicable is a definitive answer for that batch; only insufficient evidence or
+        // incomplete coverage leaves the rule unresolved.
+        const unavailable = rule.verification !== 'ai' || entries.some(item => item.status === 'insufficient_evidence') ||
           coverage.failed.length > 0 || coverage.skipped.some(item => appliesToPath(rule, item.path));
+        const allNotApplicable = entries.every(item => item.status === 'not_applicable');
         policyResults.push(rule.verification === 'ai' && violations.length
           ? { ruleId: rule.id, status: 'violation', reason: violations.map(item => item.reason).join('; ').slice(0, 1000),
             evidence: violations.flatMap(item => item.evidence).slice(0, 8) }
           : unavailable
             ? { ruleId: rule.id, status: 'insufficient_evidence',
               reason: rule.verification === 'ai' ? 'Some applicable files or checks were incomplete.' : `${rule.verification} verification has not been run.`, evidence: [] }
-            : { ruleId: rule.id, status: 'pass', reason: 'AI assessed all selected files covered by this rule.',
-              evidence: entries.flatMap(item => item.evidence).slice(0, 8) });
+            : allNotApplicable
+              ? { ruleId: rule.id, status: 'not_applicable', reason: entries.map(item => item.reason).join('; ').slice(0, 1000), evidence: [] }
+              : { ruleId: rule.id, status: 'pass', reason: 'AI assessed all selected files covered by this rule.',
+                evidence: entries.flatMap(item => item.evidence).slice(0, 8) });
       }
     }
     coverage.complete = coverage.complete && !coverage.skipped.length && !coverage.failed.length &&

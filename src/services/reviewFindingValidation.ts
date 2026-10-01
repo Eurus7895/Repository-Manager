@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { PolicyRuleResult, ReviewEvidence, ReviewFinding } from '../types';
-import { ReviewPlan, ReviewWorkUnit } from './reviewSurveyService';
+import { ReviewPolicyRule } from './reviewPolicyService';
+import { appliesToPath, ReviewPlan, ReviewWorkUnit } from './reviewSurveyService';
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -64,6 +65,18 @@ export function changedLines(patch: string, side: 'base' | 'target'): Set<number
   return changed;
 }
 
+/** Evidence must come from a file in the batch; base-side evidence may use a renamed file's old path. */
+function inUnit(evidence: ReviewEvidence, plan: ReviewPlan, unit: ReviewWorkUnit): boolean {
+  return unit.paths.includes(evidence.path) ||
+    (evidence.side === 'base' && unit.paths.some(path => plan.oldPaths[path] === evidence.path));
+}
+
+/** Compliance evidence must also lie inside the cited rule's scope (by the file's current path). */
+function inRuleScope(evidence: ReviewEvidence, rule: ReviewPolicyRule, plan: ReviewPlan, unit: ReviewWorkUnit): boolean {
+  return appliesToPath(rule, evidence.path) || (evidence.side === 'base' &&
+    unit.paths.some(path => plan.oldPaths[path] === evidence.path && appliesToPath(rule, path)));
+}
+
 export async function validateReviewFinding(raw: unknown, plan: ReviewPlan, unit: ReviewWorkUnit): Promise<ReviewFinding | undefined> {
   if (!record(raw) || !['security', 'compliance'].includes(String(raw.category)) ||
       !plan.request.categories.includes(raw.category as 'security' | 'compliance') ||
@@ -79,11 +92,11 @@ export async function validateReviewFinding(raw: unknown, plan: ReviewPlan, unit
   if (raw.category === 'compliance' && (typeof raw.ruleId !== 'string' || !unit.rules.some(rule => rule.id === raw.ruleId))) {
     return undefined;
   }
+  const rule = raw.category === 'compliance' ? unit.rules.find(item => item.id === raw.ruleId) : undefined;
   const evidence: ReviewEvidence[] = [];
   for (const item of raw.evidence) {
     const verified = await validateReviewEvidence(item, plan);
-    if (!verified || (!unit.paths.includes(verified.path) &&
-      !(verified.side === 'base' && unit.paths.some(path => plan.oldPaths[path] === verified.path)))) {
+    if (!verified || !inUnit(verified, plan, unit) || (rule && !inRuleScope(verified, rule, plan, unit))) {
       return undefined;
     }
     evidence.push(verified);
@@ -101,11 +114,11 @@ export async function validatePolicyResult(raw: unknown, plan: ReviewPlan, unit:
       !['pass', 'violation', 'insufficient_evidence', 'not_applicable'].includes(String(raw.status)) ||
       typeof raw.reason !== 'string' || !raw.reason.trim() || raw.reason.length > 1000 ||
       !Array.isArray(raw.evidence) || raw.evidence.length > 8) { return undefined; }
+  const rule = unit.rules.find(item => item.id === raw.ruleId)!;
   const evidence: ReviewEvidence[] = [];
   for (const value of raw.evidence) {
     const verified = await validateReviewEvidence(value, plan);
-    if (!verified || (!unit.paths.includes(verified.path) &&
-      !(verified.side === 'base' && unit.paths.some(path => plan.oldPaths[path] === verified.path)))) { return undefined; }
+    if (!verified || !inUnit(verified, plan, unit) || !inRuleScope(verified, rule, plan, unit)) { return undefined; }
     evidence.push(verified);
   }
   if (['pass', 'violation'].includes(raw.status as string) && !evidence.length) { return undefined; }
