@@ -106,9 +106,13 @@ async function main() {
     const questions = [];
     let refreshed = 0;
     let copied = '';
+    let opened = null;
+    // The dashboard can switch workspace folders while a review runs or after it finishes.
+    let currentRoot = repo;
+    const otherFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'review-fix-other-'));
     const remembered = new Set();
     const controller = new ReviewController({
-      workspaceRoot: () => repo,
+      workspaceRoot: () => currentRoot,
       post: async message => { posts.push(message); },
       ask: async (message, detail, actions) => { questions.push(message); return actions[0]; },
       alwaysConfirm: () => false,
@@ -116,7 +120,8 @@ async function main() {
       rememberConsent: async root => { remembered.add(root); },
       createRunner: () => ({ review: async () => result }),
       createCancellation: () => ({ token: { isCancellationRequested: false }, cancel() { this.token.isCancellationRequested = true; }, dispose() {} }),
-      copyText: async text => { copied = text; }, saveText: async () => true, openText: async () => {}, notify: () => {},
+      copyText: async text => { copied = text; }, saveText: async () => true,
+      openText: async (content, revision, filePath) => { opened = { content, revision, filePath }; }, notify: () => {},
       createFixModel: () => model,
       isDirtyInEditor: () => false,
       workingTreeChanged: () => { refreshed++; }
@@ -125,6 +130,10 @@ async function main() {
     remembered.add(repo);
     await controller.handle({ type: 'startReview', payload: { requestId: 1, repositoryPath: '.', scope: 'branch', targetRevision: 'main' } });
     assert.equal(of('reviewCompleted').length, 1);
+    // Switch the dashboard to another folder: the review stays pinned to the folder it ran in.
+    currentRoot = otherFolder;
+    await controller.handle({ type: 'openReviewEvidence', payload: { requestId: 1, repositoryPath: '.', revision: head, path: 'app.js', line: 2 } });
+    assert.ok(opened && opened.content.includes('eval(input)'), 'evidence was looked up in the new folder');
     await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
     assert.match(of('reviewFixFailed').at(-1).payload.message, /Mark at least one finding/);
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fix' } });
@@ -152,6 +161,7 @@ async function main() {
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 1, format: 'copy' } });
     assert.match(copied, /Triage: 1 marked to fix, 1 dismissed, 1 not triaged\./);
     assert.match(copied, /## Dismissed by reviewer\n\n- \*\*HIGH security\*\* · verified · confidence high · dismissed: accepted risk/);
+    fs.rmSync(otherFolder, { recursive: true, force: true });
     console.log('Review fix smoke passed');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

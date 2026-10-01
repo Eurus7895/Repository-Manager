@@ -374,6 +374,7 @@
       if (!commitHash) return;
       clearCommitComparison(false);
       loadParentCommitDetail(commitHash);
+      showDetailTab('changes');
     },
 
     selectChangedFile: (el) => {
@@ -430,7 +431,7 @@
 
     selectDashboardRepository: (el) => {
       const repositoryPath = el.dataset.path;
-      if (!repositoryPath || repositoryPath === activeDashboardRepository || reviewLocked()) return;
+      if (!repositoryPath || repositoryPath === activeDashboardRepository) return;
       activateDashboardRepository(repositoryPath);
       renderRepositorySwitcher();
     },
@@ -680,10 +681,7 @@
       }
     },
 
-    showDetailTab: (el) => {
-      if (el.dataset.tab !== 'review' && reviewLocked()) return;
-      showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes');
-    },
+    showDetailTab: (el) => showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes'),
 
     reviewEvidence: (el) => jumpToReviewEvidence(Number(el.dataset.finding), Number(el.dataset.evidence)),
 
@@ -1146,6 +1144,8 @@
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
+    // The Review header names the reviewed repository once the dashboard shows another one.
+    if (reviewState) renderReviewPanel();
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -1622,12 +1622,7 @@
   if (workspaceFolderSelect) {
     workspaceFolderSelect.addEventListener('change', function (e) {
       const folderPath = e.target.value;
-      if (folderPath && reviewLocked()) {
-        e.target.value = e.target.dataset.current || '';
-        return;
-      }
       if (folderPath) {
-        e.target.dataset.current = folderPath;
         postMessage('switchWorkspaceFolder', { folderPath });
       }
     });
@@ -1798,7 +1793,7 @@
           repositoryData = (message.payload && message.payload.repositories) || [];
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
-          reviewState = null;
+          // A review keeps running (and its results stay) across folders: it is pinned to its own folder.
           renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
@@ -2472,7 +2467,9 @@
     const scope = options.scope;
     const kind = options.kind || 'review';
     reviewRequestId += 1;
-    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+    const repository = getRepository(activeDashboardRepository);
+    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
+      repositoryName: repository ? repository.name : activeDashboardRepository, scope, kind,
       baseLabel: scope === 'changes' ? (options.base || '') : '', targetLabel: options.target || '', status: 'running' };
     renderReviewPanel();
     showDetailTab('review');
@@ -2482,21 +2479,38 @@
       targetLabel: options.target ? shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
   }
 
-  // While a review runs, the dashboard stays on it: no switching repository, workspace folder
-  // or detail tab, and no second review, until it finishes or is cancelled.
+  // A review runs in the background: the rest of the dashboard stays usable (other repositories,
+  // folders, tabs and commits). Only starting a second review waits, since it would replace this one.
+  function currentWorkspaceFolder() {
+    const select = document.getElementById('workspaceFolderSelect');
+    return select ? select.value : '';
+  }
+
+  // Whether the dashboard currently shows the repository the review is about.
+  function reviewIsForActiveRepository() {
+    return Boolean(reviewState && reviewState.folder === currentWorkspaceFolder() && reviewState.repositoryPath === activeDashboardRepository);
+  }
+
+  function reviewProgressPercent() {
+    const detail = reviewState && reviewState.detail;
+    if (!detail) return 0;
+    if (detail.phase === 'finishing') return 100;
+    if (detail.filesTotal) return Math.round((100 * detail.filesDone) / detail.filesTotal);
+    return detail.units ? Math.round((100 * Math.max(0, detail.unit - 1)) / detail.units) : 0;
+  }
+
   function reviewLocked() {
     return Boolean(reviewState && reviewState.status === 'running');
   }
 
-  const REVIEW_LOCK_HINT = 'A review is running. Cancel it to switch.';
+  const REVIEW_LOCK_HINT = 'A review is running. Wait for it, or cancel it to start another.';
 
   function applyReviewLock() {
     const locked = reviewLocked();
     if (document.body && document.body.classList) document.body.classList.toggle('review-running', locked);
-    const lockable = '.sidebar-repository-item, #detailTabChanges, [data-action="reviewRelease"], [data-action="reviewComparison"], ' +
+    const lockable = '[data-action="reviewRelease"], [data-action="reviewComparison"], ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
-      if (element.classList.contains('sidebar-repository-item') && element.getAttribute('aria-current') === 'true') return;
       if (locked) {
         element.setAttribute('aria-disabled', 'true');
         if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';
@@ -2508,11 +2522,6 @@
         if (title) element.setAttribute('title', title); else element.removeAttribute('title');
       }
     });
-    const folders = document.getElementById('workspaceFolderSelect');
-    if (folders) {
-      folders.disabled = locked;
-      folders.title = locked ? REVIEW_LOCK_HINT : '';
-    }
   }
 
   function showDetailTab(tab) {
@@ -2546,9 +2555,7 @@
     const list = body.querySelector('.review-steps');
     const scrollTop = list ? list.scrollTop : 0;
     const finishing = detail && detail.phase === 'finishing';
-    const percent = !detail ? 0 : finishing ? 100 : detail.filesTotal
-      ? Math.round((100 * detail.filesDone) / detail.filesTotal)
-      : detail.units ? Math.round((100 * Math.max(0, detail.unit - 1)) / detail.units) : 0;
+    const percent = reviewProgressPercent();
     const phase = detail ? REVIEW_PHASES[detail.phase] || 'Reviewing' : 'Waiting';
     const where = detail && detail.unit && !finishing
       ? `Component ${detail.unit} of ${detail.units}: <code>${escapeHtml(detail.component || '')}</code> · ${escapeHtml(phase)}`
@@ -2568,7 +2575,7 @@
         <div class="review-progress-message" aria-live="polite">${escapeHtml(reviewState.progress || '')}</div>
       </div>
       ${steps ? `<ol class="review-steps">${steps}</ol>` : ''}
-      <p class="review-lock-note">Switching repository, folder or view is paused until the review finishes. Cancel it to switch now.</p>`;
+      <p class="review-lock-note">The review keeps running while you use the rest of the dashboard; its progress shows on the Review tab.</p>`;
     body.querySelector('.review-progress-fill').style.width = `${percent}%`;
     const newList = body.querySelector('.review-steps');
     if (newList) {
@@ -2688,9 +2695,11 @@
       ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
       : `Branch: ${target}`;
     title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
-    meta.textContent = label;
+    // Name the repository when the dashboard has moved on to another one (or another folder).
+    meta.textContent = reviewIsForActiveRepository() ? label : `${label} · ${reviewState.repositoryName || reviewState.repositoryPath}`;
     if (running) {
-      if (badge) badge.textContent = '…';
+      // Visible from the Changes tab too, so progress can be followed while working elsewhere.
+      if (badge) badge.textContent = reviewState.detail ? `${reviewProgressPercent()}%` : '…';
       // Before the engine reports (e.g. waiting for consent) the header says what it waits for.
       status.textContent = reviewState.detail ? '' : reviewState.progress || 'Starting…';
       renderReviewProgress(body);
@@ -2741,7 +2750,7 @@
     const evidence = finding && finding.evidence[evidenceIndex];
     if (!evidence) return;
     const request = reviewState.result.request;
-    if (request.scope === 'changes' && request.baseSha && reviewState.repositoryPath === activeDashboardRepository) {
+    if (request.scope === 'changes' && request.baseSha && reviewIsForActiveRepository()) {
       pendingEvidenceJump = { path: evidence.path, side: evidence.side, line: evidence.startLine };
       showDetailTab('changes');
       commitCompareSelection = [];
@@ -2749,7 +2758,7 @@
       loadComparison(request.baseSha, request.targetSha, 'review');
       return;
     }
-    postMessage('openReviewEvidence', { repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
+    postMessage('openReviewEvidence', { requestId: reviewState.requestId, repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
   }
 
   function highlightEvidenceLine() {

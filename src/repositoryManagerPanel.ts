@@ -223,7 +223,7 @@ export class RepositoryManagerPanel {
    */
   private async _switchWorkspaceFolder(folderPath: string): Promise<void> {
     this._cancelSummary();
-    this._reviews.cancel();
+    // A running review keeps going: it is pinned to the folder it started in.
     const folders = vscode.workspace.workspaceFolders || [];
     const targetFolder = folders.find(f => f.uri.fsPath === folderPath);
     if (!targetFolder) {

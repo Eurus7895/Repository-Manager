@@ -2629,9 +2629,8 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .diff-viewer > .diff-line-highlight { box-shadow: inset 3px 0 0 #e5a547; background: rgba(229, 165, 71, .16); }
 
 
-/* A running review keeps the dashboard on it: switches are paused until it finishes or is cancelled. */
+/* While a review runs, only starting another review waits. */
 .review-running [aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
-.review-running .sidebar-repository-item[aria-disabled="true"]:hover { background: transparent; }
 .review-lock-note { margin: 0 0 10px; color: var(--text-muted); font-size: 12px; }
 .review-progress-block { display: grid; gap: 6px; margin-bottom: 12px; }
 .review-progress-where { color: var(--text-primary); }

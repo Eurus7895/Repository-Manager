@@ -50,7 +50,11 @@ const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
 const RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
 const MAX_STORED_REVIEWS = 10;
 
-interface StoredReview { result: ReviewResult; context: ReviewReportContext; triage: ReviewTriage }
+/**
+ * A finished review. `workspaceRoot` is the folder it ran in: the dashboard may have switched
+ * folders since, and evidence, exports and fixes must still reach the reviewed repository.
+ */
+interface StoredReview { result: ReviewResult; context: ReviewReportContext; triage: ReviewTriage; workspaceRoot: string }
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -64,7 +68,7 @@ export class ReviewController {
   private active?: { requestId: number; repositoryPath: string };
   private readonly reviews = new Map<number, StoredReview>();
   /** At most one auto-fix: being proposed (`running`) or waiting for Apply/Discard (`proposal`). */
-  private fix?: { requestId: number; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
+  private fix?: { requestId: number; workspaceRoot: string; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
 
   constructor(private readonly host: ReviewControllerHost) {}
 
@@ -105,8 +109,8 @@ export class ReviewController {
     }
   }
 
-  private git(): GitCommandService {
-    return new GitCommandService(this.host.workspaceRoot());
+  private git(workspaceRoot = this.host.workspaceRoot()): GitCommandService {
+    return new GitCommandService(workspaceRoot);
   }
 
   private async start(payload: Record<string, unknown>): Promise<void> {
@@ -131,7 +135,9 @@ export class ReviewController {
         await this.host.post({ type, payload: { requestId, repositoryPath, ...extra } });
       }
     };
-    const git = this.git();
+    // Pinned for the whole review: switching workspace folders does not move it.
+    const workspaceRoot = this.host.workspaceRoot();
+    const git = this.git(workspaceRoot);
     const root = git.resolveRepositoryPath(repositoryPath);
     const repositoryName = path.basename(root);
     if (kind === 'release') {
@@ -188,11 +194,11 @@ export class ReviewController {
     const context: ReviewReportContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: new Date() };
     try {
       const modelId = optionalString(payload.modelId);
-      const result = await this.host.createRunner(this.host.workspaceRoot())
+      const result = await this.host.createRunner(workspaceRoot)
         .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
-      this.reviews.set(requestId, { result, context, triage: {} });
+      this.reviews.set(requestId, { result, context, triage: {}, workspaceRoot });
       while (this.reviews.size > MAX_STORED_REVIEWS) { this.reviews.delete(this.reviews.keys().next().value as number); }
       await reply('reviewCompleted', { result, readiness: assessReadiness(result),
         context: { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() } });
@@ -263,7 +269,7 @@ export class ReviewController {
     }
     this.cancelFixQuietly();
     const cancellation = this.host.createCancellation();
-    const fix: NonNullable<ReviewController['fix']> = { requestId, running: cancellation };
+    const fix: NonNullable<ReviewController['fix']> = { requestId, workspaceRoot: stored.workspaceRoot, running: cancellation };
     this.fix = fix;
     const reply = async (type: string, extra: Record<string, unknown>) => {
       if (this.fix === fix) { await this.host.post({ type, payload: { requestId, ...extra } }); }
@@ -275,7 +281,7 @@ export class ReviewController {
     };
     try {
       const findingIds = Object.entries(stored.triage).filter(([, triage]) => triage.decision === 'fix').map(([id]) => id);
-      const service = new ReviewFixService(this.git());
+      const service = new ReviewFixService(this.git(stored.workspaceRoot));
       // Fail fast on the selection and the working tree before asking for consent or calling the model.
       const { root, findings } = await service.prepare({ repositoryPath: stored.result.request.repositoryPath, result: stored.result,
         findingIds, isDirtyInEditor: absolute => this.host.isDirtyInEditor(absolute) });
@@ -309,7 +315,7 @@ export class ReviewController {
     const fix = this.fix;
     if (!fix?.proposal || fix.requestId !== payload.requestId) { return; }
     try {
-      const paths = await new ReviewFixService(this.git()).apply(fix.proposal, absolute => this.host.isDirtyInEditor(absolute));
+      const paths = await new ReviewFixService(this.git(fix.workspaceRoot)).apply(fix.proposal, absolute => this.host.isDirtyInEditor(absolute));
       this.fix = undefined;
       await this.host.post({ type: 'reviewFixApplied', payload: { requestId: fix.requestId, paths } });
       this.host.notify(`Applied the fix to ${paths.length} file${paths.length === 1 ? '' : 's'}. Nothing was committed.`);
@@ -347,7 +353,9 @@ export class ReviewController {
         filePath.startsWith('/') || filePath.startsWith('-') || filePath.split('/').includes('..') || !Number.isInteger(line) || line < 1) {
       return;
     }
-    const git = this.git();
+    // Evidence from a stored review resolves in the folder that review ran in.
+    const stored = typeof payload.requestId === 'number' ? this.reviews.get(payload.requestId) : undefined;
+    const git = this.git(stored?.workspaceRoot);
     try {
       const content = await git.execGitRaw(['show', `${revision}:${filePath}`], git.resolveRepositoryPath(repositoryPath), 10000);
       await this.host.openText(content, revision, filePath, line);

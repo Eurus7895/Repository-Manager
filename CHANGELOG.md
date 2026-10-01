@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Review whole** is now **Review branch**; the Review tab and the report say **Branch: main**.
-- While a review runs, the dashboard stays on it: switching repository, workspace folder or detail tab, and starting another review, are paused until it finishes or you cancel it.
+- A review runs in the background: switch repository, workspace folder or tab, and browse commits, while it continues. The Review tab shows its progress as a percentage, and the header names the reviewed repository when you are looking at another one. Clicking a commit shows its changes. Only starting a second review waits until the first finishes or is cancelled. Switching workspace folders no longer cancels a review.
 - History graph, Git Graph style: the checked-out branch stays in the first column with a ring on HEAD, and every branch keeps one column and one colour from its tip until it merges. A branch started from another branch's commit curves into it instead of leaving a dangling line.
 
 ## [1.6.0] - 2026-09-29

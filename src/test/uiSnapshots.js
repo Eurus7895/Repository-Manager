@@ -158,7 +158,6 @@ function startServer(workspace, otherFolder) {
         await reviews.handle(message);
       } else if (message.type === 'switchWorkspaceFolder') {
         // Same as RepositoryManagerPanel._switchWorkspaceFolder.
-        reviews.cancel();
         currentRoot = message.payload.folderPath;
         ops = new GitOperations(message.payload.folderPath);
         await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
@@ -359,17 +358,11 @@ async function main() {
     // Not snap(): the host is busy on purpose, waiting for the answer.
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
-    // While it waits and runs, the dashboard stays on the review: no switching.
+    // Only a second review waits; everything else stays usable while this one runs.
     const libBItem = page.locator('.sidebar-repository-item[data-path="lib-b"]');
-    assert.equal(await libBItem.getAttribute('aria-disabled'), 'true');
-    assert.equal(await page.isDisabled('#workspaceFolderSelect'), true);
-    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-disabled'), 'true');
     assert.equal(await page.getAttribute('.review-release-group [data-scope="branch"]', 'aria-disabled'), 'true');
-    // Forced: Playwright itself refuses aria-disabled targets; the handlers must ignore the click too.
-    await libBItem.click({ force: true });
-    await page.click('#detailTabChanges', { force: true });
-    assert.equal(await libBItem.getAttribute('aria-current'), null, 'switched repository during a review');
-    assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true', 'left the Review tab during a review');
+    assert.equal(await libBItem.getAttribute('aria-disabled'), null);
+    assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
     answerConsent('Always allow for this repository');
     // Progress: overall bar, where it is, and each component's state.
     await page.locator('.review-steps .review-step-current').waitFor();
@@ -381,11 +374,26 @@ async function main() {
     assert.match(await page.textContent('.review-progress-message'), /Reading related code/);
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(outputDir, '09b-review-progress.png'), animations: 'disabled', caret: 'hide' });
+    // Work elsewhere while it runs: another repository, its commits, the Changes tab.
+    await libBItem.click();
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    assert.equal(await libBItem.getAttribute('aria-current'), 'true');
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).click();
+    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true', 'clicking a commit did not show its changes');
+    assert.equal(await page.textContent('#reviewTabBadge'), '25%', 'the Review tab does not show progress');
+    await page.click('#detailTabReview');
+    await page.locator('.review-steps .review-step-current').waitFor();
+    assert.match(await page.textContent('#reviewMeta'), /^Diff: 1\.0\.0 → feature\/dashboard · workspace$/);
+    await page.click('#detailTabChanges');
+    // Back to the reviewed repository; the review was never interrupted.
+    await page.click('.sidebar-repository-item[data-path="."]');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
     releaseRunner();
+    await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
+    await page.click('#detailTabReview');
     await page.locator('.review-readiness.readiness-blocked').waitFor();
-    // Finished: switching works again.
-    assert.equal(await libBItem.getAttribute('aria-disabled'), null);
-    assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
+    assert.equal(await page.textContent('#reviewMeta'), 'Diff: 1.0.0 → feature/dashboard');
+    assert.equal(await page.getAttribute('.review-release-group [data-scope="branch"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
     assert.match(blocking, /Changed line passes input to eval/);
