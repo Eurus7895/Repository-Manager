@@ -33,7 +33,10 @@ async function main() {
 
     const posts = [];
     const notices = [];
-    let confirmAnswer = true;
+    let answer = 'Start review';
+    const questions = [];
+    let alwaysConfirm = false;
+    const remembered = new Set();
     let copied = null;
     let saved = null;
     let saveAnswer = true;
@@ -43,7 +46,10 @@ async function main() {
     const host = {
       workspaceRoot: () => repo,
       post: async message => { posts.push(message); },
-      confirm: async () => confirmAnswer,
+      ask: async (message, detail, actions) => { questions.push({ message, actions }); return answer; },
+      alwaysConfirm: () => alwaysConfirm,
+      isConsentRemembered: root => remembered.has(root),
+      rememberConsent: async root => { remembered.add(root); },
       createRunner: () => ({ review: (request, token, progress, modelId) => {
         const run = { request, token, modelId };
         runs.push(run);
@@ -63,23 +69,18 @@ async function main() {
     assert.equal(controller.handles('startReview'), true);
     assert.equal(controller.handles('getHistory'), false);
 
-    // Release defaults: newest version tag on the current branch, ignoring non-version tags.
-    await controller.handle({ type: 'getReviewDefaults', payload: { repositoryPath: '.' } });
-    const defaults = of('reviewDefaultsLoaded')[0].payload;
-    assert.equal(defaults.latestReleaseTag, '1.5.0');
-    assert.equal(defaults.currentBranch, 'main');
-    assert.ok(defaults.tags.includes('1.4.0') && defaults.branches.includes('main'));
-
+    // A release review names no revisions: the extension picks the latest release tag and the current branch.
     const start = (requestId, extra = {}) => controller.handle({ type: 'startReview', payload: {
-      requestId, repositoryPath: '.', scope: 'changes', baseRevision: '1.5.0', targetRevision: 'main',
-      categories: ['security', 'compliance'], kind: 'release', modelId: 'deep', ...extra } });
+      requestId, repositoryPath: '.', scope: 'changes', kind: 'release', modelId: 'deep', ...extra } });
 
-    // Declining consent sends nothing to the model.
-    confirmAnswer = false;
+    // Declining (or dismissing) consent sends nothing to the model.
+    answer = undefined;
     await start(1);
     assert.equal(runs.length, 0);
     assert.equal(of('reviewFailed').at(-1).payload.cancelled, true);
-    confirmAnswer = true;
+    assert.deepEqual(questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
+    assert.match(questions.at(-1).message, /changes 1\.5\.0 → main/);
+    answer = 'Start review';
 
     // A completed review reports progress, resolved commits, and readiness.
     const finding = { id: 'f1', category: 'security', severity: 'high', confidence: 'high', status: 'verified',
@@ -94,7 +95,13 @@ async function main() {
     await start(2);
     assert.equal(runs.at(-1).request.baseSha, release);
     assert.equal(runs.at(-1).request.targetSha, head);
+    assert.deepEqual(runs.at(-1).request.categories, ['security', 'compliance']);
     assert.equal(runs.at(-1).modelId, 'deep');
+    // The dashboard learns the resolved range, since it did not choose it.
+    const labelled = of('reviewProgress').find(message => message.payload.requestId === 2 && message.payload.targetLabel);
+    assert.deepEqual([labelled.payload.baseLabel, labelled.payload.targetLabel], ['1.5.0', 'main']);
+    // "Start review" answers once; it does not remember.
+    assert.equal(remembered.size, 0);
     assert.ok(of('reviewProgress').some(message => message.payload.message.includes('component 1/1')));
     const completed = of('reviewCompleted').at(-1).payload;
     assert.equal(completed.requestId, 2);
@@ -103,7 +110,7 @@ async function main() {
 
     // Export: copy and save (dismissing the save dialog reports nothing).
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 2, format: 'copy' } });
-    assert.match(copied, /^# Release review: 1\.5\.0 → main/);
+    assert.match(copied, /^# Release review — Diff: 1\.5\.0 → main/);
     saveAnswer = false;
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 2, format: 'save' } });
     assert.equal(saved.name, 'release-review-1.5.0-main.md');
@@ -122,13 +129,13 @@ async function main() {
     const superseded = runs.at(-1);
     runnerScript = async run => ({ request: run.request, findings: [], policyResults: [], policyStatus: 'not_configured',
       limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } });
-    await start(4, { categories: ['security'] });
+    await start(4);
     assert.equal(superseded.token.isCancellationRequested, true);
     releaseFirst();
     await first;
     assert.equal(posts.filter(message => message.payload && message.payload.requestId === 3 &&
       ['reviewCompleted', 'reviewFailed'].includes(message.type)).length, 0);
-    assert.equal(of('reviewCompleted').at(-1).payload.readiness.status, 'no_blocking_findings');
+    assert.equal(of('reviewCompleted').at(-1).payload.requestId, 4);
 
     // Cancel while running.
     runnerScript = (run) => new Promise((resolve, reject) => { releaseFirst = () => reject(new Error('Cancelled')); });
@@ -157,8 +164,44 @@ async function main() {
     assert.equal(posts.filter(message => message.type === 'reviewFailed' && message.payload.requestId === 7).length, 1);
 
     // Unknown revision.
-    await start(6, { baseRevision: 'no-such-tag' });
+    await start(6, { kind: 'review', baseRevision: 'no-such-tag', targetRevision: 'main' });
     assert.match(of('reviewFailed').at(-1).payload.message, /Cannot resolve revision/);
+
+    // "Always allow" remembers this repository: later reviews start without asking.
+    runnerScript = async run => ({ request: run.request, findings: [], policyResults: [], policyStatus: 'not_configured',
+      limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } });
+    const asked = questions.length;
+    answer = 'Always allow for this repository';
+    await start(8, { scope: 'branch' });
+    assert.equal(questions.length, asked + 1);
+    assert.match(questions.at(-1).message, /every file at main/);
+    assert.deepEqual([...remembered], [repo]);
+    assert.equal(runs.at(-1).request.scope, 'branch');
+    assert.equal(runs.at(-1).request.baseSha, undefined);
+    answer = undefined;
+    await start(9);
+    assert.equal(questions.length, asked + 1, 'asked again after "Always allow"');
+    assert.equal(of('reviewCompleted').at(-1).payload.requestId, 9);
+    // The setting asks every time again, without offering "Always allow".
+    alwaysConfirm = true;
+    await start(10);
+    assert.equal(questions.length, asked + 2);
+    assert.deepEqual(questions.at(-1).actions, ['Start review']);
+    assert.equal(of('reviewFailed').at(-1).payload.requestId, 10);
+    alwaysConfirm = false;
+
+    // A commit reviewed against its parent: no base revision at all.
+    await start(11, { kind: 'review', targetRevision: head });
+    assert.equal(runs.at(-1).request.baseSha, undefined);
+    assert.equal(runs.at(-1).request.scope, 'changes');
+
+    // Without a release tag on the branch, a release diff explains what to do instead.
+    git('checkout', '-q', '--orphan', 'fresh');
+    commit('other.js', 'x\n', 'fresh start');
+    await start(12);
+    assert.match(of('reviewFailed').at(-1).payload.message, /No release tag .* reachable from fresh/);
+    await start(13, { scope: 'branch' });
+    assert.equal(of('reviewCompleted').at(-1).payload.context.targetLabel, 'fresh');
 
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.
     await controller.handle({ type: 'openReviewEvidence', payload: { repositoryPath: '.', revision: release, path: 'app.js', line: 1 } });

@@ -44,7 +44,7 @@ export function registerOpenPanelCommand(
 ): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('repositoryManager.openPanel', () => {
-      RepositoryManagerPanel.createOrShow(ctx.extensionUri, ctx.workspaceRoot);
+      RepositoryManagerPanel.createOrShow(ctx.extensionUri, ctx.workspaceRoot, context.workspaceState);
     })
   );
 }

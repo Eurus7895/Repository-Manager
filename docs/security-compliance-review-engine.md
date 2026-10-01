@@ -10,7 +10,9 @@ Compliance rules with `verification: "manual"` or `"static"` are marked `insuffi
 
 ## Dashboard and release review (W6–W7)
 
-`ReviewController` connects the engine to the dashboard. A review starts from the Base/Target commit selection, a branch comparison, the history menu (**Review this commit…**, **Review files at this commit…**) or **Review release**, which defaults to the latest version tag (`1.5.0` or `v1.5.0`) on the current branch → the current branch. Before any request, a modal asks for consent to send source to the selected Copilot model. One review runs at a time; starting another cancels the first, and **Cancel** stops it.
+`ReviewController` connects the engine to the dashboard. Each entry point offers **Review changes** (`scope: "changes"`) and **Review whole** (`scope: "branch"`), and starts at once with both categories and the model selected for AI summaries; there is no dialog. The entry points are the Base/Target commit selection or a branch comparison (Base → Target, or every file at Target), the history menu (the commit against its parent, or every file at it) and **◈ Release**. A release review names no revisions: the controller resolves the latest version tag (`1.5.0` or `v1.5.0`) reachable from HEAD → the current branch, or for the whole review just the current branch, and reports the labels back to the Review tab. When no release tag is reachable, it says to select Base and Target instead.
+
+Before any request, a modal asks for consent to send source to Copilot, with **Start review** and **Always allow for this repository**. "Always allow" is stored in workspace state per repository root; `repositoryManager.review.confirmBeforeSending` asks before every review again (and then offers only **Start review**). One review runs at a time; starting another cancels the first, and **Cancel** stops it.
 
 Results open in the detail pane's **Review** tab. Readiness is computed by `assessReadiness` in `reviewReport.ts`, the same function the exported report uses:
 
@@ -18,4 +20,4 @@ Results open in the detail pane's **Review** tab. Readiness is computed by `asse
 - **Needs attention**: hypotheses (most severe first, so an unconfirmed critical finding leads but does not block), verified medium or low findings, `insufficient_evidence` rules, an unconfigured policy when compliance was requested, and incomplete coverage.
 - **No blocking findings**: none of the above. This is not a statement that the code is secure.
 
-Evidence in a two-commit review jumps to the cited line in the dashboard diff; otherwise the file opens read-only at the reviewed revision. **Copy Markdown** and **Save report…** export the report with both commits, the policy hash, the model, coverage and limitations. Reviews run in VS Code because the Copilot language-model API is not available in CI.
+Evidence in a two-commit review jumps to the cited line in the dashboard diff; otherwise the file opens read-only at the reviewed revision. The Review tab header and the report title name the kind of review, **Diff: 1.5.0 → main** or **Whole: main**. **Copy Markdown** and **Save report…** export the report with both commits, the policy hash, the model, coverage and limitations. Reviews run in VS Code because the Copilot language-model API is not available in CI.

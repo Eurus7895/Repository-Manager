@@ -16,6 +16,8 @@ import { ReviewController, ReviewRunner } from './reviewController';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
+/** Workspace state: repositories whose reviews start without the consent question. */
+const REVIEW_CONSENT_KEY = 'repositoryManager.reviewConsent';
 
 /** Webview requests that only read Git state and may run during a background fetch. */
 const READ_ONLY_MESSAGES = new Set([
@@ -23,7 +25,7 @@ const READ_ONLY_MESSAGES = new Set([
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
   'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
-  'startReview', 'cancelReview', 'exportReviewReport', 'getReviewDefaults', 'openReviewEvidence'
+  'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence'
 ]);
 
 export class RepositoryManagerPanel {
@@ -44,7 +46,7 @@ export class RepositoryManagerPanel {
   private _lastAutoFetch = 0;
   private _messagesInFlight = 0;
 
-  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string) {
+  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento) {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
@@ -70,14 +72,16 @@ export class RepositoryManagerPanel {
     RepositoryManagerPanel.currentPanel = new RepositoryManagerPanel(
       panel,
       extensionUri,
-      workspaceRoot
+      workspaceRoot,
+      workspaceState
     );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
-    workspaceRoot: string
+    workspaceRoot: string,
+    workspaceState?: vscode.Memento
   ) {
     this._panel = panel;
     this._extensionUri = extensionUri;
@@ -88,8 +92,13 @@ export class RepositoryManagerPanel {
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
       post: async message => { await this._panel.webview.postMessage(message); },
-      confirm: async (message, detail, action) =>
-        (await vscode.window.showInformationMessage(message, { modal: true, detail }, action)) === action,
+      ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
+      alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
+      isConsentRemembered: root => (workspaceState?.get<string[]>(REVIEW_CONSENT_KEY) || []).includes(root),
+      rememberConsent: async root => {
+        const remembered = workspaceState?.get<string[]>(REVIEW_CONSENT_KEY) || [];
+        if (workspaceState && !remembered.includes(root)) { await workspaceState.update(REVIEW_CONSENT_KEY, [...remembered, root]); }
+      },
       createRunner: root => new SecurityReviewService(new GitCommandService(root)) as unknown as ReviewRunner,
       createCancellation: () => new vscode.CancellationTokenSource(),
       copyText: text => Promise.resolve(vscode.env.clipboard.writeText(text)),

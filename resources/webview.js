@@ -640,42 +640,25 @@
       document.getElementById('reviewBranchModal').classList.remove('active');
     },
 
-    openReleaseReview: () => openReviewDialog({ kind: 'release', scope: 'changes' }),
+    // Every entry point offers the same two choices and starts at once: "changes" reviews the
+    // diff Base → Target, "branch" (whole) reviews every file at Target.
+    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'branch' ? 'branch' : 'changes' }),
 
-    // From the Base/Target commit selection or a branch comparison.
-    reviewComparison: (el) => openReviewDialog({ scope: 'changes', base: el.dataset.base, target: el.dataset.target }),
+    reviewComparison: (el) => el.dataset.scope === 'branch'
+      ? startReview({ scope: 'branch', target: el.dataset.target })
+      : startReview({ scope: 'changes', base: el.dataset.base, target: el.dataset.target }),
 
     contextReviewCommit: () => {
       if (!historyContextTarget) return;
       hideHistoryContextMenu();
-      openReviewDialog({ scope: 'changes', target: historyContextTarget.hash,
-        hint: 'Leave Base empty to review this commit against its parent.' });
+      // No base: the extension reviews the commit against its parent.
+      startReview({ scope: 'changes', target: historyContextTarget.hash });
     },
 
     contextReviewSnapshot: () => {
       if (!historyContextTarget) return;
       hideHistoryContextMenu();
-      openReviewDialog({ scope: 'branch', target: historyContextTarget.hash });
-    },
-
-    startReview: () => {
-      const scope = (document.querySelector('input[name="reviewScope"]:checked') || {}).value || 'changes';
-      const base = document.getElementById('reviewBase').value.trim();
-      const target = document.getElementById('reviewTarget').value.trim();
-      const categories = [['reviewSecurity', 'security'], ['reviewCompliance', 'compliance']]
-        .filter(([id]) => document.getElementById(id).checked).map(([, category]) => category);
-      const hint = document.getElementById('reviewHint');
-      if (!target) { hint.textContent = 'Enter the target revision to review.'; return; }
-      if (!categories.length) { hint.textContent = 'Choose security, team policy, or both.'; return; }
-      reviewRequestId += 1;
-      reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind: reviewDialogKind,
-        baseLabel: scope === 'changes' ? base : '', targetLabel: target, status: 'running' };
-      document.getElementById('reviewModal').classList.remove('active');
-      renderReviewPanel();
-      showDetailTab('review');
-      postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope,
-        baseRevision: scope === 'changes' ? base : undefined, targetRevision: target, categories, kind: reviewDialogKind,
-        baseLabel: base || undefined, targetLabel: target, modelId: document.getElementById('reviewModel').value || undefined });
+      startReview({ scope: 'branch', target: historyContextTarget.hash });
     },
 
     cancelReview: () => postMessage('cancelReview', {}),
@@ -980,7 +963,7 @@
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))} <button type="button" class="compare-review-button" data-action="reviewComparison" data-base="${escapeHtml(commitCompareSelection[0])}" data-target="${escapeHtml(commitCompareSelection[1])}">Review</button> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span>${reviewButtons(commitCompareSelection[0], commitCompareSelection[1])} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
   }
 
   function loadParentCommitDetail(commitHash) {
@@ -1043,8 +1026,8 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      const reviewButton = source === 'review' ? '' : ` <button type="button" class="compare-review-button" data-action="reviewComparison" data-base="${escapeHtml(baseRevision)}" data-target="${escapeHtml(targetRevision)}">Review</button>`;
-      status.innerHTML = `${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision)}`;
+      status.innerHTML = `<span class="compare-range">${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     }
     saveState();
     postMessage('getCommitDetail', {
@@ -1563,12 +1546,6 @@
             selectedSummaryModelId = '';
           }
           select.value = selectedSummaryModelId;
-          const reviewModels = document.getElementById('reviewModel');
-          if (reviewModels) {
-            const chosen = reviewModels.value;
-            reviewModels.innerHTML = select.innerHTML;
-            reviewModels.value = Array.from(reviewModels.options || []).some(option => option.value === chosen) ? chosen : '';
-          }
           const button = document.getElementById('loadSummaryModelsButton');
           button.disabled = false;
           button.textContent = 'Reload models';
@@ -1655,23 +1632,14 @@
           if (!reviewState || payload.requestId !== reviewState.requestId) break;
           if (message.type === 'reviewProgress') {
             reviewState.progress = payload.message;
+            // The extension resolves the release range, so it reports the labels it settled on.
+            if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
             Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context });
           } else {
             Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
           }
           renderReviewPanel();
-          break;
-        }
-
-        case 'reviewDefaultsLoaded': {
-          reviewDefaults = message.payload || null;
-          const list = document.getElementById('reviewRevisions');
-          if (list && reviewDefaults) {
-            const names = [reviewDefaults.currentBranch].concat(reviewDefaults.branches || [], reviewDefaults.tags || []);
-            list.innerHTML = Array.from(new Set(names.filter(Boolean))).map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
-          }
-          applyReleaseDefaults();
           break;
         }
 
@@ -1692,7 +1660,6 @@
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
           reviewState = null;
-          reviewDefaults = null;
           renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
@@ -2354,44 +2321,28 @@
   // and displays results, so the dashboard and the exported report always agree.
   let reviewRequestId = 0;
   let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
-  let reviewDialogKind = 'review';
-  let reviewDefaults = null;
   let pendingEvidenceJump = null;
   const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
-  function setReviewScope(scope) {
-    document.querySelectorAll('input[name="reviewScope"]').forEach(input => { input.checked = input.value === scope; });
-    const baseGroup = document.getElementById('reviewBaseGroup');
-    if (baseGroup) baseGroup.hidden = scope !== 'changes';
+  function reviewButtons(base, target) {
+    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}" title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}" title="Review every file at Target"><span class="review-entry-word">Review </span>whole</button></span>`;
   }
 
-  function applyReleaseDefaults() {
-    if (reviewDialogKind !== 'release' || !reviewDefaults || reviewDefaults.repositoryPath !== activeDashboardRepository) return;
-    const base = document.getElementById('reviewBase');
-    const target = document.getElementById('reviewTarget');
-    const hint = document.getElementById('reviewHint');
-    if (base && !base.value && reviewDefaults.latestReleaseTag) base.value = reviewDefaults.latestReleaseTag;
-    if (target && !target.value) target.value = reviewDefaults.currentBranch || 'HEAD';
-    if (hint) {
-      hint.textContent = reviewDefaults.latestReleaseTag
-        ? `Changes since the latest release tag, ${reviewDefaults.latestReleaseTag}. Change either end if needed.`
-        : 'No release tag like 1.5.0 or v1.5.0 was found on this branch; enter a base revision.';
-    }
-  }
-
-  function openReviewDialog(options) {
-    reviewDialogKind = options.kind || 'review';
-    setReviewScope(options.scope || 'changes');
-    document.getElementById('reviewBase').value = options.base || '';
-    document.getElementById('reviewTarget').value = options.target || '';
-    document.getElementById('reviewHint').textContent = options.hint || '';
-    document.getElementById('reviewModalTitle').textContent = reviewDialogKind === 'release'
-      ? 'Release review' : 'Security and compliance review';
-    document.getElementById('reviewModal').classList.add('active');
-    postMessage('getReviewDefaults', { repositoryPath: activeDashboardRepository });
-    const models = document.getElementById('reviewModel');
-    if (models && models.options.length <= 1) postMessage('loadSummaryModels', {});
-    applyReleaseDefaults();
+  // Starts at once with security and team policy, using the model chosen for AI summaries;
+  // the extension asks for consent until it is allowed for the repository.
+  function startReview(options) {
+    if (!activeDashboardRepository) return;
+    const scope = options.scope;
+    const kind = options.kind || 'review';
+    reviewRequestId += 1;
+    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+      baseLabel: scope === 'changes' ? (options.base || '') : '', targetLabel: options.target || '', status: 'running' };
+    renderReviewPanel();
+    showDetailTab('review');
+    postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+      baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
+      baseLabel: scope === 'changes' && options.base ? shortRevision(options.base) : undefined,
+      targetLabel: options.target ? shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
   }
 
   function showDetailTab(tab) {
@@ -2448,14 +2399,17 @@
     document.getElementById('cancelReviewButton').hidden = !running;
     document.getElementById('copyReviewButton').hidden = !done;
     document.getElementById('saveReviewButton').hidden = !done;
+    // A release review's ends are unknown until the extension has resolved them.
+    const release = reviewState.kind === 'release';
+    const target = reviewState.targetLabel || (release ? 'current branch' : '');
     const label = reviewState.scope === 'changes'
-      ? `${reviewState.baseLabel || 'parent'} → ${reviewState.targetLabel}`
-      : `all files at ${reviewState.targetLabel}`;
+      ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
+      : `Whole: ${target}`;
     title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
     meta.textContent = label;
     if (running) {
       if (badge) badge.textContent = '…';
-      status.textContent = reviewState.progress || 'Waiting for confirmation…';
+      status.textContent = reviewState.progress || 'Starting…';
       body.innerHTML = '<div class="dashboard-loading">Reviewing with Copilot. Large reviews can take several minutes.</div>';
       return;
     }
@@ -2521,10 +2475,6 @@
     row.classList.add('diff-line-highlight');
     row.scrollIntoView({ block: 'center' });
   }
-
-  document.querySelectorAll('input[name="reviewScope"]').forEach(input => {
-    input.addEventListener('change', () => setReviewScope(input.value));
-  });
 
   // Dialog behaviour for every .modal-overlay: move focus in when it opens, keep Tab inside,
   // close on Escape through the dialog's own close button, and return focus when it closes.

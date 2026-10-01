@@ -125,10 +125,10 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   const { request, coverage } = result;
   const range = request.scope === 'changes'
     ? `${code(context.baseLabel || short(request.baseSha) || 'parent')} (${short(request.baseSha) || 'root'}) → ${code(context.targetLabel)} (${short(request.targetSha)})`
-    : `Whole branch at ${code(context.targetLabel)} (${short(request.targetSha)})`;
-  const title = context.kind === 'release'
-    ? `Release review: ${context.baseLabel || short(request.baseSha)} → ${context.targetLabel}`
-    : `Security and compliance review: ${context.targetLabel}`;
+    : `Every file at ${code(context.targetLabel)} (${short(request.targetSha)})`;
+  const title = `${context.kind === 'release' ? 'Release review' : 'Security and compliance review'} — ${request.scope === 'changes'
+    ? `Diff: ${context.baseLabel || short(request.baseSha) || 'parent'} → ${context.targetLabel}`
+    : `Whole: ${context.targetLabel}`}`;
   const findingsById = new Map(result.findings.map(finding => [finding.id, finding]));
   const lines: string[] = [
     `# ${text(title)}`,

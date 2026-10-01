@@ -45,11 +45,16 @@ const markdown = renderReviewMarkdown(result({
   policyResults: [{ ruleId: 'R-1', status: 'violation', reason: 'pipe | in reason', evidence: [] }],
   policyStatus: 'configured', request: { ...result().request, policyHash: 'c'.repeat(64) }
 }), { kind: 'release', repositoryName: 'repo', baseLabel: '1.5.0', targetLabel: 'main', generatedAt: new Date('2026-10-01T00:00:00Z') });
-assert.match(markdown, /^# Release review: 1\.5\.0 → main/);
+assert.match(markdown, /^# Release review — Diff: 1\.5\.0 → main/);
 assert.match(markdown, /\*\*Readiness: Blocked\*\* \(2 blocking/);
 assert.match(markdown, /`1\.5\.0` \(aaaaaaaa\) → `main` \(bbbbbbbb\)/);
 assert.doesNotMatch(markdown, /<script>/);
 assert.match(markdown, /&lt;script&gt;/);
 assert.match(markdown, /pipe \\\| in reason/);
 assert.match(markdown, /No findings does not mean no vulnerabilities/);
+// A whole-tree release review names only the target, never an "undefined" base.
+const whole = renderReviewMarkdown(result({ request: { ...result().request, scope: 'branch', baseSha: undefined } }),
+  { kind: 'release', repositoryName: 'repo', targetLabel: 'main', generatedAt: new Date('2026-10-01T00:00:00Z') });
+assert.match(whole, /^# Release review — Whole: main\n/);
+assert.match(whole, /Every file at `main` \(bbbbbbbb\)/);
 console.log('Review report smoke passed');

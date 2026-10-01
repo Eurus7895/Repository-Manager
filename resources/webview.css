@@ -1477,7 +1477,8 @@ button.reference-detail-item:hover { background: #222730; }
 .history-controls select { min-width: 110px; }
 .remote-toggle { color: var(--text-secondary); font-size: 12px; }
 .remote-toggle input { accent-color: var(--accent); }
-.dashboard-search { width: min(360px, 43%); }
+/* The search box gives way first, so the comparison range and review buttons stay readable. */
+.dashboard-search { flex: 0 1 360px; width: auto; min-width: 140px; grid-template-columns: 20px minmax(0, 1fr); }
 
 .compare-branches-button {
   height: 30px;
@@ -1506,6 +1507,10 @@ button.reference-detail-item:hover { background: #222730; }
 }
 
 .commit-compare-status[hidden] { display: none; }
+/* Only the range text gives way when space is short; the buttons stay whole. */
+.commit-compare-status:not([hidden]) { display: flex; align-items: center; flex: 0 1 auto; min-width: min-content; }
+.commit-compare-status > * { flex: none; }
+.commit-compare-status > .compare-range { flex: 0 1 auto; min-width: 90px; overflow: hidden; text-overflow: ellipsis; }
 
 .commit-compare-status button {
   margin-left: 5px;
@@ -2038,6 +2043,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   .commit-content { grid-template-columns: 190px 6px minmax(0, 1fr); }
   .compare-branches-button { padding: 0 7px; font-size: 0; }
   .compare-branches-button::first-letter { font-size: 13px; }
+  .review-entry button { padding: 0 6px; }
   .commit-compare-status { display: none; }
   .branch-compare-fields { grid-template-columns: 1fr; }
   .compare-direction { display: none; }
@@ -2534,7 +2540,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .commit-detail-region > .detail-tabs { grid-row: 3; }
 .commit-detail-region > .commit-content,
 .commit-detail-region > .review-panel { grid-row: 4; }
-.commit-content[hidden], .review-panel[hidden], .detail-tabs[hidden], #reviewBaseGroup[hidden] { display: none; }
+.commit-content[hidden], .review-panel[hidden], .detail-tabs[hidden] { display: none; }
 
 .detail-tabs { display: flex; gap: 2px; padding: 0 20px; border-bottom: 1px solid var(--border); }
 .detail-tabs [role="tab"] {
@@ -2592,9 +2598,31 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .policy-insufficient_evidence td:nth-child(2) { color: #f0c07a; }
 .policy-pass td:nth-child(2) { color: #7fe3cb; }
 .review-gaps { padding-left: 18px; color: var(--text-secondary); }
-.compare-review-button { margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.review-entry { display: inline-flex; align-items: center; vertical-align: middle; white-space: nowrap; }
+.review-entry > * { border: 1px solid #2e333d; }
+.review-entry > * + * { border-left: 0; }
+.review-entry > :first-child { border-radius: 6px 0 0 6px; }
+.review-entry > :last-child { border-radius: 0 6px 6px 0; }
+.review-entry button { padding: 0 8px; color: var(--text-secondary); background: var(--bg-tertiary); font: inherit; cursor: pointer; }
+.review-entry button:hover { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
+.review-entry button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.review-release-group { align-items: stretch; height: 30px; font-size: 12px; }
+.review-release-group > * { display: block; line-height: 28px; }
+.review-entry-label { padding: 0 8px; color: var(--text-muted); }
+/* Compact: "◈ | Changes | Whole"; the buttons' titles still say what each one reviews. */
+@media (max-width: 1100px) {
+  .review-entry-word { display: none; }
+  .review-entry button::first-letter { text-transform: uppercase; }
+  .history-controls { gap: 6px; }
+  .compare-branches-button { padding: 0 7px; font-size: 0; }
+  .compare-branches-button::first-letter { font-size: 13px; }
+  .commit-compare-status > .compare-range { min-width: 40px; }
+  .dashboard-search { min-width: 100px; }
+  /* One set of review buttons at a time: a Base/Target selection takes the release group's place. */
+  .history-controls:has(.commit-compare-status:not([hidden])) .review-release-group { display: none; }
+}
+.commit-compare-status .review-entry { margin-left: 6px; }
+.commit-compare-status .review-entry > * { border-color: rgba(60, 199, 166, .45); }
+.commit-compare-status .review-entry button { display: block; width: auto; height: 18px; margin: 0; padding: 0 6px; color: inherit; background: transparent; font-size: 10px; line-height: 16px; }
 .diff-viewer > .diff-line-highlight { box-shadow: inset 3px 0 0 #e5a547; background: rgba(229, 165, 71, .16); }
 
-.review-modal fieldset { border: 0; }
-.review-modal fieldset label { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; cursor: pointer; }
-.review-modal .review-categories { margin-top: 14px; }

@@ -106,7 +106,8 @@ function startServer(workspace, otherFolder) {
   let hostBusy = 0; // host messages still being handled
   let currentRoot = workspace;
   // The review runs through the real ReviewController with a scripted runner instead of Copilot.
-  const reviewProbe = { runner: null, copied: null, opened: null };
+  // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
+  const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set() };
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -132,7 +133,10 @@ function startServer(workspace, otherFolder) {
     const reviews = new ReviewController({
       workspaceRoot: () => currentRoot,
       post,
-      confirm: async () => true,
+      ask: async (message, detail, actions) => { reviewProbe.questions.push({ message, actions }); return reviewProbe.ask(actions); },
+      alwaysConfirm: () => false,
+      isConsentRemembered: root => reviewProbe.remembered.has(root),
+      rememberConsent: async root => { reviewProbe.remembered.add(root); },
       createRunner: () => ({ review: (request, token, progress) => reviewProbe.runner(request, token, progress) }),
       createCancellation: () => {
         const token = { isCancellationRequested: false };
@@ -312,16 +316,23 @@ async function main() {
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    await page.click('[data-action="openReleaseReview"]');
-    await page.locator('#reviewModal.active').waitFor();
-    await page.waitForFunction(() => document.getElementById('reviewBase').value === '1.0.0');
-    assert.equal(await page.inputValue('#reviewTarget'), 'feature/dashboard');
-    assert.match(await page.textContent('#reviewHint'), /latest release tag, 1\.0\.0/);
-    await page.uncheck('#reviewCompliance');
-    await snap(page, '09-release-review-dialog');
-    await page.click('[data-action="startReview"]');
-    await page.locator('.review-readiness.readiness-blocked').waitFor();
+    // Every entry point offers "Review changes" and "Review whole"; one click starts, no dialog.
+    assert.equal(await page.locator('.review-release-group button').count(), 2);
+    assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
+    // The consent question is held open so the header can be checked while it waits.
+    let answerConsent;
+    reviewProbe.ask = () => new Promise(resolve => { answerConsent = resolve; });
+    await page.click('.review-release-group [data-action="reviewRelease"][data-scope="changes"]');
     assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
+    // The extension resolved the release range and reported it back.
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
+    assert.equal(await page.textContent('#reviewStatus'), 'Waiting for confirmation…');
+    assert.deepEqual(reviewProbe.questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
+    // Not snap(): the host is busy on purpose, waiting for the answer.
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
+    answerConsent('Always allow for this repository');
+    await page.locator('.review-readiness.readiness-blocked').waitFor();
     const blocking = await page.locator('.review-body section').nth(0).textContent();
     const attention = await page.locator('.review-body section').nth(1).locator('.review-finding').first().textContent();
     assert.match(blocking, /Changed line passes input to eval/);
@@ -330,7 +341,7 @@ async function main() {
     await snap(page, '10-review-results');
     await page.click('[data-action="exportReview"][data-format="copy"]');
     for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
-    assert.match(reviewProbe.copied || '', /^# Release review: 1\.0\.0 → feature\/dashboard/);
+    assert.match(reviewProbe.copied || '', /^# Release review — Diff: 1\.0\.0 → feature\/dashboard/);
     // Evidence opens the cited line in the dashboard diff.
     await page.locator('.review-body section').nth(0).locator('[data-action="reviewEvidence"]').first().click();
     await page.locator('#dashboardDiff .diff-line-highlight').waitFor();
@@ -338,20 +349,51 @@ async function main() {
     assert.equal(await page.locator('#dashboardDiff .diff-line-highlight .diff-ln').nth(1).textContent(), '3');
     await snap(page, '11-review-evidence');
 
-    // A whole-branch review from the history menu hides the base field.
+    // From here on the repository is allowed: a question would fail the test.
+    const questionsAsked = reviewProbe.questions.length;
+    reviewProbe.ask = () => undefined;
+    const runs = [];
+    const record = request => { runs.push(request); return { request, findings: [], policyResults: [], policyStatus: 'not_configured',
+      limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }; };
+    reviewProbe.runner = async request => record(request);
+    // Base/Target selection: both buttons sit in the comparison status.
+    const nodes = page.locator('.graph-node-control');
+    const [baseHash, targetHash] = [await nodes.nth(1).getAttribute('data-commit'), await nodes.nth(0).getAttribute('data-commit')];
+    await nodes.nth(1).click();
+    await nodes.nth(0).click();
+    const compareButtons = page.locator('#commitCompareStatus .review-entry button');
+    await compareButtons.first().waitFor();
+    assert.deepEqual(await compareButtons.allTextContents(), ['Review changes', 'Review whole']);
+    await snap(page, '12-compare-review-buttons');
+    await compareButtons.nth(0).click();
+    await page.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
+    await page.click('#detailTabChanges');
+    await page.locator('#commitCompareStatus .review-entry button').nth(1).click();
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Whole: '));
+    for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['branch', undefined, targetHash]);
+    assert.deepEqual(runs.at(-1).categories, ['security', 'compliance']);
+
+    // History menu: "changes" reviews the commit against its parent; "whole" every file at it.
     await page.locator('.history-row').first().click({ button: 'right' });
-    await page.click('#historyContextMenu [data-action="contextReviewSnapshot"]');
-    await page.locator('#reviewModal.active').waitFor();
-    assert.equal(await page.isChecked('input[name="reviewScope"][value="branch"]'), true);
-    assert.equal(await page.isVisible('#reviewBase'), false);
-    // Cancelling a running review.
+    assert.match(await page.textContent('#historyContextMenu [data-action="contextReviewCommit"]'), /Review changes/);
+    await page.click('#historyContextMenu [data-action="contextReviewCommit"]');
+    for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['changes', undefined]);
+    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Diff: parent → '));
+    // Cancelling a running whole-tree review.
     reviewProbe.runner = (request, token) => new Promise((resolve, reject) => {
       const timer = setInterval(() => { if (token.isCancellationRequested) { clearInterval(timer); reject(new Error('Cancelled')); } }, 20);
     });
-    await page.click('[data-action="startReview"]');
+    await page.locator('.history-row').first().click({ button: 'right' });
+    await page.click('#historyContextMenu [data-action="contextReviewSnapshot"]');
     await page.locator('#cancelReviewButton').waitFor({ state: 'visible' });
+    assert.match(await page.textContent('#reviewMeta'), /^Whole: /);
     await page.click('#cancelReviewButton');
     await page.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
+    assert.equal(reviewProbe.questions.length, questionsAsked, 'asked for consent after "Always allow"');
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
@@ -416,8 +458,30 @@ async function main() {
       const layout = await narrow.evaluate(() => ({
         tallestRow: Math.max(...Array.from(document.querySelectorAll('.history-row')).map(row => row.getBoundingClientRect().height)),
         messageWidth: document.querySelector('.history-row .history-message').getBoundingClientRect().width,
-        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        // The review buttons must be fully on screen (the controls row clips, it does not scroll).
+        releaseRight: document.querySelector('.review-release-group').getBoundingClientRect().right,
+        controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right,
+        releaseText: document.querySelector('.review-release-group').innerText.replace(/\s+/g, ' ').trim()
       }));
+      assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
+      assert.equal(layout.releaseText.toLowerCase(), '◈ changes whole');
+      // With a Base/Target selection, the comparison pill keeps both review buttons on screen too.
+      if (width > 760) {
+        await narrow.locator('.graph-node-control').nth(1).click();
+        await narrow.locator('.graph-node-control').nth(0).click();
+        await narrow.locator('#commitCompareStatus .review-entry').waitFor();
+        const pill = await narrow.evaluate(() => ({
+          right: document.querySelector('#commitCompareStatus [data-action="clearCommitComparison"]').getBoundingClientRect().right,
+          statusRight: document.getElementById('commitCompareStatus').getBoundingClientRect().right,
+          controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right
+        }));
+        assert.ok(pill.right <= pill.statusRight && pill.statusRight <= pill.controlsRight, `${width}px: the comparison review buttons are cut off`);
+        assert.equal(await narrow.locator('.review-release-group').isVisible(), false, `${width}px: two sets of review buttons`);
+        await snap(narrow, `${name}-compare`);
+        await narrow.click('[data-action="clearCommitComparison"]');
+        await narrow.locator('.review-release-group').waitFor();
+      }
       assert.ok(layout.tallestRow <= 80, `${width}px: a history row is ${layout.tallestRow}px tall`);
       assert.ok(layout.messageWidth >= 150, `${width}px: the message column is only ${layout.messageWidth}px`);
       assert.equal(layout.pageOverflow, 0, `${width}px: the page scrolls horizontally`);

@@ -159,6 +159,11 @@
           "minimum": 1,
           "description": "Minutes between background fetches when repositoryManager.autoFetch is enabled."
         },
+        "repositoryManager.review.confirmBeforeSending": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ask before every security and compliance review sends code to Copilot, even in repositories where you chose \"Always allow for this repository\". When off, you are asked once per repository."
+        },
         "repositoryManager.showNotifications": {
           "type": "boolean",
           "default": true,

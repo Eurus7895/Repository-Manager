@@ -202,48 +202,6 @@ function renderModals(repositories: RepositoryInfo[]): string {
       </div>
     </div>
 
-    <!-- Security and compliance review -->
-    <div class="modal-overlay" id="reviewModal">
-      <div class="modal review-modal" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
-        <div class="modal-header">
-          <div class="modal-heading"><span class="modal-title" id="reviewModalTitle">Security and compliance review</span><span>Copilot reviews the selected commits. Results are advisory.</span></div>
-          <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="reviewModal">&times;</button>
-        </div>
-        <div class="modal-body">
-          <fieldset class="form-group review-scope">
-            <legend class="form-label">What to review</legend>
-            <label><input type="radio" name="reviewScope" value="changes" checked> Changes between two revisions</label>
-            <label><input type="radio" name="reviewScope" value="branch"> Every file at one revision</label>
-          </fieldset>
-          <div class="branch-form-grid branch-form-grid-equal">
-            <div class="form-group" id="reviewBaseGroup">
-              <label class="form-label" for="reviewBase">Base</label>
-              <input type="text" class="form-input" id="reviewBase" list="reviewRevisions" placeholder="Parent commit" autocomplete="off">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="reviewTarget">Target</label>
-              <input type="text" class="form-input" id="reviewTarget" list="reviewRevisions" autocomplete="off">
-            </div>
-          </div>
-          <datalist id="reviewRevisions"></datalist>
-          <fieldset class="form-group review-categories">
-            <legend class="form-label">Check</legend>
-            <label><input type="checkbox" id="reviewSecurity" checked> Security</label>
-            <label><input type="checkbox" id="reviewCompliance" checked> Team policy (compliance)</label>
-          </fieldset>
-          <div class="form-group">
-            <label class="form-label" for="reviewModel">Model</label>
-            <select class="form-select" id="reviewModel"><option value="">Default Copilot model</option></select>
-          </div>
-          <div class="form-hint" id="reviewHint" role="status"></div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn" data-action="closeModal" data-modal="reviewModal">Cancel</button>
-          <button class="btn btn-primary" data-action="startReview" id="startReviewButton">Start review</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Compare Branches Modal -->
     <div class="modal-overlay" id="branchCompareModal">
       <div class="modal branch-compare-modal" role="dialog" aria-modal="true" aria-labelledby="branchCompareModalTitle">
@@ -351,7 +309,11 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
-            <button class="compare-branches-button review-release-button" type="button" data-action="openReleaseReview" title="Review the changes since the last release with Copilot">◈ Review release</button>
+            <div class="review-entry review-release-group" role="group" aria-label="Review the release with Copilot">
+              <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
+              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review the changes since the latest release tag on the current branch"><span class="review-entry-word">Review </span>changes</button>
+              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>whole</button>
+            </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
           </div>
@@ -447,8 +409,8 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
     <div class="history-context-separator" role="separator"></div>
-    <button type="button" role="menuitem" data-action="contextReviewCommit">Review this commit…</button>
-    <button type="button" role="menuitem" data-action="contextReviewSnapshot">Review files at this commit…</button>
+    <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent">Review changes in this commit</button>
+    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as of this commit">Review whole tree at this commit</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
