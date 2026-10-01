@@ -155,7 +155,8 @@ export class ReviewController {
         `Review ${what} in ${repositoryName} with Copilot?`,
         'Source code from these revisions, and the repository review policy, is sent to the selected Copilot model ' +
           'in several requests. The review reads commits only; it never runs code or changes the repository. Results are advisory.' +
-          (actions.includes(ALWAYS) ? ' "Always allow" skips this question for this repository in this workspace.' : ''),
+          (actions.includes(ALWAYS) ? ' "Always allow" skips this question for this repository in this workspace; ' +
+            'undo it with "Repository Manager: Forget Review Permissions".' : ''),
         actions);
       if (generation !== this.generation) { return; }
       if (answer !== START && answer !== ALWAYS) {

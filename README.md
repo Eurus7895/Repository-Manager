@@ -42,7 +42,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 ### Security and compliance review
 
 - Every entry point has two buttons: **Review changes** (the diff) and **Review whole** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the tree at that commit), and in **◈ Release** (since the latest release tag, or the whole current branch).
-- One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. Set `repositoryManager.review.confirmBeforeSending` to be asked every time.
+- One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
 - Results are classified as blocked, needs attention, or no blocking findings.
 - Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
 - Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.

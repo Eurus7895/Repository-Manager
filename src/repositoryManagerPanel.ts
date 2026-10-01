@@ -13,11 +13,10 @@ import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextS
 import { CopilotSummaryProvider } from './services/changeSummaryService';
 import { SecurityReviewService } from './services/securityReviewService';
 import { ReviewController, ReviewRunner } from './reviewController';
+import { ReviewConsentStore } from './reviewConsent';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
-/** Workspace state: repositories whose reviews start without the consent question. */
-const REVIEW_CONSENT_KEY = 'repositoryManager.reviewConsent';
 
 /** Webview requests that only read Git state and may run during a background fetch. */
 const READ_ONLY_MESSAGES = new Set([
@@ -89,16 +88,14 @@ export class RepositoryManagerPanel {
     this._gitOps = new GitOperations(workspaceRoot);
     this._prManager = new PRManager(workspaceRoot);
 
+    const consent = new ReviewConsentStore(workspaceState);
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
       post: async message => { await this._panel.webview.postMessage(message); },
       ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
       alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
-      isConsentRemembered: root => (workspaceState?.get<string[]>(REVIEW_CONSENT_KEY) || []).includes(root),
-      rememberConsent: async root => {
-        const remembered = workspaceState?.get<string[]>(REVIEW_CONSENT_KEY) || [];
-        if (workspaceState && !remembered.includes(root)) { await workspaceState.update(REVIEW_CONSENT_KEY, [...remembered, root]); }
-      },
+      isConsentRemembered: root => consent.has(root),
+      rememberConsent: root => consent.allow(root),
       createRunner: root => new SecurityReviewService(new GitCommandService(root)) as unknown as ReviewRunner,
       createCancellation: () => new vscode.CancellationTokenSource(),
       copyText: text => Promise.resolve(vscode.env.clipboard.writeText(text)),

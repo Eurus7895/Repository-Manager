@@ -37,6 +37,11 @@
         "icon": "$(git-branch)"
       },
       {
+        "command": "repositoryManager.forgetReviewPermissions",
+        "title": "Forget Review Permissions",
+        "category": "Repository Manager"
+      },
+      {
         "command": "repositoryManager.refresh",
         "title": "Refresh Repositories",
         "category": "Repository Manager",
@@ -162,7 +167,7 @@
         "repositoryManager.review.confirmBeforeSending": {
           "type": "boolean",
           "default": false,
-          "description": "Ask before every security and compliance review sends code to Copilot, even in repositories where you chose \"Always allow for this repository\". When off, you are asked once per repository."
+          "description": "Ask before every security and compliance review sends code to Copilot, even in repositories where you chose \"Always allow for this repository\". When off, you are asked once per repository; run \"Repository Manager: Forget Review Permissions\" to be asked again in chosen repositories."
         },
         "repositoryManager.showNotifications": {
           "type": "boolean",
@@ -196,7 +201,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js && node ./src/test/summaryWebviewSmoke.js && node ./src/test/historyActionHandlerSmoke.js && node ./src/test/historyRewriteHandlerSmoke.js && node ./src/test/syncRecordedHandlerSmoke.js && node ./src/test/pullChangesSmoke.js && node ./src/test/autoFetchPanelSmoke.js && node ./src/test/backgroundFetchSmoke.js && node ./src/test/summaryProviderSmoke.js && node ./src/test/reviewSnapshotSmoke.js && node ./src/test/securityReviewSmoke.js && node ./src/test/securityReviewFindingsSmoke.js && node ./src/test/reviewReportSmoke.js && node ./src/test/reviewControllerSmoke.js",
+    "test": "node ./out/test/runTest.js && node ./src/test/summaryWebviewSmoke.js && node ./src/test/historyActionHandlerSmoke.js && node ./src/test/historyRewriteHandlerSmoke.js && node ./src/test/syncRecordedHandlerSmoke.js && node ./src/test/pullChangesSmoke.js && node ./src/test/autoFetchPanelSmoke.js && node ./src/test/backgroundFetchSmoke.js && node ./src/test/summaryProviderSmoke.js && node ./src/test/reviewSnapshotSmoke.js && node ./src/test/securityReviewSmoke.js && node ./src/test/securityReviewFindingsSmoke.js && node ./src/test/reviewReportSmoke.js && node ./src/test/reviewControllerSmoke.js && node ./src/test/reviewConsentSmoke.js",
     "test:ui": "npm run compile && node ./src/test/uiSnapshots.js",
     "package": "vsce package"
   },

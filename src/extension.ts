@@ -9,6 +9,7 @@ import { RepositoryTreeProvider } from './repositoryTreeProvider';
 import { PRManager } from './prManager';
 import { registerBasicCommands, CommandContext } from './commands/submoduleCommands';
 import { registerCreateBranchCommand } from './commands/createBranchCommand';
+import { registerReviewCommands } from './commands/reviewCommands';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 
 let repositoryTreeProvider: RepositoryTreeProvider;
@@ -45,6 +46,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Register commands
   registerBasicCommands(context, commandContext);
   registerCreateBranchCommand(context, gitOps, repositoryTreeProvider);
+  registerReviewCommands(context, workspaceRoot);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       RepositoryManagerLauncher.viewType,
