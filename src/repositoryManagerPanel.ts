@@ -15,6 +15,8 @@ import { SecurityReviewService } from './services/securityReviewService';
 import { SecurityReviewProvider } from './services/securityReviewProvider';
 import { ReviewController, ReviewRunner } from './reviewController';
 import { ReviewConsentStore } from './reviewConsent';
+import { ReviewHistoryStore } from './reviewHistory';
+import { resolveReleaseRange } from './services/releaseRange';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -23,10 +25,10 @@ const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
 const READ_ONLY_MESSAGES = new Set([
   'getHistory', 'getCommitDetail', 'getFileDiff', 'getRepositoryRefs', 'getWorkingTreeChanges',
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
-  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels',
+  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels', 'resolveReleaseRange',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
   'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
-  'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix'
+  'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview'
 ]);
 
 export class RepositoryManagerPanel {
@@ -128,7 +130,8 @@ export class RepositoryManagerPanel {
       },
       isDirtyInEditor: absolutePath => vscode.workspace.textDocuments.some(document =>
         document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === absolutePath),
-      workingTreeChanged: () => { this.refresh(); }
+      workingTreeChanged: () => { this.refresh(); },
+      history: new ReviewHistoryStore(workspaceState)
     });
     this._disposables.push(vscode.workspace.registerTextDocumentContentProvider(REVIEW_EVIDENCE_SCHEME, {
       provideTextDocumentContent: uri => this._evidenceDocuments.get(uri.toString()) || ''
@@ -331,6 +334,10 @@ export class RepositoryManagerPanel {
         this._cancelSummary();
         return;
       }
+      if (message.type === 'resolveReleaseRange') {
+        await this._resolveReleaseRange(message.payload);
+        return;
+      }
       if (message.type === 'summarizeChanges') {
         await this._summarizeChanges(message.payload);
         return;
@@ -416,6 +423,34 @@ export class RepositoryManagerPanel {
     this._summaryToken?.cancel();
     this._summaryToken?.dispose();
     this._summaryToken = undefined;
+  }
+
+  /** Latest release tag → current branch, as commit hashes, for Release › Summarize changes. */
+  private async _resolveReleaseRange(payload: unknown): Promise<void> {
+    const request = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+    const { repositoryPath, requestId } = request;
+    if (typeof repositoryPath !== 'string' || typeof requestId !== 'number') {
+      return;
+    }
+    const git = new GitCommandService(this._workspaceRoot);
+    const reply = (extra: Record<string, unknown>) =>
+      this._panel.webview.postMessage({ type: 'releaseRangeResolved', payload: { requestId, repositoryPath, ...extra } });
+    try {
+      const root = git.resolveRepositoryPath(repositoryPath);
+      const { currentBranch, latestReleaseTag } = await resolveReleaseRange(git, root);
+      if (!latestReleaseTag) {
+        await reply({ message: `No release tag like 1.5.0 or v1.5.0 is reachable from ${currentBranch}. ` +
+          'Select Base and Target in the history to summarize other changes.' });
+        return;
+      }
+      const [baseSha, targetSha] = await Promise.all([git.resolveRevision(repositoryPath, latestReleaseTag),
+        git.resolveRevision(repositoryPath, currentBranch)]);
+      await reply(baseSha === targetSha
+        ? { message: `${currentBranch} has no changes since ${latestReleaseTag}.` }
+        : { baseSha, targetSha, baseLabel: latestReleaseTag, targetLabel: currentBranch });
+    } catch (error) {
+      await reply({ message: `Cannot resolve the release range: ${error instanceof Error ? error.message : String(error)}` });
+    }
   }
 
   private async _summarizeChanges(payload: unknown): Promise<void> {

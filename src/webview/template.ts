@@ -309,9 +309,9 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
-            <div class="review-entry review-release-group" role="group" aria-label="Review the release with Copilot">
+            <div class="review-entry review-release-group" role="group" aria-label="The release, with Copilot">
               <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
-              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review the changes since the latest release tag on the current branch"><span class="review-entry-word">Review </span>changes</button>
+              <button type="button" data-action="summarizeRelease" title="Summarize the changes since the latest release tag on the current branch"><span class="review-entry-word">Summarize </span>changes</button>
               <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>branch</button>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
@@ -351,6 +351,11 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
                   <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>
                 </div>
               </div>
+              <details class="review-history" id="reviewHistory" hidden>
+                <summary>Past reviews <span class="review-history-count" id="reviewHistoryCount"></span></summary>
+                <p class="review-history-note">Saved in this workspace on this machine, never in the repository.</p>
+                <ul class="review-history-list" id="reviewHistoryList"></ul>
+              </details>
               <div class="review-body" id="reviewBody"></div>
             </div>
             <div class="commit-content" id="commitContent">

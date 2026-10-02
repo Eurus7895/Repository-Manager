@@ -54,6 +54,12 @@
   let selectedSummaryModelId = '';
   // Security and compliance review; declared early because rendering checks the review lock.
   let reviewRequestId = 0;
+  // Release › Summarize changes: resolving the range, then waiting for its comparison to load.
+  let releaseSummary = null; // { requestId, repositoryPath, baseSha?, targetSha? }
+  let releaseRangeRequestId = 0;
+  // Past reviews of the active repository, as listed by the extension.
+  let reviewHistory = { repositoryPath: null, entries: [] };
+  let reviewHistoryListId = 0;
   let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
@@ -656,11 +662,18 @@
 
     // Every entry point offers the same two choices and starts at once: "changes" reviews the
     // diff Base → Target, "branch" reviews every file at Target.
-    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'branch' ? 'branch' : 'changes' }),
+    reviewRelease: () => startReview({ kind: 'release', scope: 'branch' }),
+    summarizeRelease: () => {
+      if (!activeDashboardRepository) return;
+      releaseSummary = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
+      showReleaseStatus('Release: finding the latest release tag…');
+      postMessage('resolveReleaseRange', { requestId: releaseSummary.requestId, repositoryPath: activeDashboardRepository });
+    },
 
     reviewComparison: (el) => el.dataset.scope === 'branch'
-      ? startReview({ scope: 'branch', target: el.dataset.target })
-      : startReview({ scope: 'changes', base: el.dataset.base, target: el.dataset.target }),
+      ? startReview({ scope: 'branch', target: el.dataset.target, targetLabel: el.dataset.targetLabel })
+      : startReview({ scope: 'changes', base: el.dataset.base, target: el.dataset.target,
+        baseLabel: el.dataset.baseLabel, targetLabel: el.dataset.targetLabel }),
 
     contextReviewCommit: () => {
       if (!historyContextTarget) return;
@@ -677,6 +690,24 @@
 
     cancelReview: () => postMessage('cancelReview', {}),
 
+    openStoredReview: (el) => {
+      if (!activeDashboardRepository || reviewLocked() || !el.dataset.historyId) return;
+      const entry = reviewHistory.entries.find(item => item.id === el.dataset.historyId);
+      if (!entry) return;
+      reviewRequestId += 1;
+      const repository = getRepository(activeDashboardRepository);
+      reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
+        repositoryName: repository ? repository.name : activeDashboardRepository, scope: entry.scope, kind: entry.kind,
+        baseLabel: entry.baseLabel || '', targetLabel: entry.targetLabel, status: 'opening', cancelled: true, message: 'Opening the saved review…' };
+      renderReviewPanel();
+      showDetailTab('review');
+      postMessage('openStoredReview', { requestId: reviewRequestId, id: entry.id, repositoryPath: activeDashboardRepository });
+    },
+    deleteStoredReview: (el) => {
+      if (!activeDashboardRepository || !el.dataset.historyId) return;
+      if (reviewState && reviewState.historyId === el.dataset.historyId) reviewState.historyId = null;
+      postMessage('deleteStoredReview', { id: el.dataset.historyId, repositoryPath: activeDashboardRepository, listId: ++reviewHistoryListId });
+    },
     exportReview: (el) => {
       if (reviewState && reviewState.status === 'completed') {
         postMessage('exportReviewReport', { requestId: reviewState.requestId, format: el.dataset.format === 'save' ? 'save' : 'copy' });
@@ -1020,6 +1051,7 @@
   }
 
   function clearCommitComparison(restoreParent) {
+    releaseSummary = null;
     const shouldRestoreParent = Boolean(restoreParent && comparisonSource && selectedDashboardCommit);
     commitCompareSelection = [];
     comparisonRepository = activeDashboardRepository;
@@ -1047,7 +1079,15 @@
     }
   }
 
-  function loadComparison(baseRevision, targetRevision, source) {
+  function showReleaseStatus(text, isError) {
+    const status = document.getElementById('commitCompareStatus');
+    if (!status) return;
+    status.hidden = false;
+    status.innerHTML = `<span class="compare-range${isError ? ' compare-error' : ''}">${escapeHtml(text)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear">×</button>`;
+  }
+
+  function loadComparison(baseRevision, targetRevision, source, labels) {
+    if (source !== 'release') releaseSummary = null;
     resetChangeSummary();
     selectedDashboardCommit = targetRevision;
     activeComparisonTarget = targetRevision;
@@ -1060,8 +1100,11 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision)}`;
-      status.innerHTML = `<span class="compare-range">${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision, labels)}`;
+      const kind = { branches: 'Branches', review: 'Review', release: 'Release' }[source] || 'Commits';
+      const base = labels && labels.base ? labels.base : shortRevision(baseRevision);
+      const target = labels && labels.target ? labels.target : shortRevision(targetRevision);
+      status.innerHTML = `<span class="compare-range">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
       applyReviewLock();
     }
     saveState();
@@ -1146,8 +1189,11 @@
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
+    releaseSummary = null;
+    reviewHistory = { repositoryPath: null, entries: [] };
+    requestReviewHistory();
     // The Review header names the reviewed repository once the dashboard shows another one.
-    if (reviewState) renderReviewPanel();
+    renderReviewPanel();
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -1494,6 +1540,12 @@
     resetChangeSummary();
     changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
     restoreChangeSummary();
+    // Release › Summarize changes starts the summary once the release comparison is on screen.
+    if (releaseSummary && releaseSummary.targetSha === detail.hash && releaseSummary.baseSha === comparisonBaseHash &&
+        releaseSummary.repositoryPath === activeDashboardRepository) {
+      releaseSummary = null;
+      actions.summarizeChanges();
+    }
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
@@ -1587,6 +1639,11 @@
   });
   window.addEventListener('scroll', hideHistoryContextMenu, true);
   window.addEventListener('blur', hideHistoryContextMenu);
+  // Once the user opens or closes Past reviews, the dashboard stops choosing for them.
+  const reviewHistoryDetails = document.getElementById('reviewHistory');
+  if (reviewHistoryDetails) reviewHistoryDetails.addEventListener('click', event => {
+    if (event.target.closest('summary')) reviewHistoryDetails.dataset.touched = 'true';
+  });
   document.body.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') hideHistoryContextMenu();
     if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && e.target.closest('.history-row')) {
@@ -1728,6 +1785,29 @@
           break;
         }
 
+        case 'releaseRangeResolved': {
+          const payload = message.payload || {};
+          if (!releaseSummary || payload.requestId !== releaseSummary.requestId ||
+              payload.repositoryPath !== activeDashboardRepository) break;
+          if (!payload.baseSha) {
+            releaseSummary = null;
+            showReleaseStatus(payload.message || 'No release range.', true);
+            break;
+          }
+          Object.assign(releaseSummary, { baseSha: payload.baseSha, targetSha: payload.targetSha });
+          commitCompareSelection = [];
+          loadComparison(payload.baseSha, payload.targetSha, 'release', { base: payload.baseLabel, target: payload.targetLabel });
+          break;
+        }
+
+        case 'reviewHistoryLoaded': {
+          const payload = message.payload || {};
+          if (payload.listId !== reviewHistoryListId) break;
+          reviewHistory = { repositoryPath: payload.repositoryPath, entries: Array.isArray(payload.entries) ? payload.entries : [] };
+          renderReviewPanel();
+          break;
+        }
+
         case 'reviewProgress':
         case 'reviewCompleted':
         case 'reviewFailed': {
@@ -1743,7 +1823,10 @@
             // The extension resolves the release range, so it reports the labels it settled on.
             if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
-            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context, triage: {} });
+            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
+              triage: payload.triage || {}, historyId: payload.historyId || null });
+            if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
+            requestReviewHistory();
           } else {
             Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
           }
@@ -1777,6 +1860,7 @@
           if (!reviewState || payload.requestId !== reviewState.requestId || reviewState.status !== 'completed') break;
           Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness });
           renderReviewPanel();
+          if (reviewState.historyId) requestReviewHistory();
           break;
         }
 
@@ -2459,8 +2543,12 @@
   let pendingEvidenceJump = null;
   const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
-  function reviewButtons(base, target) {
-    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}" title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}" title="Review every file at Target"><span class="review-entry-word">Review </span>branch</button></span>`;
+  // `labels` names the ends (e.g. a release tag and a branch) when they are not plain commits.
+  function reviewButtons(base, target, labels) {
+    const named = (name, value) => (value ? ` data-${name}="${escapeHtml(value)}"` : '');
+    const baseLabel = named('base-label', labels && labels.base);
+    const targetLabel = named('target-label', labels && labels.target);
+    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}"${baseLabel}${targetLabel} title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}"${targetLabel} title="Review every file at Target"><span class="review-entry-word">Review </span>branch</button></span>`;
   }
 
   // Starts at once with security and team policy, using the model chosen for AI summaries;
@@ -2473,13 +2561,13 @@
     const repository = getRepository(activeDashboardRepository);
     reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
       repositoryName: repository ? repository.name : activeDashboardRepository, scope, kind,
-      baseLabel: scope === 'changes' ? (options.base || '') : '', targetLabel: options.target || '', status: 'running' };
+      baseLabel: scope === 'changes' ? (options.baseLabel || options.base || '') : '', targetLabel: options.targetLabel || options.target || '', status: 'running' };
     renderReviewPanel();
     showDetailTab('review');
     postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
       baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
-      baseLabel: scope === 'changes' && options.base ? shortRevision(options.base) : undefined,
-      targetLabel: options.target ? shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
+      baseLabel: scope === 'changes' && options.base ? options.baseLabel || shortRevision(options.base) : undefined,
+      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
   }
 
   // A review runs in the background: the rest of the dashboard stays usable (other repositories,
@@ -2671,6 +2759,48 @@
     }).join('')}</ul>`;
   }
 
+  function requestReviewHistory() {
+    if (!activeDashboardRepository) return;
+    postMessage('listReviewHistory', { repositoryPath: activeDashboardRepository, listId: ++reviewHistoryListId });
+  }
+
+  function activeReviewHistory() {
+    return reviewHistory.repositoryPath === activeDashboardRepository ? reviewHistory.entries : [];
+  }
+
+  const READINESS_LABELS = { blocked: 'Blocked', needs_attention: 'Needs attention', no_blocking_findings: 'No blocking findings' };
+
+  // Past reviews of the active repository, newest first; the open one is marked.
+  function renderReviewHistory(hasOpenReview) {
+    const container = document.getElementById('reviewHistory');
+    const list = document.getElementById('reviewHistoryList');
+    if (!container || !list) return;
+    const entries = activeReviewHistory();
+    container.hidden = entries.length === 0;
+    if (!entries.length) { list.innerHTML = ''; return; }
+    // With nothing open the list is all there is to see, so it starts expanded.
+    if (!hasOpenReview && !container.dataset.touched) container.open = true;
+    document.getElementById('reviewHistoryCount').textContent = String(entries.length);
+    const locked = reviewLocked();
+    list.innerHTML = entries.map(entry => {
+      const range = entry.scope === 'changes'
+        ? `Diff: ${entry.baseLabel || 'parent'} → ${entry.targetLabel}` : `Branch: ${entry.targetLabel}`;
+      const counts = [`${entry.findings} finding${entry.findings === 1 ? '' : 's'}`,
+        entry.toFix ? `${entry.toFix} to fix` : '', entry.dismissed ? `${entry.dismissed} dismissed` : ''].filter(Boolean).join(' · ');
+      const current = reviewState && reviewState.historyId === entry.id;
+      const id = escapeHtml(entry.id);
+      return `<li class="review-history-item"${current ? ' aria-current="true"' : ''}>
+        <button type="button" class="review-history-open" data-action="openStoredReview" data-history-id="${id}"${locked ? ` aria-disabled="true" title="${REVIEW_LOCK_HINT}"` : ` title="Open this review (${escapeHtml(shortRevision(entry.targetSha))})"`}>
+          <span class="review-history-date">${escapeHtml(formatHistoryDate(entry.generatedAt))}</span>
+          <span class="review-history-range">${entry.kind === 'release' ? '◈ ' : ''}${escapeHtml(range)}</span>
+          <span class="review-history-status readiness-${escapeHtml(entry.status)}">${escapeHtml(READINESS_LABELS[entry.status] || entry.status)}</span>
+          <span class="review-history-counts">${escapeHtml(counts)}</span>
+        </button>
+        <button type="button" class="review-history-delete" data-action="deleteStoredReview" data-history-id="${id}" aria-label="Delete this saved review" title="Delete this saved review">×</button>
+      </li>`;
+    }).join('');
+  }
+
   function renderReviewPanel() {
     const tabs = document.getElementById('detailTabs');
     const badge = document.getElementById('reviewTabBadge');
@@ -2679,10 +2809,18 @@
     const status = document.getElementById('reviewStatus');
     const body = document.getElementById('reviewBody');
     if (!tabs || !body) return;
-    tabs.hidden = !reviewState;
+    const hasHistory = activeReviewHistory().length > 0;
+    tabs.hidden = !reviewState && !hasHistory;
+    renderReviewHistory(Boolean(reviewState));
     if (!reviewState) {
       applyReviewLock();
-      showDetailTab('changes');
+      if (!hasHistory) { showDetailTab('changes'); return; }
+      ['cancelReviewButton', 'copyReviewButton', 'saveReviewButton'].forEach(id => { document.getElementById(id).hidden = true; });
+      if (badge) badge.textContent = '';
+      title.textContent = 'Review';
+      meta.textContent = '';
+      status.textContent = '';
+      body.innerHTML = '<div class="dashboard-empty">No review is open. Open a past review, or start one from Release or a comparison.</div>';
       return;
     }
     const running = reviewState.status === 'running';

@@ -41,12 +41,14 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 ### Security and compliance review
 
-- Every entry point has two buttons: **Review changes** (the diff) and **Review branch** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the branch at that commit), and in **◈ Release** (since the latest release tag, or the whole current branch).
+- Every entry point has two buttons: **Review changes** (the diff) and **Review branch** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the branch at that commit), and **◈ Release › Review branch** (every file on the current branch).
+- **◈ Release › Summarize changes** loads the changes since the latest release tag (`1.5.0` or `v1.5.0`) on the current branch into the dashboard and summarizes them with Copilot. To review that diff for security, choose **Review changes** next to the loaded range.
 - One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
 - A progress view shows the component being reviewed, files done and elapsed time. The review runs in the background: switch repository, folder or tab while it continues, and follow its percentage on the Review tab.
 - Results are classified as blocked, needs attention, or no blocking findings. Mark each finding **Needs fix** or **Dismiss** with a reason; dismissed findings no longer count toward readiness but stay in the report.
 - **Fix with Copilot** proposes edits for the findings marked Needs fix. You see the diff first; **Apply to working tree** writes it, and nothing is staged or committed. It needs the reviewed commit checked out and the cited files unchanged.
 - Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
+- Completed reviews are saved under **Past reviews** in the Review tab, newest first: the last 20 per repository, with your triage. Open one later (also after restarting VS Code) to check its findings, export it, or fix it; delete the ones you no longer need. They are kept in VS Code's workspace state on this machine, never in the repository.
 - Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
 
 ### Linked-repository synchronization

@@ -1,8 +1,8 @@
 /**
  * Runs security and compliance reviews for the dashboard (MVP 2, W6–W7): consent (remembered
- * per repository once allowed), one review at a time with progress and cancellation, the
- * release range, Markdown export and opening cited evidence. VS Code is reached only through the injected host, so tests can
- * drive the whole flow with a scripted review runner.
+ * per repository once allowed), one review at a time with progress and cancellation, Markdown
+ * export, opening cited evidence, and the history of completed reviews. VS Code is reached only
+ * through the injected host, so tests can drive the whole flow with a scripted review runner.
  */
 
 import * as path from 'path';
@@ -10,6 +10,8 @@ import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } fro
 import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, ReviewFixService } from './services/reviewFixService';
+import { resolveReleaseRange } from './services/releaseRange';
+import { ReviewHistoryStore, summarize } from './reviewHistory';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
 
@@ -40,21 +42,24 @@ export interface ReviewControllerHost {
   isDirtyInEditor(absolutePath: string): boolean;
   /** Files in the working tree changed (an auto-fix was applied); refresh the dashboard. */
   workingTreeChanged(): void;
+  /** Completed reviews, kept for checking later. */
+  history: ReviewHistoryStore;
 }
 
 const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
-  'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix']);
+  'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview',
+  'deleteStoredReview']);
 const START = 'Start review';
 const ALWAYS = 'Always allow for this repository';
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
-const RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
-const MAX_STORED_REVIEWS = 10;
+const MAX_OPEN_REVIEWS = 10;
 
 /**
- * A finished review. `workspaceRoot` is the folder it ran in: the dashboard may have switched
- * folders since, and evidence, exports and fixes must still reach the reviewed repository.
+ * A finished review the dashboard has open. `workspaceRoot` is the folder it ran in: the dashboard
+ * may have switched folders since, and evidence, exports and fixes must still reach the reviewed
+ * repository. `historyId` is its entry in the review history, which triage keeps up to date.
  */
-interface StoredReview { result: ReviewResult; context: ReviewReportContext; triage: ReviewTriage; workspaceRoot: string }
+interface StoredReview { result: ReviewResult; context: ReviewReportContext; triage: ReviewTriage; workspaceRoot: string; historyId?: string }
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -88,6 +93,9 @@ export class ReviewController {
       case 'applyReviewFix': return this.applyFix(payload);
       case 'discardReviewFix': return this.discardFix(payload);
       case 'cancelReviewFix': return this.cancelFix();
+      case 'listReviewHistory': return this.listHistory(payload);
+      case 'openStoredReview': return this.openStored(payload);
+      case 'deleteStoredReview': return this.deleteStored(payload);
     }
   }
 
@@ -117,11 +125,12 @@ export class ReviewController {
     const requestId = payload.requestId;
     const repositoryPath = optionalString(payload.repositoryPath);
     const scope = payload.scope;
-    const kind = payload.kind === 'release' ? 'release' : 'review';
+    const kind: 'review' | 'release' = payload.kind === 'release' ? 'release' : 'review';
     let targetRevision = optionalString(payload.targetRevision);
-    let baseRevision = optionalString(payload.baseRevision);
+    const baseRevision = optionalString(payload.baseRevision);
+    // A release review covers the whole current branch; the release diff is summarized instead.
     if (typeof requestId !== 'number' || !repositoryPath || (scope !== 'changes' && scope !== 'branch') ||
-        (!targetRevision && kind !== 'release')) {
+        (kind === 'release' ? scope !== 'branch' : !targetRevision)) {
       return;
     }
     this.cancel();
@@ -140,18 +149,8 @@ export class ReviewController {
     const git = this.git(workspaceRoot);
     const root = git.resolveRepositoryPath(repositoryPath);
     const repositoryName = path.basename(root);
-    if (kind === 'release') {
-      // A release review runs from the latest release tag on the current branch to its tip.
-      const release = await this.releaseRange(git, root);
-      targetRevision = targetRevision || release.currentBranch;
-      if (scope === 'changes' && !baseRevision) {
-        if (!release.latestReleaseTag) {
-          await reply('reviewFailed', { message: `No release tag like 1.5.0 or v1.5.0 is reachable from ${targetRevision}. ` +
-            'Select Base and Target in the history and choose Review changes instead.' });
-          return;
-        }
-        baseRevision = release.latestReleaseTag;
-      }
+    if (kind === 'release' && !targetRevision) {
+      targetRevision = (await resolveReleaseRange(git, root)).currentBranch;
     }
     const target = targetRevision as string;
     let targetSha: string;
@@ -198,10 +197,12 @@ export class ReviewController {
         .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
-      this.reviews.set(requestId, { result, context, triage: {}, workspaceRoot });
-      while (this.reviews.size > MAX_STORED_REVIEWS) { this.reviews.delete(this.reviews.keys().next().value as number); }
-      await reply('reviewCompleted', { result, readiness: assessReadiness(result),
-        context: { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() } });
+      const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
+      // Saving is best effort: a full or failing workspace state must not lose the result on screen.
+      const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage: {} })
+        .then(entry => entry.id, () => undefined);
+      this.remember(requestId, { result, context, triage: {}, workspaceRoot, historyId });
+      await reply('reviewCompleted', { result, readiness: assessReadiness(result), context: storedContext, historyId });
     } catch (error) {
       const cancelled = cancellation.token.isCancellationRequested;
       await reply('reviewFailed', { cancelled, message: cancelled
@@ -240,6 +241,7 @@ export class ReviewController {
     if (payload.decision === null || payload.decision === undefined) { delete next[findingId]; }
     else { next[findingId] = { decision: payload.decision, reason: payload.reason } as ReviewTriage[string]; }
     stored.triage = normalizeTriage(stored.result, next);
+    if (stored.historyId) { await this.host.history.setTriage(stored.historyId, stored.triage).catch(() => undefined); }
     // A proposal fixes exactly the findings marked when it was requested: changing which findings
     // need fixing makes it stale, whether it is still being proposed or waiting for Apply.
     const fix = this.fix;
@@ -342,13 +344,47 @@ export class ReviewController {
     }
   }
 
-  /** The current branch (or HEAD when detached) and the newest release tag reachable from it. */
-  private async releaseRange(git: GitCommandService, root: string): Promise<{ currentBranch: string; latestReleaseTag?: string }> {
-    const run = (args: string[]) => git.execGit(args, root, 10000).catch(() => '');
-    const currentBranch = (await run(['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim() || 'HEAD';
-    const latestReleaseTag = (await run(['tag', '--merged', 'HEAD', '--sort=-v:refname']))
-      .split('\n').map(line => line.trim()).find(tag => RELEASE_TAG.test(tag));
-    return { currentBranch, latestReleaseTag };
+  private remember(requestId: number, review: StoredReview): void {
+    this.reviews.delete(requestId);
+    this.reviews.set(requestId, review);
+    while (this.reviews.size > MAX_OPEN_REVIEWS) { this.reviews.delete(this.reviews.keys().next().value as number); }
+  }
+
+  /** The Past reviews list for a repository of the current workspace folder. */
+  private async listHistory(payload: Record<string, unknown>): Promise<void> {
+    const repositoryPath = optionalString(payload.repositoryPath);
+    if (!repositoryPath) { return; }
+    const root = this.git().resolveRepositoryPath(repositoryPath);
+    await this.host.post({ type: 'reviewHistoryLoaded', payload: { repositoryPath, listId: payload.listId,
+      entries: this.host.history.list(root).map(summarize) } });
+  }
+
+  /** Reopens a saved review under the dashboard's new request id, with its triage. */
+  private async openStored(payload: Record<string, unknown>): Promise<void> {
+    const requestId = payload.requestId;
+    const id = optionalString(payload.id);
+    if (typeof requestId !== 'number' || !id) { return; }
+    const entry = this.host.history.get(id);
+    if (!entry) {
+      await this.host.post({ type: 'reviewFailed', payload: { requestId, repositoryPath: payload.repositoryPath,
+        message: 'That saved review no longer exists.' } });
+      return;
+    }
+    // Like starting a review: the dashboard leaves the previous one, so its auto-fix is dropped.
+    this.cancelFixQuietly();
+    const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
+    this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
+    await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
+      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id } });
+  }
+
+  private async deleteStored(payload: Record<string, unknown>): Promise<void> {
+    const id = optionalString(payload.id);
+    if (!id) { return; }
+    await this.host.history.remove(id);
+    // An open copy stays usable for this session, but no longer writes triage to the history.
+    this.reviews.forEach(review => { if (review.historyId === id) { review.historyId = undefined; } });
+    await this.listHistory(payload);
   }
 
   private async openEvidence(payload: Record<string, unknown>): Promise<void> {
