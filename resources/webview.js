@@ -50,6 +50,9 @@
   let changeSummaryRequestId = 0;
   let changeSummarySelection = null;
   let selectedSummaryModelId = '';
+  // Security and compliance review; declared early because rendering checks the review lock.
+  let reviewRequestId = 0;
+  let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
   let historyContextTarget = null;
@@ -371,6 +374,7 @@
       if (!commitHash) return;
       clearCommitComparison(false);
       loadParentCommitDetail(commitHash);
+      showDetailTab('changes');
     },
 
     selectChangedFile: (el) => {
@@ -411,6 +415,14 @@
       captureDashboardFilters();
       saveState();
       requestDashboardHistory(0, false);
+    },
+
+    toggleBranchFolder: (el) => {
+      const folder = el.dataset.folder;
+      if (!folder) return;
+      const key = `${activeDashboardRepository}\u0000${folder}`;
+      if (collapsedBranchFolders.has(key)) collapsedBranchFolders.delete(key); else collapsedBranchFolders.add(key);
+      if (repositoryRefs) renderRepositoryRefs(Object.assign({ repositoryPath: activeDashboardRepository }, repositoryRefs));
     },
 
     selectDashboardBranch: (el) => {
@@ -641,7 +653,7 @@
     },
 
     // Every entry point offers the same two choices and starts at once: "changes" reviews the
-    // diff Base → Target, "branch" (whole) reviews every file at Target.
+    // diff Base → Target, "branch" reviews every file at Target.
     reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'branch' ? 'branch' : 'changes' }),
 
     reviewComparison: (el) => el.dataset.scope === 'branch'
@@ -672,6 +684,24 @@
     showDetailTab: (el) => showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes'),
 
     reviewEvidence: (el) => jumpToReviewEvidence(Number(el.dataset.finding), Number(el.dataset.evidence)),
+
+    proposeReviewFix: () => {
+      if (!reviewState || reviewState.status !== 'completed') return;
+      reviewState.fix = { status: 'running', message: 'Checking the working tree…' };
+      renderReviewPanel();
+      postMessage('proposeReviewFix', { requestId: reviewState.requestId, modelId: selectedSummaryModelId || undefined });
+    },
+    applyReviewFix: () => { if (reviewState) postMessage('applyReviewFix', { requestId: reviewState.requestId }); },
+    discardReviewFix: () => { if (reviewState) postMessage('discardReviewFix', { requestId: reviewState.requestId }); },
+    cancelReviewFix: () => postMessage('cancelReviewFix', {}),
+
+    triageFinding: (el) => {
+      if (!reviewState || reviewState.status !== 'completed') return;
+      const current = (reviewState.triage || {})[el.dataset.findingId];
+      const decision = current && current.decision === el.dataset.decision ? null : el.dataset.decision;
+      postMessage('setFindingTriage', { requestId: reviewState.requestId, findingId: el.dataset.findingId, decision,
+        reason: decision === 'dismiss' ? 'false_positive' : undefined });
+    },
 
     syncAll: () => postMessage('syncVersions', { submodules: [] })
   };
@@ -874,6 +904,7 @@
         <span class="repo-badges">${badges}</span>
       </button>${resetAction}</div>`;
     }).join('') || '<span class="sidebar-placeholder">No repositories</span>';
+    applyReviewLock();
   }
 
   function shortRevision(revision) {
@@ -964,6 +995,7 @@
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
       : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span>${reviewButtons(commitCompareSelection[0], commitCompareSelection[1])} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+    applyReviewLock();
   }
 
   function loadParentCommitDetail(commitHash) {
@@ -1028,6 +1060,7 @@
       status.hidden = false;
       const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision)}`;
       status.innerHTML = `<span class="compare-range">${source === 'branches' ? 'Branches' : source === 'review' ? 'Review' : 'Commits'}: ${escapeHtml(shortRevision(baseRevision))} → ${escapeHtml(shortRevision(targetRevision))}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      applyReviewLock();
     }
     saveState();
     postMessage('getCommitDetail', {
@@ -1111,6 +1144,8 @@
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
+    // The Review header names the reviewed repository once the dashboard shows another one.
+    if (reviewState) renderReviewPanel();
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -1170,6 +1205,46 @@
     });
   }
 
+  // Branch names grouped by '/' into folders: feature/a and feature/b sit under "feature".
+  // Folders come first, then branches, each alphabetically.
+  function buildBranchTree(branches) {
+    const root = { folders: new Map(), branches: [], path: '' };
+    branches.forEach(branch => {
+      const parts = branch.name.split('/');
+      let node = root;
+      parts.slice(0, -1).forEach(part => {
+        if (!part) return;
+        if (!node.folders.has(part)) node.folders.set(part, { folders: new Map(), branches: [], path: node.path ? `${node.path}/${part}` : part });
+        node = node.folders.get(part);
+      });
+      node.branches.push(branch);
+    });
+    return root;
+  }
+
+  function countBranches(node) {
+    let count = node.branches.length;
+    node.folders.forEach(child => { count += countBranches(child); });
+    return count;
+  }
+
+  function hasCurrentBranch(node) {
+    return node.branches.some(branch => branch.isCurrent) || Array.from(node.folders.values()).some(hasCurrentBranch);
+  }
+
+  const collapsedBranchFolders = new Set(); // `${repositoryPath}\0${folder}`
+
+  function renderBranchTree(node, depth, renderBranch) {
+    const folders = Array.from(node.folders.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([name, child]) => {
+      // The folder holding the checked-out branch is never collapsed out of sight.
+      const expanded = !collapsedBranchFolders.has(`${activeDashboardRepository}\u0000${child.path}`) || hasCurrentBranch(child);
+      return `<div class="sidebar-branch-folder-row branch-depth-${Math.min(depth, 6)}"><button type="button" class="sidebar-branch-folder" data-action="toggleBranchFolder" data-folder="${escapeHtml(child.path)}" aria-expanded="${expanded}" title="${escapeHtml(child.path)}/"><span class="sidebar-branch-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span><span>${escapeHtml(name)}</span><small>${countBranches(child)}</small></button></div>` +
+        (expanded ? `<div role="group" aria-label="${escapeHtml(child.path)}">${renderBranchTree(child, depth + 1, renderBranch)}</div>` : '');
+    }).join('');
+    const leaves = node.branches.slice().sort((a, b) => a.name.localeCompare(b.name)).map(branch => renderBranch(branch, depth)).join('');
+    return folders + leaves;
+  }
+
   function formatHistoryDate(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value || '';
@@ -1193,28 +1268,42 @@
       const middle = top + (rowHeight / 2);
       const bottom = top + rowHeight;
       const currentX = window.RepositoryHistoryGraph.laneX(layout.lane);
+      // Colours follow branches, not columns: each branch path keeps its colour.
+      const tone = value => `graph-lane-${(value === undefined ? 0 : value) % 8}`;
+      const color = layout.color === undefined ? layout.lane : layout.color;
+      const beforeColors = layout.beforeColors || [];
+      const afterColors = layout.afterColors || [];
       const continuingLaneCount = Math.max(layout.before.length, layout.after.length);
       for (let lane = 0; lane < continuingLaneCount; lane += 1) {
         if (lane === layout.lane) continue;
         if (layout.before[lane] && layout.after[lane] && layout.before[lane] === layout.after[lane]) {
           const x = window.RepositoryHistoryGraph.laneX(lane);
-          paths.push(`<path class="graph-edge graph-lane-${lane % 8}" d="M ${x} ${top} V ${bottom}"/>`);
+          paths.push(`<path class="graph-edge ${tone(afterColors[lane] === undefined ? lane : afterColors[lane])}" d="M ${x} ${top} V ${bottom}"/>`);
         }
       }
 
       if (!layout.startsHere) {
-        paths.push(`<path class="graph-edge graph-lane-${layout.lane % 8}" d="M ${currentX} ${top} V ${middle}"/>`);
+        paths.push(`<path class="graph-edge ${tone(color)}" d="M ${currentX} ${top} V ${middle}"/>`);
       }
+      // Other children of this commit arrive from their own columns.
+      (layout.incomingLanes || []).forEach(lane => {
+        const x = window.RepositoryHistoryGraph.laneX(lane);
+        paths.push(`<path class="graph-edge ${tone(beforeColors[lane] === undefined ? lane : beforeColors[lane])}" d="M ${x} ${top} C ${x} ${top + 9}, ${currentX} ${middle - 9}, ${currentX} ${middle}"/>`);
+      });
       layout.parentLanes.forEach((parentLane, parentIndex) => {
         const parentX = window.RepositoryHistoryGraph.laneX(parentLane);
-        const colorLane = parentIndex === 0 ? layout.lane : parentLane;
-        paths.push(`<path class="graph-edge graph-lane-${colorLane % 8}" d="M ${currentX} ${middle} C ${currentX} ${middle + 9}, ${parentX} ${bottom - 9}, ${parentX} ${bottom}"/>`);
+        const edgeColor = layout.parentColors ? layout.parentColors[parentIndex] : parentIndex === 0 ? layout.lane : parentLane;
+        paths.push(parentLane === layout.lane
+          ? `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} V ${bottom}"/>`
+          : `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} C ${currentX} ${middle + 9}, ${parentX} ${bottom - 9}, ${parentX} ${bottom}"/>`);
       });
 
       const decorated = (commit.refs || []).length > 0 || layout.isMerge;
-      nodes.push(decorated
-        ? `<circle class="graph-node graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="2.3"/>`
-        : `<circle class="graph-node-core graph-lane-${layout.lane % 8}" cx="${currentX}" cy="${middle}" r="4"/>`);
+      nodes.push(layout.isHead
+        ? `<circle class="graph-node graph-node-head ${tone(color)}" cx="${currentX}" cy="${middle}" r="6"/>`
+        : decorated
+          ? `<circle class="graph-node ${tone(color)}" cx="${currentX}" cy="${middle}" r="5.5"/><circle class="graph-node-core ${tone(color)}" cx="${currentX}" cy="${middle}" r="2.3"/>`
+          : `<circle class="graph-node-core ${tone(color)}" cx="${currentX}" cy="${middle}" r="4"/>`);
       controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
       top = bottom;
     });
@@ -1327,7 +1416,7 @@
     if (stashCount) stashCount.textContent = stashes.length;
 
     if (branchList) {
-      branchList.innerHTML = branches.map(branch => {
+      const renderBranch = (branch, depth) => {
         const useOrigin = branch.hasRemote
           ? `<button class="sidebar-ref-origin-action" type="button" data-action="replaceLocalBranchFromRemote" data-branch="${escapeHtml(branch.name)}" title="Reset local branch to origin/${escapeHtml(branch.name)}">Reset to origin</button>`
           : '';
@@ -1337,8 +1426,10 @@
         const branchActions = useOrigin || deleteBranch
           ? `<span class="sidebar-ref-actions">${useOrigin}${deleteBranch}</span>`
           : '';
-        return `<div class="sidebar-ref-row"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" title="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(branch.name)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
-      }).join('') || '<span class="sidebar-placeholder">No branches</span>';
+        const leaf = branch.name.split('/').pop();
+        return `<div class="sidebar-ref-row branch-depth-${Math.min(depth, 6)}"><button class="sidebar-ref-item${branch.isCurrent ? ' current' : ''}" type="button" data-action="selectDashboardBranch" data-branch="${escapeHtml(branch.name)}" title="${escapeHtml(branch.name)}" aria-pressed="${branch.isCurrent ? 'true' : 'false'}"><span>⑂</span><span>${escapeHtml(leaf)}</span>${branch.isCurrent ? '<small>HEAD</small>' : ''}</button>${branchActions}</div>`;
+      };
+      branchList.innerHTML = renderBranchTree(buildBranchTree(branches), 0, renderBranch) || '<span class="sidebar-placeholder">No branches</span>';
     }
     if (tagList) {
       tagList.innerHTML = tags.map(tag => `<button class="reference-detail-item" type="button" data-action="selectReference" data-revision="${escapeHtml(tag.name)}"><span>◇</span><span class="reference-detail-copy"><strong>${escapeHtml(tag.name)}</strong><small>${escapeHtml(shortRevision(tag.targetHash))}${tag.createdAt ? ` · ${escapeHtml(formatHistoryDate(tag.createdAt))}` : ''}</small></span></button>`).join('') || '<span class="sidebar-placeholder">No tags</span>';
@@ -1517,6 +1608,15 @@
     toggleCommitCompareNode(graphNode.dataset.commit);
   });
 
+  // The reason for a dismissal is a select inside the finding, so it reports through 'change'.
+  document.addEventListener('change', event => {
+    const select = event.target;
+    if (!select || !select.classList || !select.classList.contains('review-dismiss-reason')) return;
+    if (!reviewState || reviewState.status !== 'completed') return;
+    postMessage('setFindingTriage', { requestId: reviewState.requestId, findingId: select.dataset.findingId,
+      decision: 'dismiss', reason: select.value });
+  });
+
   // Handle workspace folder switching
   const workspaceFolderSelect = document.getElementById('workspaceFolderSelect');
   if (workspaceFolderSelect) {
@@ -1632,13 +1732,47 @@
           if (!reviewState || payload.requestId !== reviewState.requestId) break;
           if (message.type === 'reviewProgress') {
             reviewState.progress = payload.message;
+            if (payload.detail) {
+              reviewState.detail = payload.detail;
+              if (payload.detail.components) reviewState.components = payload.detail.components;
+              if (!reviewState.startedAt) reviewState.startedAt = Date.now();
+            }
             // The extension resolves the release range, so it reports the labels it settled on.
             if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
-            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context });
+            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context, triage: {} });
           } else {
             Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
           }
+          renderReviewPanel();
+          break;
+        }
+
+        case 'reviewFixProgress':
+        case 'reviewFixProposed':
+        case 'reviewFixFailed':
+        case 'reviewFixApplied':
+        case 'reviewFixDiscarded': {
+          const payload = message.payload || {};
+          if (!reviewState || payload.requestId !== reviewState.requestId) break;
+          const previous = reviewState.fix || {};
+          reviewState.fix = {
+            reviewFixProgress: () => ({ status: 'running', message: payload.message }),
+            reviewFixProposed: () => ({ status: 'proposed', files: payload.files || [], notes: payload.notes || [], rejected: payload.rejected || [] }),
+            // A failed Apply keeps the proposal on screen with the reason.
+            reviewFixFailed: () => (payload.keepProposal ? Object.assign({}, previous, { message: payload.message })
+              : payload.cancelled ? null : { status: 'failed', message: payload.message }),
+            reviewFixApplied: () => ({ status: 'applied', paths: payload.paths || [] }),
+            reviewFixDiscarded: () => null
+          }[message.type]();
+          renderReviewPanel();
+          break;
+        }
+
+        case 'reviewTriageUpdated': {
+          const payload = message.payload || {};
+          if (!reviewState || payload.requestId !== reviewState.requestId || reviewState.status !== 'completed') break;
+          Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness });
           renderReviewPanel();
           break;
         }
@@ -1659,7 +1793,7 @@
           repositoryData = (message.payload && message.payload.repositories) || [];
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
-          reviewState = null;
+          // A review keeps running (and its results stay) across folders: it is pinned to its own folder.
           renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
@@ -2319,23 +2453,23 @@
   // ---- Security and compliance review (MVP 2, W6–W7) ----
   // The extension runs the review and classifies readiness; this code only collects input
   // and displays results, so the dashboard and the exported report always agree.
-  let reviewRequestId = 0;
-  let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
   let pendingEvidenceJump = null;
   const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
   function reviewButtons(base, target) {
-    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}" title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}" title="Review every file at Target"><span class="review-entry-word">Review </span>whole</button></span>`;
+    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}" title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}" title="Review every file at Target"><span class="review-entry-word">Review </span>branch</button></span>`;
   }
 
   // Starts at once with security and team policy, using the model chosen for AI summaries;
   // the extension asks for consent until it is allowed for the repository.
   function startReview(options) {
-    if (!activeDashboardRepository) return;
+    if (!activeDashboardRepository || reviewLocked()) return;
     const scope = options.scope;
     const kind = options.kind || 'review';
     reviewRequestId += 1;
-    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+    const repository = getRepository(activeDashboardRepository);
+    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
+      repositoryName: repository ? repository.name : activeDashboardRepository, scope, kind,
       baseLabel: scope === 'changes' ? (options.base || '') : '', targetLabel: options.target || '', status: 'running' };
     renderReviewPanel();
     showDetailTab('review');
@@ -2343,6 +2477,51 @@
       baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
       baseLabel: scope === 'changes' && options.base ? shortRevision(options.base) : undefined,
       targetLabel: options.target ? shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
+  }
+
+  // A review runs in the background: the rest of the dashboard stays usable (other repositories,
+  // folders, tabs and commits). Only starting a second review waits, since it would replace this one.
+  function currentWorkspaceFolder() {
+    const select = document.getElementById('workspaceFolderSelect');
+    return select ? select.value : '';
+  }
+
+  // Whether the dashboard currently shows the repository the review is about.
+  function reviewIsForActiveRepository() {
+    return Boolean(reviewState && reviewState.folder === currentWorkspaceFolder() && reviewState.repositoryPath === activeDashboardRepository);
+  }
+
+  function reviewProgressPercent() {
+    const detail = reviewState && reviewState.detail;
+    if (!detail) return 0;
+    if (detail.phase === 'finishing') return 100;
+    if (detail.filesTotal) return Math.round((100 * detail.filesDone) / detail.filesTotal);
+    return detail.units ? Math.round((100 * Math.max(0, detail.unit - 1)) / detail.units) : 0;
+  }
+
+  function reviewLocked() {
+    return Boolean(reviewState && reviewState.status === 'running');
+  }
+
+  const REVIEW_LOCK_HINT = 'A review is running. Wait for it, or cancel it to start another.';
+
+  function applyReviewLock() {
+    const locked = reviewLocked();
+    if (document.body && document.body.classList) document.body.classList.toggle('review-running', locked);
+    const lockable = '[data-action="reviewRelease"], [data-action="reviewComparison"], ' +
+      '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
+    document.querySelectorAll(lockable).forEach(element => {
+      if (locked) {
+        element.setAttribute('aria-disabled', 'true');
+        if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';
+        element.setAttribute('title', REVIEW_LOCK_HINT);
+      } else if (element.getAttribute('aria-disabled') === 'true') {
+        element.removeAttribute('aria-disabled');
+        const title = element.dataset.unlockedTitle;
+        delete element.dataset.unlockedTitle;
+        if (title) element.setAttribute('title', title); else element.removeAttribute('title');
+      }
+    });
   }
 
   function showDetailTab(tab) {
@@ -2356,18 +2535,126 @@
     });
   }
 
+  const REVIEW_PHASES = { planning: 'Planning', analyzing: 'Analyzing', verifying: 'Checking candidate findings', finishing: 'Collecting results' };
+  let reviewClock = null;
+
+  function formatElapsed(milliseconds) {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+  }
+
+  function stopReviewClock() {
+    if (reviewClock) clearInterval(reviewClock);
+    reviewClock = null;
+  }
+
+  // Progress while a review runs: overall bar, where it is, and every component with its state.
+  function renderReviewProgress(body) {
+    const detail = reviewState.detail;
+    const components = reviewState.components || [];
+    const list = body.querySelector('.review-steps');
+    const scrollTop = list ? list.scrollTop : 0;
+    const finishing = detail && detail.phase === 'finishing';
+    const percent = reviewProgressPercent();
+    const phase = detail ? REVIEW_PHASES[detail.phase] || 'Reviewing' : 'Waiting';
+    const where = detail && detail.unit && !finishing
+      ? `Component ${detail.unit} of ${detail.units}: <code>${escapeHtml(detail.component || '')}</code> · ${escapeHtml(phase)}`
+      : escapeHtml(detail ? phase : reviewState.progress || 'Starting…');
+    const counts = detail
+      ? `${detail.filesDone} of ${detail.filesTotal} files · ${detail.candidates} candidate finding${detail.candidates === 1 ? '' : 's'} · <span id="reviewElapsed"></span>`
+      : '';
+    const steps = components.map((component, index) => {
+      const state = finishing || (detail && index + 1 < detail.unit) ? 'done' : detail && index + 1 === detail.unit ? 'current' : 'pending';
+      const mark = { done: '✓', current: '●', pending: '○' }[state];
+      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><code>${escapeHtml(component.component)}</code><span>${component.files} file${component.files === 1 ? '' : 's'}</span></li>`;
+    }).join('');
+    body.innerHTML = `<div class="review-progress-block">
+        <div class="review-progress-where">${where}</div>
+        <div class="review-progress" role="progressbar" aria-label="Review progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span class="review-progress-fill"></span></div>
+        <div class="review-progress-counts">${counts}</div>
+        <div class="review-progress-message" aria-live="polite">${escapeHtml(reviewState.progress || '')}</div>
+      </div>
+      ${steps ? `<ol class="review-steps">${steps}</ol>` : ''}
+      <p class="review-lock-note">The review keeps running while you use the rest of the dashboard; its progress shows on the Review tab.</p>`;
+    body.querySelector('.review-progress-fill').style.width = `${percent}%`;
+    const newList = body.querySelector('.review-steps');
+    if (newList) {
+      newList.scrollTop = scrollTop;
+      const current = newList.querySelector('[aria-current="step"]');
+      if (current && (current.offsetTop < newList.scrollTop || current.offsetTop > newList.scrollTop + newList.clientHeight - 24)) {
+        newList.scrollTop = current.offsetTop - newList.clientHeight / 2;
+      }
+    }
+    const tick = () => {
+      const elapsed = document.getElementById('reviewElapsed');
+      if (elapsed && reviewState && reviewState.startedAt) elapsed.textContent = `${formatElapsed(Date.now() - reviewState.startedAt)} elapsed`;
+    };
+    tick();
+    if (!reviewClock) reviewClock = setInterval(tick, 1000);
+  }
+
   function reviewEvidenceButton(evidence, findingIndex, evidenceIndex) {
     const lines = evidence.startLine === evidence.endLine ? `${evidence.startLine}` : `${evidence.startLine}-${evidence.endLine}`;
     return `<button type="button" class="review-evidence" data-action="reviewEvidence" data-finding="${findingIndex}" data-evidence="${evidenceIndex}" title="${escapeHtml(`${evidence.side} ${shortRevision(evidence.revision)}`)}">${escapeHtml(`${evidence.path}:${lines}`)}</button>`;
   }
 
+  // Auto-fix: one button in the triage summary, and the proposal (or its outcome) below it.
+  function renderFixAction(readiness) {
+    const count = readiness.toFix || 0;
+    const busy = reviewState.fix && reviewState.fix.status === 'running';
+    const title = count ? 'Copilot proposes edits for the findings marked Needs fix; you see the diff before anything is written'
+      : 'Mark findings "Needs fix" first';
+    return `<button type="button" class="btn review-fix-action" data-action="proposeReviewFix" title="${title}"${count && !busy ? '' : ' disabled'}>Fix ${count || ''} with Copilot…</button>`;
+  }
+
+  function renderFixPanel() {
+    const fix = reviewState.fix;
+    if (!fix) return '';
+    if (fix.status === 'running') {
+      return `<section class="review-fix review-fix-running"><h4>Auto-fix</h4><p>${escapeHtml(fix.message || 'Asking Copilot for a fix…')}</p><button type="button" class="btn" data-action="cancelReviewFix">Cancel</button></section>`;
+    }
+    if (fix.status === 'applied') {
+      return `<section class="review-fix review-fix-applied" role="status"><h4>Auto-fix applied</h4><p>Changed ${fix.paths.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')} in your working tree. Nothing was staged or committed: check the changes, run your tests, then commit.</p></section>`;
+    }
+    const error = fix.message ? `<div class="dashboard-error" role="alert">${escapeHtml(fix.message)}</div>` : '';
+    if (!fix.files) return `<section class="review-fix"><h4>Auto-fix</h4>${error}</section>`;
+    const list = (items, className) => items && items.length ? `<ul class="${className}">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
+    return `<section class="review-fix"><h4>Proposed fix · ${fix.files.length} file${fix.files.length === 1 ? '' : 's'}</h4>
+      ${error}
+      <p class="review-fix-note">Nothing is written until you apply it. Applying edits your working tree only; it does not stage or commit.</p>
+      ${list(fix.notes, 'review-gaps')}${list(fix.rejected, 'review-gaps review-fix-rejected')}
+      ${fix.files.map(file => `<details class="review-fix-file" open><summary><code>${escapeHtml(file.path)}</code></summary><pre class="diff-viewer">${renderPatchLines(file.patch)}</pre></details>`).join('')}
+      <div class="review-fix-buttons"><button type="button" class="btn btn-primary" data-action="applyReviewFix">Apply to working tree</button><button type="button" class="btn" data-action="discardReviewFix">Discard</button></div>
+    </section>`;
+  }
+
+  const DISMISS_REASONS = { false_positive: 'False positive', accepted_risk: 'Accepted risk', not_applicable: 'Not applicable' };
+
+  // Needs fix / Dismiss for one finding; pressing the active choice again clears it.
+  function renderTriageControls(finding) {
+    const triage = (reviewState.triage || {})[finding.id];
+    const decision = triage ? triage.decision : '';
+    const id = escapeHtml(finding.id);
+    const reason = decision === 'dismiss'
+      ? `<select class="review-dismiss-reason" data-finding-id="${id}" aria-label="Why it is dismissed">${Object.entries(DISMISS_REASONS)
+        .map(([value, label]) => `<option value="${value}"${triage.reason === value ? ' selected' : ''}>${label}</option>`).join('')}</select>`
+      : '';
+    return `<div class="review-triage" role="group" aria-label="Triage this finding">
+      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="fix" aria-pressed="${decision === 'fix'}">Needs fix</button>
+      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="dismiss" aria-pressed="${decision === 'dismiss'}">Dismiss</button>${reason}
+    </div>`;
+  }
+
   function renderReviewFinding(finding, index) {
     const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
-    return `<li class="review-finding severity-${escapeHtml(finding.severity)}">
+    const triage = (reviewState.triage || {})[finding.id];
+    const triageClass = triage ? ` triage-${triage.decision}` : '';
+    return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}" data-finding-id="${escapeHtml(finding.id)}">
       <div class="review-finding-head"><span class="review-severity">${escapeHtml(finding.severity)}</span><span>${escapeHtml(finding.category)}${rule}</span><span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span><span class="review-confidence">confidence ${escapeHtml(finding.confidence)}</span></div>
       <p>${escapeHtml(finding.explanation)}</p>
       <dl><dt>Impact</dt><dd>${escapeHtml(finding.impact)}</dd><dt>Suggested action</dt><dd>${escapeHtml(finding.suggestedAction)}</dd></dl>
       <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
+      ${renderTriageControls(finding)}
     </li>`;
   }
 
@@ -2391,11 +2678,13 @@
     if (!tabs || !body) return;
     tabs.hidden = !reviewState;
     if (!reviewState) {
+      applyReviewLock();
       showDetailTab('changes');
       return;
     }
     const running = reviewState.status === 'running';
     const done = reviewState.status === 'completed';
+    applyReviewLock();
     document.getElementById('cancelReviewButton').hidden = !running;
     document.getElementById('copyReviewButton').hidden = !done;
     document.getElementById('saveReviewButton').hidden = !done;
@@ -2404,15 +2693,19 @@
     const target = reviewState.targetLabel || (release ? 'current branch' : '');
     const label = reviewState.scope === 'changes'
       ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
-      : `Whole: ${target}`;
+      : `Branch: ${target}`;
     title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
-    meta.textContent = label;
+    // Name the repository when the dashboard has moved on to another one (or another folder).
+    meta.textContent = reviewIsForActiveRepository() ? label : `${label} · ${reviewState.repositoryName || reviewState.repositoryPath}`;
     if (running) {
-      if (badge) badge.textContent = '…';
-      status.textContent = reviewState.progress || 'Starting…';
-      body.innerHTML = '<div class="dashboard-loading">Reviewing with Copilot. Large reviews can take several minutes.</div>';
+      // Visible from the Changes tab too, so progress can be followed while working elsewhere.
+      if (badge) badge.textContent = reviewState.detail ? `${reviewProgressPercent()}%` : '…';
+      // Before the engine reports (e.g. waiting for consent) the header says what it waits for.
+      status.textContent = reviewState.detail ? '' : reviewState.progress || 'Starting…';
+      renderReviewProgress(body);
       return;
     }
+    stopReviewClock();
     if (!done) {
       if (badge) badge.textContent = '';
       status.textContent = '';
@@ -2434,9 +2727,15 @@
       ? `<section><h4>Policy</h4><table class="review-policy"><thead><tr><th>Rule</th><th>Result</th><th>Reason</th></tr></thead><tbody>${result.policyResults.map(item =>
         `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
       : '';
+    const triageBar = findings.length
+      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
+      : '';
     body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
-      <section><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
-      <section><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${triageBar}
+      ${renderFixPanel()}
+      <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
+      <section class="review-attention"><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${(readiness.dismissed || []).length ? `<section class="review-dismissed"><h4>Dismissed by you</h4>${renderReviewItems(readiness.dismissed, findings)}</section>` : ''}
       ${policy}
       <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
@@ -2451,7 +2750,7 @@
     const evidence = finding && finding.evidence[evidenceIndex];
     if (!evidence) return;
     const request = reviewState.result.request;
-    if (request.scope === 'changes' && request.baseSha && reviewState.repositoryPath === activeDashboardRepository) {
+    if (request.scope === 'changes' && request.baseSha && reviewIsForActiveRepository()) {
       pendingEvidenceJump = { path: evidence.path, side: evidence.side, line: evidence.startLine };
       showDetailTab('changes');
       commitCompareSelection = [];
@@ -2459,7 +2758,7 @@
       loadComparison(request.baseSha, request.targetSha, 'review');
       return;
     }
-    postMessage('openReviewEvidence', { repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
+    postMessage('openReviewEvidence', { requestId: reviewState.requestId, repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
   }
 
   function highlightEvidenceLine() {

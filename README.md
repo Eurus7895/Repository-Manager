@@ -10,7 +10,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 - See the parent repository and linked repositories in one dashboard.
 - Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
-- Browse the active repository's topology-aware commit graph with distinct branch and merge lanes plus tag, remote, and stash context.
+- Browse the active repository's commit graph, Git Graph style: the checked-out branch stays in the first column, and each branch keeps its own column and colour, with tag, remote, and stash context. The sidebar lists branches as a folder tree (`feature/…`, `release/…`).
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
 - Resize the history, changed-files, and diff panes to suit the current review task.
 - Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
@@ -41,9 +41,11 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 ### Security and compliance review
 
-- Every entry point has two buttons: **Review changes** (the diff) and **Review whole** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the tree at that commit), and in **◈ Release** (since the latest release tag, or the whole current branch).
+- Every entry point has two buttons: **Review changes** (the diff) and **Review branch** (every file). They sit next to a Base/Target selection or branch comparison, in the history right-click menu (one commit against its parent, or the branch at that commit), and in **◈ Release** (since the latest release tag, or the whole current branch).
 - One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
-- Results are classified as blocked, needs attention, or no blocking findings.
+- A progress view shows the component being reviewed, files done and elapsed time. The review runs in the background: switch repository, folder or tab while it continues, and follow its percentage on the Review tab.
+- Results are classified as blocked, needs attention, or no blocking findings. Mark each finding **Needs fix** or **Dismiss** with a reason; dismissed findings no longer count toward readiness but stay in the report.
+- **Fix with Copilot** proposes edits for the findings marked Needs fix. You see the diff first; **Apply to working tree** writes it, and nothing is staged or committed. It needs the reviewed commit checked out and the cited files unchanged.
 - Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
 - Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
 

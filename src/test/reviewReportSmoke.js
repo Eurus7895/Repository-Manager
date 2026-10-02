@@ -52,9 +52,9 @@ assert.doesNotMatch(markdown, /<script>/);
 assert.match(markdown, /&lt;script&gt;/);
 assert.match(markdown, /pipe \\\| in reason/);
 assert.match(markdown, /No findings does not mean no vulnerabilities/);
-// A whole-tree release review names only the target, never an "undefined" base.
-const whole = renderReviewMarkdown(result({ request: { ...result().request, scope: 'branch', baseSha: undefined } }),
+// A branch release review names only the target, never an "undefined" base.
+const branch = renderReviewMarkdown(result({ request: { ...result().request, scope: 'branch', baseSha: undefined } }),
   { kind: 'release', repositoryName: 'repo', targetLabel: 'main', generatedAt: new Date('2026-10-01T00:00:00Z') });
-assert.match(whole, /^# Release review — Whole: main\n/);
-assert.match(whole, /Every file at `main` \(bbbbbbbb\)/);
+assert.match(branch, /^# Release review — Branch: main\n/);
+assert.match(branch, /Every file at `main` \(bbbbbbbb\)/);
 console.log('Review report smoke passed');

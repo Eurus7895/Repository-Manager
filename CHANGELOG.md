@@ -5,6 +5,21 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - Unreleased
+
+### Added
+
+- **Fix with Copilot** after a review: mark findings **Needs fix**, and Copilot proposes edits to the files they cite. The proposed diff appears in the Review tab, and nothing is written until you choose **Apply to working tree**. Applying never stages or commits. Auto-fix needs the reviewed commit checked out and the cited files free of local or unsaved changes, and it checks this again just before writing.
+- Triage review findings: mark each one **Needs fix** or **Dismiss** (false positive, accepted risk, or not applicable). Dismissed findings move to their own section and no longer count toward readiness, so a dismissed verified high stops blocking; the exported report lists them with the reason.
+- Review progress: a progress bar, the component being reviewed (for example "Component 2 of 3 · Analyzing"), files done, candidate findings, elapsed time, and a checklist of every component.
+- The sidebar branch list is a folder tree: `feature/a` and `feature/b` sit under **feature**. Folders collapse; the one holding the checked-out branch stays open.
+
+### Changed
+
+- **Review whole** is now **Review branch**; the Review tab and the report say **Branch: main**.
+- A review runs in the background: switch repository, workspace folder or tab, and browse commits, while it continues. The Review tab shows its progress as a percentage, and the header names the reviewed repository when you are looking at another one. Clicking a commit shows its changes. Only starting a second review waits until the first finishes or is cancelled. Switching workspace folders no longer cancels a review.
+- History graph, Git Graph style: the checked-out branch stays in the first column with a ring on HEAD, and every branch keeps one column and one colour from its tip until it merges. A branch started from another branch's commit curves into it instead of leaving a dangling line.
+
 ## [1.6.0] - 2026-09-29
 
 ### Added

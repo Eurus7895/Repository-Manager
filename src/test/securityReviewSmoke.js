@@ -92,7 +92,18 @@ async function main() {
     const rootPlan = await new ReviewSurveyService(new GitCommandService(repo)).plan({
       repositoryPath: '.', targetSha: base, scope: 'changes', categories: ['security'] });
     assert.deepEqual(rootPlan.changedPaths, ['src/app.js']);
-    const result = await service.review(request, token, () => {});
+    const updates = [];
+    const result = await service.review(request, token, (message, detail) => updates.push({ message, detail }));
+    // Progress: planning first, then the plan with every component, steps in order, then finishing.
+    const details = updates.map(update => update.detail).filter(Boolean);
+    assert.equal(details[0].phase, 'planning');
+    const planned = details.find(detail => detail.components);
+    assert.ok(planned && planned.components.length === planned.units && planned.units > 0);
+    assert.equal(planned.components.reduce((sum, item) => sum + item.files, 0), planned.filesTotal);
+    const steps = details.filter(detail => detail.phase === 'analyzing').map(detail => detail.unit);
+    assert.deepEqual(steps, [...steps].sort((a, b) => a - b), 'components reported out of order');
+    assert.equal(details.at(-1).phase, 'finishing');
+    assert.equal(details.at(-1).filesDone, details.at(-1).filesTotal);
     assert.equal(searchCalls, 1);
     assert.equal(result.policyStatus, 'configured');
     assert.equal(result.coverage.complete, true);

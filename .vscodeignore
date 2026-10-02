@@ -13,3 +13,4 @@ node_modules/**
 !node_modules/simple-git/**
 ui-snapshots/**
 .github/**
+AGENTS.md

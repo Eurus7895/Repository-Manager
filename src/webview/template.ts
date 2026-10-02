@@ -312,7 +312,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="review-entry review-release-group" role="group" aria-label="Review the release with Copilot">
               <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
               <button type="button" data-action="reviewRelease" data-scope="changes" title="Review the changes since the latest release tag on the current branch"><span class="review-entry-word">Review </span>changes</button>
-              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>whole</button>
+              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>branch</button>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
@@ -410,7 +410,7 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
     <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent">Review changes in this commit</button>
-    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as of this commit">Review whole tree at this commit</button>
+    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as of this commit">Review branch at this commit</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
