@@ -18,6 +18,23 @@
     return head ? head.hash : '';
   }
 
+  // The current branch's configured upstream (`@{upstream}`, resolved by the extension) when it
+  // is ahead of HEAD and its first-parent line runs straight down to HEAD: the main column then
+  // starts at the upstream tip, so "behind by n" reads as one line, as in Git Graph. Nothing is
+  // guessed from branch names, and a diverged upstream is left in its own column.
+  function findUpstreamTip(commits, byHash, headHash, upstream) {
+    if (!upstream || !headHash) return '';
+    const tip = commits.find(commit => commit.hash !== headHash && (commit.refs || []).some(ref =>
+      ref && ref.name === upstream && (ref.kind === 'remote-branch' || ref.kind === 'local-branch')));
+    const seen = new Set();
+    for (let hash = tip && tip.hash; hash && byHash.has(hash) && !seen.has(hash);) {
+      if (hash === headHash) return tip.hash;
+      seen.add(hash);
+      hash = (byHash.get(hash).parentHashes || [])[0];
+    }
+    return '';
+  }
+
   /**
    * Lays commits (newest first) out in lanes, Git Graph style: the current branch's first-parent
    * chain stays in column 0, and every branch path keeps one column and one colour from its tip
@@ -32,7 +49,8 @@
     const byHash = new Map(list.map(commit => [commit.hash, commit]));
     const headHash = (options && options.headHash) || findHeadHash(list);
     const headChain = new Set();
-    for (let hash = headHash; hash && byHash.has(hash) && !headChain.has(hash);) {
+    const chainTip = findUpstreamTip(list, byHash, headHash, options && options.upstream) || headHash;
+    for (let hash = chainTip; hash && byHash.has(hash) && !headChain.has(hash);) {
       headChain.add(hash);
       hash = (byHash.get(hash).parentHashes || [])[0];
     }

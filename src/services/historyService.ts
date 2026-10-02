@@ -120,11 +120,17 @@ export class HistoryService {
     }
 
     const hasMore = commits.length > limit;
+    // The configured upstream, not a same-named guess: `work` may track `upstream/release`.
+    // A detached HEAD or a branch without one has none.
+    const upstream = (await this.gitCmd.execGit(
+      ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], repositoryRoot, 5000
+    ).catch(() => '')).trim() || null;
     return {
       repositoryPath: query.repositoryPath,
       offset,
       commits: commits.slice(0, limit),
-      nextOffset: hasMore ? offset + limit : null
+      nextOffset: hasMore ? offset + limit : null,
+      upstream
     };
   }
 }
