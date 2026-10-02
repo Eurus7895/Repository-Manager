@@ -173,7 +173,7 @@ export class SecurityReviewProvider {
 
   /** One request with no tools, for callers outside a review (e.g. proposing a fix). */
   async requestJson(instructions: string, input: unknown, selectedModelId: string | undefined,
-    token: vscode.CancellationToken, maxResponseChars = 60000): Promise<{ modelId: string; response: Record<string, unknown> }> {
+    token: vscode.CancellationToken, maxResponseChars = 60000, onText?: (characters: number) => void): Promise<{ modelId: string; response: Record<string, unknown> }> {
     const model = await this.selectModel(selectedModelId);
     const prompts = [instructions, JSON.stringify(input)];
     const size = (await Promise.all(prompts.map(message => model.countTokens(message)))).reduce((sum, count) => sum + count, 0);
@@ -183,6 +183,7 @@ export class SecurityReviewProvider {
     for await (const part of response.text) {
       if (token.isCancellationRequested) { throw new Error('Cancelled'); }
       text += part;
+      onText?.(text.length);
       if (text.length > maxResponseChars) { throw new Error('AI response exceeds size limit'); }
     }
     const parsed = parseModelJson(text);

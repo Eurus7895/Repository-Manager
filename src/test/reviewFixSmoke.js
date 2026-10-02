@@ -42,7 +42,7 @@ async function main() {
     const service = new ReviewFixService(new GitCommandService(repo));
     let response;
     let sent;
-    const model = { request: async (instructions, input) => { sent = input; return { modelId: 'fixer:1', response }; } };
+    const model = { request: async (instructions, input, token, onText) => { sent = input; if (onText) onText(JSON.stringify(response).length); return { modelId: 'fixer:1', response }; } };
     const propose = (overrides = {}) => service.propose({ repositoryPath: '.', result, findingIds: ['f1'], model, token: never,
       isDirtyInEditor: () => false, ...overrides });
 
@@ -150,6 +150,13 @@ async function main() {
     assert.deepEqual(await service.apply(pair, () => false), ['app.js', 'util.js']);
     assert.equal(git('status', '--porcelain'), 'M app.js\n M util.js'.trim());
     git('checkout', '--', 'app.js', 'util.js');
+    // Each file records the findings its edits address (here: the findings citing it).
+    assert.deepEqual(pair.files.map(file => file.findingIds), [['f1'], ['f2']]);
+    // Apply selected writes only the chosen files.
+    assert.deepEqual(await service.apply(pair, () => false, ['util.js']), ['util.js']);
+    assert.equal(git('status', '--porcelain'), 'M util.js');
+    await rejects(service.apply(pair, () => false, []), /Select at least one file/);
+    git('checkout', '--', 'util.js');
 
     // Through the controller: consent, preview, apply, refresh.
     const posts = [];
@@ -224,8 +231,38 @@ async function main() {
     assert.equal(of('reviewFixApplied').length, 1);
     // The exported report records the triage.
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 1, format: 'copy' } });
-    assert.match(copied, /Triage: 1 marked to fix, 1 dismissed, 1 not triaged\./);
+    // Progress went through every step, in order.
+    const steps = of('reviewFixProgress').map(message => message.payload.detail && message.payload.detail.step);
+    assert.deepEqual([...new Set(steps)].slice(-4), ['checking', 'sending', 'receiving', 'validating']);
+    assert.ok(of('reviewFixProgress').some(message => message.payload.detail.receivedCharacters > 0), 'no reply size was reported');
+    // The applied fix marked its finding fixed: out of "to fix", into Fixed, and in the report.
+    assert.deepEqual(of('reviewFixApplied').at(-1).payload.fixedFindingIds, ['f1']);
+    const afterFix = of('reviewTriageUpdated').at(-1).payload;
+    assert.deepEqual(afterFix.triage.f1, { decision: 'fixed' });
+    assert.deepEqual([afterFix.readiness.toFix, afterFix.readiness.fixed.length], [0, 1]);
+    assert.match(copied, /Triage: 0 marked to fix, 1 fixed, 1 dismissed, 1 not triaged\./);
+    assert.match(copied, /## Fixed\n\n- \*\*HIGH security\*\* · verified · confidence high · fixed/);
     assert.match(copied, /## Dismissed by reviewer\n\n- \*\*HIGH security\*\* · verified · confidence high · dismissed: accepted risk/);
+    // Apply selected through the controller: the rest stays proposed, and only fully fixed findings are marked.
+    git('checkout', '--', 'app.js');
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fix' } });
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f2', decision: 'fix' } });
+    response = { edits: [{ path: 'app.js', findingId: 'f1', find: 'eval(input);', replace: 'JSON.parse(input);' },
+      { path: 'util.js', findingId: 'f2', find: 'exports.x = 1;', replace: 'exports.x = 2;' }] };
+    await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
+    assert.deepEqual(of('reviewFixProposed').at(-1).payload.files.map(file => [file.path, file.findingIds]), [['app.js', ['f1']], ['util.js', ['f2']]]);
+    await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1, paths: ['util.js'] } });
+    const partial = of('reviewFixApplied').at(-1).payload;
+    assert.deepEqual([partial.paths, partial.fixedFindingIds, partial.remaining.map(file => file.path)], [['util.js'], ['f2'], ['app.js']]);
+    assert.deepEqual(of('reviewTriageUpdated').at(-1).payload.triage, { f1: { decision: 'fix' }, f2: { decision: 'fixed' } });
+    assert.equal(read('app.js').includes('eval(input)'), true, 'an unselected file was written');
+    await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
+    assert.deepEqual(of('reviewFixApplied').at(-1).payload.paths, ['app.js']);
+    assert.deepEqual(of('reviewTriageUpdated').at(-1).payload.triage, { f1: { decision: 'fixed' }, f2: { decision: 'fixed' } });
+    // Marking a finding fixed by hand is a triage decision like the others.
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: null } });
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fixed' } });
+    assert.deepEqual(of('reviewTriageUpdated').at(-1).payload.triage.f1, { decision: 'fixed' });
     fs.rmSync(otherFolder, { recursive: true, force: true });
     console.log('Review fix smoke passed');
   } finally {

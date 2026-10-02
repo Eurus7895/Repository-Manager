@@ -24,6 +24,8 @@ export interface ReviewReadiness {
   attention: ReadinessItem[];
   /** Findings the reviewer dismissed; they no longer count toward readiness, but stay on record. */
   dismissed: ReadinessItem[];
+  /** Findings fixed (by an applied auto-fix or by hand); like dismissed ones, out of readiness but on record. */
+  fixed: ReadinessItem[];
   /** Findings the reviewer marked to fix, and findings with no decision yet. */
   toFix: number;
   untriaged: number;
@@ -77,8 +79,8 @@ export function normalizeTriage(result: ReviewResult, triage: unknown): ReviewTr
   const ids = new Set(result.findings.map(finding => finding.id));
   for (const [id, value] of Object.entries(triage as Record<string, unknown>)) {
     const entry = value as Partial<FindingTriage> | undefined;
-    if (!ids.has(id) || !entry || (entry.decision !== 'fix' && entry.decision !== 'dismiss')) { continue; }
-    if (entry.decision === 'fix') { normalized[id] = { decision: 'fix' }; continue; }
+    if (!ids.has(id) || !entry || (entry.decision !== 'fix' && entry.decision !== 'dismiss' && entry.decision !== 'fixed')) { continue; }
+    if (entry.decision === 'fix' || entry.decision === 'fixed') { normalized[id] = { decision: entry.decision }; continue; }
     const reason = entry.reason && entry.reason in DISMISS_REASONS ? entry.reason : 'false_positive';
     normalized[id] = { decision: 'dismiss', reason };
   }
@@ -95,6 +97,7 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   const blocking: ReadinessItem[] = [];
   const attention: ReadinessItem[] = [];
   const dismissed: ReadinessItem[] = [];
+  const fixed: ReadinessItem[] = [];
   let toFix = 0;
   let untriaged = 0;
   for (const finding of result.findings) {
@@ -102,6 +105,7 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
     const decision = triage[finding.id];
     if (decision) { item.triage = decision; }
     if (decision?.decision === 'dismiss') { dismissed.push(item); continue; }
+    if (decision?.decision === 'fixed') { fixed.push(item); continue; }
     if (decision?.decision === 'fix') { toFix++; } else { untriaged++; }
     if (finding.status === 'verified' && BLOCKING_SEVERITIES.has(finding.severity)) { blocking.push(item); }
     else { attention.push(item); }
@@ -125,8 +129,9 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   blocking.sort(bySeverity);
   attention.sort(bySeverity);
   dismissed.sort(bySeverity);
+  fixed.sort(bySeverity);
   const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length ? 'needs_attention' : 'no_blocking_findings';
-  return { status, blocking, attention, dismissed, toFix, untriaged };
+  return { status, blocking, attention, dismissed, fixed, toFix, untriaged };
 }
 
 export function readinessLabel(status: ReadinessStatus): string {
@@ -147,6 +152,7 @@ const short = (sha?: string) => (sha ? sha.slice(0, 8) : '');
 
 function triageLabel(triage?: FindingTriage): string {
   if (!triage) { return 'not triaged'; }
+  if (triage.decision === 'fixed') { return 'fixed'; }
   return triage.decision === 'fix' ? 'marked to fix' : `dismissed: ${DISMISS_REASONS[triage.reason || 'false_positive'].toLowerCase()}`;
 }
 
@@ -188,7 +194,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     '',
     `**Readiness: ${readinessLabel(readiness.status)}** (${readiness.blocking.length} blocking, ${readiness.attention.length} needing attention)`,
     '',
-    `Triage: ${readiness.toFix} marked to fix, ${readiness.dismissed.length} dismissed, ${readiness.untriaged} not triaged.`,
+    `Triage: ${readiness.toFix} marked to fix, ${readiness.fixed.length} fixed, ${readiness.dismissed.length} dismissed, ${readiness.untriaged} not triaged.`,
     '',
     '> Advisory AI-assisted review. "Verified" means the cited evidence passed mechanical checks and a second AI ' +
       'assessment supported the finding; it is not proof of exploitability. No findings does not mean no vulnerabilities, ' +
@@ -207,6 +213,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   };
   section('Blocking', readiness.blocking);
   section('Needs attention', readiness.attention);
+  if (readiness.fixed.length) { section('Fixed', readiness.fixed); }
   if (readiness.dismissed.length) { section('Dismissed by reviewer', readiness.dismissed); }
   if (result.policyResults.length) {
     lines.push('## Policy results', '', '| Rule | Result | Reason |', '|---|---|---|');

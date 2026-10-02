@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One toolbar for what the dashboard shows: **Summarize changes**, **Review changes** and **Review branch** now sit together above the changed files and act on the selected commit or the loaded comparison. The comparison status next to the search only names the range, so it no longer pushes the search box off screen.
 - **◈ Release › Load range** replaces Release › Summarize changes, which had the same name as the toolbar button but did something else. It loads the changes since the latest release tag on the current branch; summarize or review them from the toolbar.
 
+### Added
+
+- **Auto-fix progress**: while Copilot proposes a fix, the Review tab shows each step (checking the cited files, sending the findings and files, receiving the edits with how much has arrived, checking the edits) and the elapsed time.
+- **Apply all or Apply selected**: each proposed file lists the findings it fixes and has a checkbox. Apply every file, or untick some and apply the rest; files you leave out stay proposed.
+- **Fixed** findings: once its fix is applied, a finding moves to a **Fixed** section and out of "to fix" and readiness. You can also mark a finding Fixed by hand. The report and saved reviews record it.
+
 ### Fixed
 
 - Reviews no longer lose whole components to model hiccups. A reply with text around its JSON is read anyway, and an unreadable reply gets one more try. A tool the model may not use (such as reading a diff in a branch review) is reported back to the model instead of failing every file in the component. When the model runs out of tool calls, it is asked for its result from what it has read.

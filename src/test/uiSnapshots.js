@@ -154,7 +154,13 @@ function startServer(workspace, otherFolder) {
       saveText: async () => true,
       openText: async (content, revision, filePath, line) => { reviewProbe.opened = { revision, filePath, line }; },
       notify: () => {},
-      createFixModel: () => ({ request: async () => { reviewProbe.fixRequests++; return { modelId: 'scripted-fix:1', response: reviewProbe.fixResponse }; } }),
+      createFixModel: () => ({ request: async (instructions, input, token, onText) => {
+        reviewProbe.fixRequests++;
+        // A test can hold the reply half-way, to see the progress while it arrives.
+        if (onText) onText(1536);
+        if (reviewProbe.fixGate) await reviewProbe.fixGate;
+        return { modelId: 'scripted-fix:1', response: reviewProbe.fixResponse };
+      } }),
       isDirtyInEditor: () => false,
       workingTreeChanged: () => { reviewProbe.workingTreeChanged++; },
       history: reviewHistory
@@ -467,7 +473,7 @@ async function main() {
     await page.click('[data-action="exportReview"][data-format="copy"]');
     for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
     assert.match(reviewProbe.copied || '', /^# Security and compliance review — Diff: 1\.0\.0 → feature\/dashboard/);
-    assert.match(reviewProbe.copied, /Triage: 1 marked to fix, 1 dismissed, 0 not triaged\./);
+    assert.match(reviewProbe.copied, /Triage: 1 marked to fix, 0 fixed, 1 dismissed, 0 not triaged\./);
     assert.match(reviewProbe.copied, /## Dismissed by reviewer\n\n- \*\*CRITICAL security\*\*.*dismissed: accepted risk/);
 
     // Auto-fix: preview first; nothing is written until Apply, and nothing is committed.
@@ -475,21 +481,48 @@ async function main() {
     const original = fs.readFileSync(appFile, 'utf8');
     reviewProbe.fixResponse = { edits: [{ path: 'src/app.txt', findingId: 'high-verified', find: 'line 3 changed', replace: 'line 3 fixed' }],
       notes: ['Add a test for the fixed input path.'] };
+    let releaseFix;
+    reviewProbe.fixGate = new Promise(resolve => { releaseFix = resolve; });
     await page.click('[data-action="proposeReviewFix"]');
+    // Progress: each step, what was sent, how much of the reply has arrived, elapsed time.
+    await page.waitForFunction(() => /Receive the proposed edits1\.5 KB so far/.test(
+      (document.querySelector('.review-fix-steps .review-step-current') || {}).textContent || ''));
+    assert.deepEqual(await page.locator('.review-fix-steps .review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
+      ['review-step-done', 'review-step-done', 'review-step-current', 'review-step-pending']);
+    assert.match(await page.textContent('.review-fix-steps .review-step:nth-child(2)'), /1 finding, 1 file · [\d.]+ KB/);
+    assert.match(await page.textContent('.review-fix-running h4'), /Auto-fix · \d+s elapsed/);
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: path.join(outputDir, '10a-review-fix-progress.png'), animations: 'disabled', caret: 'hide' });
+    reviewProbe.fixGate = null;
+    releaseFix();
     await page.locator('.review-fix-file').waitFor();
     assert.equal(reviewProbe.fixRequests, 1);
     assert.equal(fs.readFileSync(appFile, 'utf8'), original, 'the preview wrote the file');
     assert.match(await page.textContent('.review-fix'), /Proposed fix · 1 file/);
     assert.match(await page.textContent('.review-fix'), /Add a test for the fixed input path/);
     assert.equal(await page.locator('.review-fix .diff-addition').first().textContent(), '3+line 3 fixed');
+    // Apply all, or Apply selected: unticking every file leaves nothing to apply selectively.
+    assert.equal(await page.isChecked('.review-fix-select[data-path="src/app.txt"]'), true);
+    assert.match(await page.textContent('.review-fix-file summary'), /fixes high security/);
+    assert.equal(await page.isDisabled('[data-action="applyReviewFix"][data-selection="selected"]'), true, 'Apply selected with every file ticked');
+    await page.uncheck('.review-fix-select[data-path="src/app.txt"]');
+    assert.equal(await page.textContent('[data-action="applyReviewFix"][data-selection="selected"]'), 'Apply selected (0)');
+    await page.check('.review-fix-select[data-path="src/app.txt"]');
     await snap(page, '10b-review-fix-preview');
-    await page.click('[data-action="applyReviewFix"]');
+    await page.click('[data-action="applyReviewFix"][data-selection="all"]');
     await page.locator('.review-fix-applied').waitFor();
+    // The fixed finding leaves "to fix" and the blocking list for its own Fixed section.
+    await page.locator('.review-fixed .review-finding[data-finding-id="high-verified"]').waitFor();
+    assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*1 fixed.*1 dismissed/);
+    assert.equal(await page.getAttribute('.review-finding[data-finding-id="high-verified"] [data-decision="fixed"]', 'aria-pressed'), 'true');
+    await snap(page, '10c-review-fixed');
     assert.match(fs.readFileSync(appFile, 'utf8'), /line 3 fixed/);
     assert.equal(reviewProbe.workingTreeChanged, 1);
     assert.equal(git(parent, 'diff', '--cached', '--name-only').trim(), '', 'auto-fix staged the file');
     assert.equal(git(parent, 'diff', '--name-only', '--', 'src').trim(), 'src/app.txt');
     // A second proposal is refused now that the file has local changes.
+    await triage('high-verified', 'fix');
+    await page.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await page.click('[data-action="proposeReviewFix"]');
     await page.waitForFunction(() => /local changes/.test(document.querySelector('.review-fix').textContent));
     assert.equal(reviewProbe.fixRequests, 1, 'asked the model despite local changes');

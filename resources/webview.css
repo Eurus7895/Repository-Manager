@@ -2683,6 +2683,8 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-triage button[data-decision="dismiss"][aria-pressed="true"] { border-color: var(--text-muted); color: var(--text-primary); background: var(--bg-tertiary); }
 .review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
 .review-finding.triage-dismiss { opacity: .7; }
+.review-finding.triage-fixed { border-left-color: #3cc7a6; opacity: .75; }
+.review-fixed h4 { color: #7fe3cb; }
 .review-finding.triage-fix { box-shadow: inset 3px 0 0 #e5a547; }
 .review-triage-summary { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 12px; }
 .review-triage-summary strong { color: var(--text-primary); }
@@ -2695,6 +2697,12 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-fix-file summary { cursor: pointer; }
 .review-fix-file .diff-viewer { max-height: 320px; overflow: auto; margin-top: 6px; }
 .review-fix-buttons { display: flex; gap: 8px; margin-top: 10px; }
+.review-fix-steps { max-height: none; margin: 6px 0 10px; }
+.review-fix-steps .review-step > span:nth-child(3) { color: var(--text-muted); }
+.review-fix-file summary { display: flex; align-items: center; gap: 6px; }
+.review-fix-select { margin: 0; }
+.review-fix-fixes { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.review-fix-applied-note { color: #7fe3cb; font-size: 12px; }
 .review-fix-applied { border-color: rgba(60, 199, 166, .45); background: rgba(60, 199, 166, .06); }
 
 /* Branch list as a folder tree: feature/a and feature/b sit under "feature". */

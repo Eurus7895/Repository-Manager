@@ -731,11 +731,17 @@
 
     proposeReviewFix: () => {
       if (!reviewState || reviewState.status !== 'completed') return;
-      reviewState.fix = { status: 'running', message: 'Checking the working tree…' };
+      reviewState.fix = { status: 'running', message: 'Checking the cited files in your working tree…', startedAt: Date.now() };
       renderReviewPanel();
       postMessage('proposeReviewFix', { requestId: reviewState.requestId, modelId: selectedSummaryModelId || undefined });
     },
-    applyReviewFix: () => { if (reviewState) postMessage('applyReviewFix', { requestId: reviewState.requestId }); },
+    // Apply all, or only the files ticked in the proposal (Apply selected).
+    applyReviewFix: (el) => {
+      if (!reviewState || !reviewState.fix || !reviewState.fix.files) return;
+      const paths = el.dataset.selection === 'selected' ? reviewState.fix.files.map(file => file.path).filter(item => reviewState.fix.selected.has(item)) : undefined;
+      if (paths && !paths.length) return;
+      postMessage('applyReviewFix', { requestId: reviewState.requestId, paths });
+    },
     discardReviewFix: () => { if (reviewState) postMessage('discardReviewFix', { requestId: reviewState.requestId }); },
     cancelReviewFix: () => postMessage('cancelReviewFix', {}),
 
@@ -1678,6 +1684,14 @@
   // The reason for a dismissal is a select inside the finding, so it reports through 'change'.
   document.addEventListener('change', event => {
     const select = event.target;
+    // A file ticked or unticked in a proposed fix: only the selection and Apply selected change.
+    if (select && select.classList && select.classList.contains('review-fix-select')) {
+      const fix = reviewState && reviewState.fix;
+      if (!fix || !fix.selected) return;
+      if (select.checked) fix.selected.add(select.dataset.path); else fix.selected.delete(select.dataset.path);
+      renderReviewPanel();
+      return;
+    }
     if (!select || !select.classList || !select.classList.contains('review-dismiss-reason')) return;
     if (!reviewState || reviewState.status !== 'completed') return;
     postMessage('setFindingTriage', { requestId: reviewState.requestId, findingId: select.dataset.findingId,
@@ -1850,12 +1864,18 @@
           if (!reviewState || payload.requestId !== reviewState.requestId) break;
           const previous = reviewState.fix || {};
           reviewState.fix = {
-            reviewFixProgress: () => ({ status: 'running', message: payload.message }),
-            reviewFixProposed: () => ({ status: 'proposed', files: payload.files || [], notes: payload.notes || [], rejected: payload.rejected || [] }),
+            reviewFixProgress: () => ({ status: 'running', message: payload.message, detail: payload.detail || previous.detail,
+              startedAt: previous.startedAt || Date.now() }),
+            reviewFixProposed: () => ({ status: 'proposed', files: payload.files || [], notes: payload.notes || [], rejected: payload.rejected || [],
+              selected: new Set((payload.files || []).map(file => file.path)) }),
             // A failed Apply keeps the proposal on screen with the reason.
             reviewFixFailed: () => (payload.keepProposal ? Object.assign({}, previous, { message: payload.message })
               : payload.cancelled ? null : { status: 'failed', message: payload.message }),
-            reviewFixApplied: () => ({ status: 'applied', paths: payload.paths || [] }),
+            // Apply selected leaves the other files proposed, still ticked as they were.
+            reviewFixApplied: () => ((payload.remaining || []).length
+              ? Object.assign({}, previous, { files: payload.remaining, message: '', applied: (previous.applied || []).concat(payload.paths || []),
+                selected: new Set(payload.remaining.map(file => file.path).filter(item => previous.selected && previous.selected.has(item))) })
+              : { status: 'applied', paths: (previous.applied || []).concat(payload.paths || []) }),
             reviewFixDiscarded: () => null
           }[message.type]();
           renderReviewPanel();
@@ -2698,24 +2718,72 @@
     return `<button type="button" class="btn review-fix-action" data-action="proposeReviewFix" title="${title}"${count && !busy ? '' : ' disabled'}>Fix ${count || ''} with Copilot…</button>`;
   }
 
+  const FIX_STEPS = [
+    ['checking', 'Check the cited files'],
+    ['sending', 'Send findings and files to Copilot'],
+    ['receiving', 'Receive the proposed edits'],
+    ['validating', 'Check the edits against the files']
+  ];
+
+  function formatSize(characters) {
+    return characters >= 1024 ? `${(characters / 1024).toFixed(1)} KB` : `${characters} B`;
+  }
+
+  // Auto-fix progress: each step with its state, what was sent, how much has arrived, elapsed time.
+  function renderFixProgress(fix) {
+    const detail = fix.detail || { step: 'checking' };
+    const current = FIX_STEPS.findIndex(([step]) => step === detail.step);
+    const extra = {
+      sending: detail.files ? `${detail.findings} finding${detail.findings === 1 ? '' : 's'}, ${detail.files} file${detail.files === 1 ? '' : 's'} · ${formatSize(detail.sentCharacters || 0)}` : '',
+      receiving: detail.receivedCharacters ? `${formatSize(detail.receivedCharacters)} so far` : current === 1 ? 'waiting for Copilot' : ''
+    };
+    const steps = FIX_STEPS.map(([step, label], index) => {
+      const state = index < current ? 'done' : index === current ? 'current' : 'pending';
+      const mark = { done: '✓', current: '●', pending: '○' }[state];
+      const note = extra[step] && (state !== 'pending' || step === 'receiving' && current === 1) ? `<span>${escapeHtml(extra[step])}</span>` : '';
+      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><span>${escapeHtml(label)}</span>${note}</li>`;
+    }).join('');
+    return `<section class="review-fix review-fix-running"><h4>Auto-fix · <span id="reviewFixElapsed"></span></h4>
+      <p aria-live="polite">${escapeHtml(fix.message || 'Asking Copilot for a fix…')}</p>
+      <ol class="review-steps review-fix-steps">${steps}</ol>
+      <button type="button" class="btn" data-action="cancelReviewFix">Cancel</button></section>`;
+  }
+
+  let fixClock = null;
+  // Ticks the auto-fix elapsed time while a proposal is running; stops itself otherwise.
+  function tickFixClock() {
+    const fix = reviewState && reviewState.fix;
+    const elapsed = document.getElementById('reviewFixElapsed');
+    if (!fix || fix.status !== 'running' || !elapsed) { if (fixClock) clearInterval(fixClock); fixClock = null; return; }
+    elapsed.textContent = `${formatElapsed(Date.now() - (fix.startedAt || Date.now()))} elapsed`;
+    if (!fixClock) fixClock = setInterval(tickFixClock, 1000);
+  }
+
   function renderFixPanel() {
     const fix = reviewState.fix;
     if (!fix) return '';
-    if (fix.status === 'running') {
-      return `<section class="review-fix review-fix-running"><h4>Auto-fix</h4><p>${escapeHtml(fix.message || 'Asking Copilot for a fix…')}</p><button type="button" class="btn" data-action="cancelReviewFix">Cancel</button></section>`;
-    }
+    if (fix.status === 'running') return renderFixProgress(fix);
     if (fix.status === 'applied') {
       return `<section class="review-fix review-fix-applied" role="status"><h4>Auto-fix applied</h4><p>Changed ${fix.paths.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')} in your working tree. Nothing was staged or committed: check the changes, run your tests, then commit.</p></section>`;
     }
     const error = fix.message ? `<div class="dashboard-error" role="alert">${escapeHtml(fix.message)}</div>` : '';
     if (!fix.files) return `<section class="review-fix"><h4>Auto-fix</h4>${error}</section>`;
     const list = (items, className) => items && items.length ? `<ul class="${className}">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
+    const selected = fix.selected || new Set();
+    const count = fix.files.filter(file => selected.has(file.path)).length;
+    const applied = (fix.applied || []).length
+      ? `<p class="review-fix-applied-note" role="status">Applied to ${fix.applied.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')}. The files below are still only proposed.</p>` : '';
+    const findingText = file => {
+      const titles = (file.findingIds || []).map(id => (reviewState.result.findings || []).find(finding => finding.id === id))
+        .filter(Boolean).map(finding => `${finding.severity} ${finding.category}`);
+      return titles.length ? `<span class="review-fix-fixes">fixes ${escapeHtml(titles.join(', '))}</span>` : '';
+    };
     return `<section class="review-fix"><h4>Proposed fix · ${fix.files.length} file${fix.files.length === 1 ? '' : 's'}</h4>
-      ${error}
-      <p class="review-fix-note">Nothing is written until you apply it. Applying edits your working tree only; it does not stage or commit.</p>
+      ${error}${applied}
+      <p class="review-fix-note">Nothing is written until you apply it. Applying edits your working tree only; it does not stage or commit. Untick a file to leave it out.</p>
       ${list(fix.notes, 'review-gaps')}${list(fix.rejected, 'review-gaps review-fix-rejected')}
-      ${fix.files.map(file => `<details class="review-fix-file" open><summary><code>${escapeHtml(file.path)}</code></summary><pre class="diff-viewer">${renderPatchLines(file.patch)}</pre></details>`).join('')}
-      <div class="review-fix-buttons"><button type="button" class="btn btn-primary" data-action="applyReviewFix">Apply to working tree</button><button type="button" class="btn" data-action="discardReviewFix">Discard</button></div>
+      ${fix.files.map(file => `<details class="review-fix-file" open><summary><input type="checkbox" class="review-fix-select" data-path="${escapeHtml(file.path)}" aria-label="Apply ${escapeHtml(file.path)}"${selected.has(file.path) ? ' checked' : ''}> <code>${escapeHtml(file.path)}</code>${findingText(file)}</summary><pre class="diff-viewer">${renderPatchLines(file.patch)}</pre></details>`).join('')}
+      <div class="review-fix-buttons"><button type="button" class="btn btn-primary" data-action="applyReviewFix" data-selection="all">Apply all</button><button type="button" class="btn" data-action="applyReviewFix" data-selection="selected"${count && count < fix.files.length ? '' : ' disabled'}>Apply selected (${count})</button><button type="button" class="btn" data-action="discardReviewFix">Discard</button></div>
     </section>`;
   }
 
@@ -2733,6 +2801,7 @@
     return `<div class="review-triage" role="group" aria-label="Triage this finding">
       <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="fix" aria-pressed="${decision === 'fix'}">Needs fix</button>
       <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="dismiss" aria-pressed="${decision === 'dismiss'}">Dismiss</button>${reason}
+      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="fixed" aria-pressed="${decision === 'fixed'}" title="Fixed by an applied auto-fix, or mark it fixed by hand">Fixed</button>
     </div>`;
   }
 
@@ -2792,7 +2861,7 @@
       const range = entry.scope === 'changes'
         ? `Diff: ${entry.baseLabel || 'parent'} → ${entry.targetLabel}` : `Branch: ${entry.targetLabel}`;
       const counts = [`${entry.findings} finding${entry.findings === 1 ? '' : 's'}`,
-        entry.toFix ? `${entry.toFix} to fix` : '', entry.dismissed ? `${entry.dismissed} dismissed` : ''].filter(Boolean).join(' · ');
+        entry.toFix ? `${entry.toFix} to fix` : '', entry.fixed ? `${entry.fixed} fixed` : '', entry.dismissed ? `${entry.dismissed} dismissed` : ''].filter(Boolean).join(' · ');
       const current = reviewState && reviewState.historyId === entry.id;
       const id = escapeHtml(entry.id);
       return `<li class="review-history-item"${current ? ' aria-current="true"' : ''}>
@@ -2880,18 +2949,20 @@
         `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
       : '';
     const triageBar = findings.length
-      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
+      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
       : '';
     body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
       ${triageBar}
       ${renderFixPanel()}
       <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
       <section class="review-attention"><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${(readiness.fixed || []).length ? `<section class="review-fixed"><h4>Fixed</h4>${renderReviewItems(readiness.fixed, findings)}</section>` : ''}
       ${(readiness.dismissed || []).length ? `<section class="review-dismissed"><h4>Dismissed by you</h4>${renderReviewItems(readiness.dismissed, findings)}</section>` : ''}
       ${policy}
       <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
       ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}`;
+    tickFixClock();
   }
 
   // Show the cited line in the dashboard diff when the review compared two commits of the
