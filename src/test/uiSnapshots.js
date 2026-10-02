@@ -562,6 +562,18 @@ async function main() {
     await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="triageFinding"][data-decision="fix"]');
     await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[3].textContent));
+    // A new commit moves HEAD: after the refresh, saved reviews and the open one are marked outdated.
+    assert.equal(await reopened.locator('.review-history-outdated').count(), 0);
+    assert.equal(await reopened.locator('.review-outdated').count(), 0);
+    git(parent, 'commit', '-q', '--allow-empty', '-m', 'chore: move HEAD past the reviews');
+    await reopened.click('[data-action="refresh"]');
+    await reopened.waitForFunction(() => document.querySelectorAll('.review-history-outdated').length === 4);
+    await reopened.locator('.review-outdated').waitFor();
+    assert.match(await reopened.textContent('.review-outdated'), /HEAD is now [0-9a-f]{8}/);
+    await snap(reopened, '13b-outdated-review');
+    git(parent, 'reset', '-q', '--hard', 'HEAD~1');
+    await reopened.click('[data-action="refresh"]');
+    await reopened.waitForFunction(() => document.querySelectorAll('.review-history-outdated').length === 0 && !document.querySelector('.review-outdated'));
     // Deleting removes it from the list; the open copy stays on screen.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
     await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 3);

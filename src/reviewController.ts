@@ -354,9 +354,16 @@ export class ReviewController {
   private async listHistory(payload: Record<string, unknown>): Promise<void> {
     const repositoryPath = optionalString(payload.repositoryPath);
     if (!repositoryPath) { return; }
-    const root = this.git().resolveRepositoryPath(repositoryPath);
-    await this.host.post({ type: 'reviewHistoryLoaded', payload: { repositoryPath, listId: payload.listId,
-      entries: this.host.history.list(root).map(summarize) } });
+    const git = this.git();
+    const root = git.resolveRepositoryPath(repositoryPath);
+    const head = await this.head(git, root);
+    await this.host.post({ type: 'reviewHistoryLoaded', payload: { repositoryPath, listId: payload.listId, head,
+      entries: this.host.history.list(root).map(entry => summarize(entry, head)) } });
+  }
+
+  /** The repository's HEAD commit, or undefined when it cannot be read (e.g. no commits yet). */
+  private async head(git: GitCommandService, root: string): Promise<string | undefined> {
+    return (await git.execGit(['rev-parse', '--verify', '--quiet', 'HEAD'], root, 5000).catch(() => '')).trim() || undefined;
   }
 
   /** Reopens a saved review under the dashboard's new request id, with its triage. */
@@ -374,8 +381,11 @@ export class ReviewController {
     this.cancelFixQuietly();
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
+    const git = this.git(entry.workspaceRoot);
+    const head = await this.head(git, entry.repositoryRoot);
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
-      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id } });
+      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id,
+      outdated: summarize(entry, head).outdated, head } });
   }
 
   private async deleteStored(payload: Record<string, unknown>): Promise<void> {

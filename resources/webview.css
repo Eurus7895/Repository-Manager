@@ -2594,6 +2594,11 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-history-date, .review-history-counts { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .review-history-range { overflow: hidden; font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .review-history-status { padding: 0 6px; border: 1px solid; border-radius: 8px; font-size: 10px; white-space: nowrap; }
+.review-history-badges { display: flex; gap: 4px; }
+.review-history-outdated { padding: 0 6px; border: 1px dashed var(--text-muted); border-radius: 8px; color: var(--text-secondary); font-size: 10px; white-space: nowrap; }
+.review-history-item.is-outdated .review-history-range { color: var(--text-secondary); }
+.review-outdated { margin-bottom: 10px; padding: 8px 12px; border: 1px dashed var(--text-muted); border-radius: 6px; color: var(--text-secondary); font-size: 11px; }
+.review-outdated strong { margin-right: 6px; color: var(--text-primary); }
 .review-history-delete { flex: 0 0 auto; width: 24px; border: 0; border-radius: 4px; color: var(--text-muted); background: transparent; cursor: pointer; }
 .review-history-delete:hover { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
 .compare-range.compare-error { color: #f0c07a; }

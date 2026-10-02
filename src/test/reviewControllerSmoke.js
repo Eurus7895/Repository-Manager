@@ -121,6 +121,8 @@ async function main() {
     assert.equal(saved1.length, 1);
     assert.deepEqual([saved1[0].id, saved1[0].status, saved1[0].blocking, saved1[0].baseLabel, saved1[0].targetSha],
       [completed.historyId, 'blocked', 1, '1.5.0', head]);
+    assert.equal(saved1[0].outdated, false, 'the reviewed commit is still HEAD');
+    assert.equal(of('reviewHistoryLoaded').at(-1).payload.head, head);
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 2, findingId: 'f1', decision: 'dismiss', reason: 'accepted_risk' } });
     saved1 = await list();
     assert.deepEqual([saved1[0].status, saved1[0].dismissed], ['needs_attention', 1]);
@@ -132,6 +134,7 @@ async function main() {
     assert.equal(restored.requestId, 50);
     assert.deepEqual(restored.triage, { f1: { decision: 'dismiss', reason: 'accepted_risk' } });
     assert.equal(restored.readiness.status, 'needs_attention');
+    assert.equal(restored.outdated, false);
     await reopened.handle({ type: 'exportReviewReport', payload: { requestId: 50, format: 'copy' } });
     assert.match(copied, /Dismissed/);
     // Triage of the reopened copy is saved too.
@@ -240,6 +243,11 @@ async function main() {
     const all = await list();
     assert.equal(all.length, 6);
     assert.equal(all[0].targetLabel, 'fresh');
+    // HEAD moved to `fresh`: every review of main is outdated, the review of fresh is not.
+    assert.deepEqual(all.map(entry => entry.outdated), [false, true, true, true, true, true]);
+    await reopened.handle({ type: 'openStoredReview', payload: { requestId: 52, id: completed.historyId, repositoryPath: '.' } });
+    assert.deepEqual([of('reviewCompleted').at(-1).payload.outdated, of('reviewCompleted').at(-1).payload.head],
+      [true, git('rev-parse', 'fresh')]);
     await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
     const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
     assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 5]);

@@ -40,6 +40,10 @@ async function main() {
   assert.deepEqual(triaged.triage, { f1: { decision: 'dismiss', reason: 'false_positive' } });
   assert.deepEqual([summarize(triaged).status, summarize(triaged).dismissed, summarize(triaged).blocking], ['no_blocking_findings', 1, 0]);
   assert.equal(summarize(store.get(app[1].id)).status, 'blocked');
+  // Outdated: the reviewed commit is not HEAD. An unknown HEAD never marks a review outdated.
+  assert.equal(summarize(triaged, 'b'.repeat(40)).outdated, false);
+  assert.equal(summarize(triaged, 'c'.repeat(40)).outdated, true);
+  assert.equal(summarize(triaged).outdated, false);
 
   // A huge coverage list is cut before saving, and the cut is noted.
   const skipped = Array.from({ length: MAX_STORED_GAPS + 50 }, (_, i) => ({ path: `f${i}.bin`, reason: 'binary' }));

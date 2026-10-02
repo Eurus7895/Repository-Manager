@@ -50,6 +50,8 @@ export interface ReviewHistorySummary {
   toFix: number;
   findings: number;
   modelId?: string;
+  /** The reviewed commit is no longer the repository's HEAD (unknown HEAD: false). */
+  outdated: boolean;
 }
 
 function isEntry(value: unknown): value is ReviewHistoryEntry {
@@ -72,13 +74,14 @@ export function compactResult(result: ReviewResult): ReviewResult {
     limitations: [...result.limitations, `The saved review lists ${MAX_STORED_GAPS} skipped or failed files; ${dropped} more were left out to keep it small.`] };
 }
 
-export function summarize(entry: ReviewHistoryEntry): ReviewHistorySummary {
+export function summarize(entry: ReviewHistoryEntry, head?: string): ReviewHistorySummary {
   const readiness = assessReadiness(entry.result, entry.triage);
   return {
     id: entry.id, generatedAt: entry.context.generatedAt, kind: entry.context.kind, scope: entry.result.request.scope,
     baseLabel: entry.context.baseLabel, targetLabel: entry.context.targetLabel, targetSha: entry.result.request.targetSha,
     status: readiness.status, blocking: readiness.blocking.length, attention: readiness.attention.length,
-    dismissed: readiness.dismissed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId
+    dismissed: readiness.dismissed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId,
+    outdated: Boolean(head) && entry.result.request.targetSha !== head
   };
 }
 
