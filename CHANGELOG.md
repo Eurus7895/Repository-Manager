@@ -5,7 +5,14 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.8.0] - Unreleased
+## [1.8.1] - Unreleased
+
+### Changed
+
+- One toolbar for what the dashboard shows: **Summarize changes**, **Review changes** and **Review branch** now sit together above the changed files and act on the selected commit or the loaded comparison. The comparison status next to the search only names the range, so it no longer pushes the search box off screen.
+- **◈ Release › Load range** replaces Release › Summarize changes, which had the same name as the toolbar button but did something else. It loads the changes since the latest release tag on the current branch; summarize or review them from the toolbar.
+
+## [1.8.0] - 2026-10-02
 
 ### Added
 

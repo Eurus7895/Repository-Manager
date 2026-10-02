@@ -347,10 +347,17 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
 
-    // Release › Summarize changes: the range since the latest release tag, loaded and summarized.
-    assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Summarize changes', 'Review branch']);
-    await page.click('.review-release-group [data-action="summarizeRelease"]');
+    // Release › Load range loads the changes since the latest release tag, and only loads them.
+    assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Load range', 'Review branch']);
+    await page.click('.review-release-group [data-action="loadReleaseRange"]');
     await page.waitForFunction(() => /Release: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
+    await page.locator('#dashboardChangedFiles [data-action]').first().waitFor();
+    assert.equal(reviewProbe.summaries.length, 0, 'loading the range started a summary');
+    // The comparison status only names the range; its actions sit in one toolbar below.
+    assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
+    assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
+      ['Load models', 'Summarize changes', 'Review changes', 'Review branch']);
+    await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
     assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
     assert.deepEqual([reviewProbe.summaries[0].baseSha, reviewProbe.summaries[0].targetSha],
@@ -384,7 +391,7 @@ async function main() {
     let answerConsent;
     reviewProbe.ask = () => new Promise(resolve => { answerConsent = resolve; });
     // The comparison names its ends after the tag and the branch, and so does the review.
-    await page.click('#commitCompareStatus [data-action="reviewComparison"][data-scope="changes"]');
+    await page.click('#reviewSelectionChangesButton');
     assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
     // The labels come from the page itself now, so wait for the extension's own reply too.
@@ -501,21 +508,19 @@ async function main() {
     const record = request => { runs.push(request); return { request, findings: [], policyResults: [], policyStatus: 'not_configured',
       limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }; };
     reviewProbe.runner = async request => record(request);
-    // Base/Target selection: both buttons sit in the comparison status.
+    // Base/Target selection: the toolbar below reviews the selected range.
     const nodes = page.locator('.graph-node-control');
     const [baseHash, targetHash] = [await nodes.nth(1).getAttribute('data-commit'), await nodes.nth(0).getAttribute('data-commit')];
     await nodes.nth(1).click();
     await nodes.nth(0).click();
-    const compareButtons = page.locator('#commitCompareStatus .review-entry button');
-    await compareButtons.first().waitFor();
-    assert.deepEqual(await compareButtons.allTextContents(), ['Review changes', 'Review branch']);
+    await page.waitForFunction(() => /Compare/.test(document.getElementById('dashboardCommitSummary').textContent));
     await snap(page, '12-compare-review-buttons');
-    await compareButtons.nth(0).click();
+    await page.click('#reviewSelectionChangesButton');
     await page.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
     assert.equal(await page.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
     await page.click('#detailTabChanges');
-    await page.locator('#commitCompareStatus .review-entry button').nth(1).click();
+    await page.click('#reviewSelectionBranchButton');
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Branch: '));
     for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['branch', undefined, targetHash]);
@@ -612,9 +617,9 @@ async function main() {
     await snap(page, '03b-other-workspace-folder');
     // Saved reviews belong to their repository: this folder lists none.
     assert.equal(await page.isHidden('#reviewHistory'), true);
-    // Without a release tag, Release › Summarize changes says so and summarizes nothing.
+    // Without a release tag, Release › Load range says so and loads nothing.
     const summariesBefore = reviewProbe.summaries.length;
-    await page.click('.review-release-group [data-action="summarizeRelease"]');
+    await page.click('.review-release-group [data-action="loadReleaseRange"]');
     await page.waitForFunction(() => /No release tag .* reachable from main/.test(document.getElementById('commitCompareStatus').textContent));
     assert.equal(reviewProbe.summaries.length, summariesBefore);
     await page.click('#commitCompareStatus [data-action="clearCommitComparison"]');
@@ -678,24 +683,21 @@ async function main() {
         releaseText: document.querySelector('.review-release-group').innerText.replace(/\s+/g, ' ').trim()
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), '◈ changes branch');
-      assert.equal(await narrow.locator('.review-release-group [data-action="summarizeRelease"]').getAttribute('title'),
-        'Summarize the changes since the latest release tag on the current branch');
-      // With a Base/Target selection, the comparison pill keeps both review buttons on screen too.
+      assert.equal(layout.releaseText.toLowerCase(), '◈ range branch');
+      // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();
         await narrow.locator('.graph-node-control').nth(0).click();
-        await narrow.locator('#commitCompareStatus .review-entry').waitFor();
+        await narrow.locator('#commitCompareStatus:not([hidden])').waitFor();
         const pill = await narrow.evaluate(() => ({
           right: document.querySelector('#commitCompareStatus [data-action="clearCommitComparison"]').getBoundingClientRect().right,
           statusRight: document.getElementById('commitCompareStatus').getBoundingClientRect().right,
           controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right
         }));
-        assert.ok(pill.right <= pill.statusRight && pill.statusRight <= pill.controlsRight, `${width}px: the comparison review buttons are cut off`);
-        assert.equal(await narrow.locator('.review-release-group').isVisible(), false, `${width}px: two sets of review buttons`);
+        assert.ok(pill.right <= pill.statusRight && pill.statusRight <= pill.controlsRight, `${width}px: the comparison status is cut off`);
+        assert.equal(await narrow.locator('.review-release-group').isVisible(), true, `${width}px: the release group is hidden`);
         await snap(narrow, `${name}-compare`);
         await narrow.click('[data-action="clearCommitComparison"]');
-        await narrow.locator('.review-release-group').waitFor();
       }
       assert.ok(layout.tallestRow <= 80, `${width}px: a history row is ${layout.tallestRow}px tall`);
       assert.ok(layout.messageWidth >= 150, `${width}px: the message column is only ${layout.messageWidth}px`);

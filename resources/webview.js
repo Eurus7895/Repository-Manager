@@ -54,8 +54,10 @@
   let selectedSummaryModelId = '';
   // Security and compliance review; declared early because rendering checks the review lock.
   let reviewRequestId = 0;
-  // Release › Summarize changes: resolving the range, then waiting for its comparison to load.
-  let releaseSummary = null; // { requestId, repositoryPath, baseSha?, targetSha? }
+  // Release › Load range: the request resolving the range since the latest release tag.
+  let releaseRange = null; // { requestId, repositoryPath }
+  // Names for the ends of the loaded comparison (e.g. a release tag and a branch), for reviews of it.
+  let comparisonLabels = null;
   let releaseRangeRequestId = 0;
   // Past reviews of the active repository, as listed by the extension.
   let reviewHistory = { repositoryPath: null, entries: [] };
@@ -663,17 +665,26 @@
     // Every entry point offers the same two choices and starts at once: "changes" reviews the
     // diff Base → Target, "branch" reviews every file at Target.
     reviewRelease: () => startReview({ kind: 'release', scope: 'branch' }),
-    summarizeRelease: () => {
+    loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
-      releaseSummary = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
+      releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
       showReleaseStatus('Release: finding the latest release tag…');
-      postMessage('resolveReleaseRange', { requestId: releaseSummary.requestId, repositoryPath: activeDashboardRepository });
+      postMessage('resolveReleaseRange', { requestId: releaseRange.requestId, repositoryPath: activeDashboardRepository });
+    },
+    // Review what the detail pane shows: the selected commit against its parent, or the loaded comparison.
+    reviewSelection: (el) => {
+      if (!changeSummarySelection) return;
+      const { baseSha, targetSha } = changeSummarySelection;
+      const labels = comparisonLabels || {};
+      if (el.dataset.scope === 'branch') {
+        startReview({ scope: 'branch', target: targetSha, targetLabel: labels.target });
+      } else {
+        // A single commit is reviewed against its parent; a comparison from Base to Target.
+        startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
+          baseLabel: labels.base, targetLabel: labels.target });
+      }
     },
 
-    reviewComparison: (el) => el.dataset.scope === 'branch'
-      ? startReview({ scope: 'branch', target: el.dataset.target, targetLabel: el.dataset.targetLabel })
-      : startReview({ scope: 'changes', base: el.dataset.base, target: el.dataset.target,
-        baseLabel: el.dataset.baseLabel, targetLabel: el.dataset.targetLabel }),
 
     contextReviewCommit: () => {
       if (!historyContextTarget) return;
@@ -1027,7 +1038,7 @@
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span>${reviewButtons(commitCompareSelection[0], commitCompareSelection[1])} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     applyReviewLock();
   }
 
@@ -1038,6 +1049,7 @@
     activeComparisonTarget = commitHash;
     comparisonBaseHash = null;
     comparisonSource = null;
+    comparisonLabels = null;
     document.querySelectorAll('.history-row').forEach(row => {
       row.classList.toggle('active', row.dataset.commit === commitHash);
     });
@@ -1051,7 +1063,7 @@
   }
 
   function clearCommitComparison(restoreParent) {
-    releaseSummary = null;
+    releaseRange = null;
     const shouldRestoreParent = Boolean(restoreParent && comparisonSource && selectedDashboardCommit);
     commitCompareSelection = [];
     comparisonRepository = activeDashboardRepository;
@@ -1087,7 +1099,8 @@
   }
 
   function loadComparison(baseRevision, targetRevision, source, labels) {
-    if (source !== 'release') releaseSummary = null;
+    if (source !== 'release') releaseRange = null;
+    comparisonLabels = labels || null;
     resetChangeSummary();
     selectedDashboardCommit = targetRevision;
     activeComparisonTarget = targetRevision;
@@ -1100,11 +1113,10 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      const reviewButton = source === 'review' ? '' : ` ${reviewButtons(baseRevision, targetRevision, labels)}`;
       const kind = { branches: 'Branches', review: 'Review', release: 'Release' }[source] || 'Commits';
       const base = labels && labels.base ? labels.base : shortRevision(baseRevision);
       const target = labels && labels.target ? labels.target : shortRevision(targetRevision);
-      status.innerHTML = `<span class="compare-range">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span>${reviewButton} <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      status.innerHTML = `<span class="compare-range">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
       applyReviewLock();
     }
     saveState();
@@ -1185,11 +1197,12 @@
     comparisonBaseHash = null;
     activeComparisonTarget = null;
     comparisonSource = null;
+    comparisonLabels = null;
     repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
-    releaseSummary = null;
+    releaseRange = null;
     reviewHistory = { repositoryPath: null, entries: [] };
     requestReviewHistory();
     // The Review header names the reviewed repository once the dashboard shows another one.
@@ -1540,12 +1553,6 @@
     resetChangeSummary();
     changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
     restoreChangeSummary();
-    // Release › Summarize changes starts the summary once the release comparison is on screen.
-    if (releaseSummary && releaseSummary.targetSha === detail.hash && releaseSummary.baseSha === comparisonBaseHash &&
-        releaseSummary.repositoryPath === activeDashboardRepository) {
-      releaseSummary = null;
-      actions.summarizeChanges();
-    }
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
@@ -1787,14 +1794,14 @@
 
         case 'releaseRangeResolved': {
           const payload = message.payload || {};
-          if (!releaseSummary || payload.requestId !== releaseSummary.requestId ||
+          if (!releaseRange || payload.requestId !== releaseRange.requestId ||
               payload.repositoryPath !== activeDashboardRepository) break;
           if (!payload.baseSha) {
-            releaseSummary = null;
+            releaseRange = null;
             showReleaseStatus(payload.message || 'No release range.', true);
             break;
           }
-          Object.assign(releaseSummary, { baseSha: payload.baseSha, targetSha: payload.targetSha });
+          releaseRange = null;
           commitCompareSelection = [];
           loadComparison(payload.baseSha, payload.targetSha, 'release', { base: payload.baseLabel, target: payload.targetLabel });
           break;
@@ -1932,6 +1939,7 @@
             comparisonBaseHash = null;
             activeComparisonTarget = null;
             comparisonSource = null;
+            comparisonLabels = null;
             saveState();
             requestDashboardHistory(0, false, { preserveViewport: true });
             postMessage('getRepositoryRefs', { repositoryPath: activeDashboardRepository });
@@ -2543,14 +2551,6 @@
   let pendingEvidenceJump = null;
   const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
-  // `labels` names the ends (e.g. a release tag and a branch) when they are not plain commits.
-  function reviewButtons(base, target, labels) {
-    const named = (name, value) => (value ? ` data-${name}="${escapeHtml(value)}"` : '');
-    const baseLabel = named('base-label', labels && labels.base);
-    const targetLabel = named('target-label', labels && labels.target);
-    return `<span class="review-entry" role="group" aria-label="Review with Copilot"><button type="button" data-action="reviewComparison" data-scope="changes" data-base="${escapeHtml(base)}" data-target="${escapeHtml(target)}"${baseLabel}${targetLabel} title="Review the changes from Base to Target"><span class="review-entry-word">Review </span>changes</button><button type="button" data-action="reviewComparison" data-scope="branch" data-target="${escapeHtml(target)}"${targetLabel} title="Review every file at Target"><span class="review-entry-word">Review </span>branch</button></span>`;
-  }
-
   // Starts at once with security and team policy, using the model chosen for AI summaries;
   // the extension asks for consent until it is allowed for the repository.
   function startReview(options) {
@@ -2599,7 +2599,7 @@
   function applyReviewLock() {
     const locked = reviewLocked();
     if (document.body && document.body.classList) document.body.classList.toggle('review-running', locked);
-    const lockable = '[data-action="reviewRelease"], [data-action="reviewComparison"], ' +
+    const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
       if (locked) {
