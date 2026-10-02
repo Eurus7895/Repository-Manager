@@ -5,7 +5,21 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.2] - Unreleased
+## [1.8.0] - Unreleased
+
+### Added
+
+- **Past reviews**: every completed review is saved with your triage, so you can check it later, even after restarting VS Code. The Review tab lists each repository's last 20 reviews with date, range, the exact commits reviewed, readiness and counts. Open one to see its findings, export it, or fix it; delete the ones you no longer need. Reviews are kept in VS Code's workspace state on this machine, never in the repository.
+
+### Changed
+
+- **◈ Release › Summarize changes** replaces Release › Review changes. It loads the changes since the latest release tag on the current branch into the dashboard and summarizes them with Copilot. To security-review that diff, choose **Review changes** next to the loaded range. **Review branch** still reviews every file on the current branch.
+
+### Fixed
+
+- The latest release tag is found by version number when tags with and without a `v` prefix are mixed. Before, `v1.9.0` was picked over a newer `1.10.0`.
+
+## [1.7.2] - 2026-10-02
 
 ### Fixed
 

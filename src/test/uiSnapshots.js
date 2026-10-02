@@ -32,6 +32,9 @@ Module._load = function (request, parent, isMain) {
 const { GitOperations } = require(path.join(root, 'out/gitOperations'));
 const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessageHandler'));
 const { ReviewController } = require(path.join(root, 'out/reviewController'));
+const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
+const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
+const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
 const { getHtmlForWebview } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
@@ -108,7 +111,11 @@ function startServer(workspace, otherFolder) {
   // The review runs through the real ReviewController with a scripted runner instead of Copilot.
   // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
   const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set(),
-    fixResponse: null, fixRequests: 0, workingTreeChanged: 0 };
+    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [] };
+  // Saved reviews outlive a page (a reopened dashboard), like VS Code's workspace state.
+  const historyState = new Map();
+  const reviewHistory = new ReviewHistoryStore({ get: key => historyState.get(key),
+    update: async (key, value) => { historyState.set(key, JSON.parse(JSON.stringify(value))); } });
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -149,7 +156,8 @@ function startServer(workspace, otherFolder) {
       notify: () => {},
       createFixModel: () => ({ request: async () => { reviewProbe.fixRequests++; return { modelId: 'scripted-fix:1', response: reviewProbe.fixResponse }; } }),
       isDirtyInEditor: () => false,
-      workingTreeChanged: () => { reviewProbe.workingTreeChanged++; }
+      workingTreeChanged: () => { reviewProbe.workingTreeChanged++; },
+      history: reviewHistory
     });
     await page.exposeFunction('__postToHost', async message => {
       hostBusy++;
@@ -161,6 +169,20 @@ function startServer(workspace, otherFolder) {
         currentRoot = message.payload.folderPath;
         ops = new GitOperations(message.payload.folderPath);
         await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
+      } else if (message.type === 'resolveReleaseRange') {
+        // Same as RepositoryManagerPanel._resolveReleaseRange.
+        const { requestId, repositoryPath } = message.payload;
+        const service = new GitCommandService(currentRoot);
+        const range = await resolveReleaseRange(service, service.resolveRepositoryPath(repositoryPath));
+        await post({ type: 'releaseRangeResolved', payload: range.latestReleaseTag
+          ? { requestId, repositoryPath, baseSha: await service.resolveRevision(repositoryPath, range.latestReleaseTag),
+            targetSha: await service.resolveRevision(repositoryPath, range.currentBranch), baseLabel: range.latestReleaseTag, targetLabel: range.currentBranch }
+          : { requestId, repositoryPath, message: `No release tag like 1.5.0 or v1.5.0 is reachable from ${range.currentBranch}.` } });
+      } else if (message.type === 'summarizeChanges') {
+        // The summary itself needs Copilot; the test checks what would be summarized.
+        reviewProbe.summaries.push(message.payload);
+        await post({ type: 'changeSummaryProgress', payload: { requestId: message.payload.requestId,
+          repositoryPath: message.payload.repositoryPath, status: 'Waiting for confirmation…' } });
       } else if (message.type === 'refresh') {
         await refresh();
         await post({ type: 'repositoryOperationResult', payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' } });
@@ -325,7 +347,19 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
 
-    // W6–W7: release review from the latest release tag, results, evidence jump and export.
+    // Release › Summarize changes: the range since the latest release tag, loaded and summarized.
+    assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Summarize changes', 'Review branch']);
+    await page.click('.review-release-group [data-action="summarizeRelease"]');
+    await page.waitForFunction(() => /Release: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
+    for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
+    assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
+    assert.deepEqual([reviewProbe.summaries[0].baseSha, reviewProbe.summaries[0].targetSha],
+      [git(parent, 'rev-parse', '1.0.0').trim(), git(parent, 'rev-parse', 'feature/dashboard').trim()]);
+    await page.waitForFunction(() => document.getElementById('changeSummaryStatus').textContent === 'Waiting for confirmation…');
+    assert.equal(await page.isVisible('#changeSummary'), true);
+    await snap(page, '08b-release-summary');
+
+    // W6–W7: review of the release diff (from the comparison), results, evidence jump and export.
     let releaseRunner;
     const runnerGate = new Promise(resolve => { releaseRunner = resolve; });
     reviewProbe.runner = async (request, token, progress) => {
@@ -349,18 +383,21 @@ async function main() {
     // The consent question is held open so the header can be checked while it waits.
     let answerConsent;
     reviewProbe.ask = () => new Promise(resolve => { answerConsent = resolve; });
-    await page.click('.review-release-group [data-action="reviewRelease"][data-scope="changes"]');
+    // The comparison names its ends after the tag and the branch, and so does the review.
+    await page.click('#commitCompareStatus [data-action="reviewComparison"][data-scope="changes"]');
     assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
-    // The extension resolved the release range and reported it back.
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
-    assert.equal(await page.textContent('#reviewStatus'), 'Waiting for confirmation…');
+    // The labels come from the page itself now, so wait for the extension's own reply too.
+    await page.waitForFunction(() => document.getElementById('reviewStatus').textContent === 'Waiting for confirmation…');
+    // The extension posts that status, then asks: wait for the question as well.
+    for (let i = 0; i < 100 && !answerConsent; i++) await page.waitForTimeout(20);
     assert.deepEqual(reviewProbe.questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
     // Not snap(): the host is busy on purpose, waiting for the answer.
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
     // Only a second review waits; everything else stays usable while this one runs.
     const libBItem = page.locator('.sidebar-repository-item[data-path="lib-b"]');
-    assert.equal(await page.getAttribute('.review-release-group [data-scope="branch"]', 'aria-disabled'), 'true');
+    assert.equal(await page.getAttribute('.review-release-group [data-action="reviewRelease"]', 'aria-disabled'), 'true');
     assert.equal(await libBItem.getAttribute('aria-disabled'), null);
     assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
     answerConsent('Always allow for this repository');
@@ -392,8 +429,10 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
     await page.click('#detailTabReview');
     await page.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await page.textContent('#reviewMeta'), 'Diff: 1.0.0 → feature/dashboard');
-    assert.equal(await page.getAttribute('.review-release-group [data-scope="branch"]', 'aria-disabled'), null);
+    // Labels name the tag and branch; the exact commits reviewed follow them.
+    const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    assert.equal(await page.getAttribute('.review-release-group [data-action="reviewRelease"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
     assert.match(blocking, /Changed line passes input to eval/);
@@ -420,7 +459,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('.review-dismiss-reason') && document.querySelector('.review-dismiss-reason').value === 'accepted_risk');
     await page.click('[data-action="exportReview"][data-format="copy"]');
     for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
-    assert.match(reviewProbe.copied || '', /^# Release review — Diff: 1\.0\.0 → feature\/dashboard/);
+    assert.match(reviewProbe.copied || '', /^# Security and compliance review — Diff: 1\.0\.0 → feature\/dashboard/);
     assert.match(reviewProbe.copied, /Triage: 1 marked to fix, 1 dismissed, 0 not triaged\./);
     assert.match(reviewProbe.copied, /## Dismissed by reviewer\n\n- \*\*CRITICAL security\*\*.*dismissed: accepted risk/);
 
@@ -501,6 +540,39 @@ async function main() {
     await page.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
     assert.equal(reviewProbe.questions.length, questionsAsked, 'asked for consent after "Always allow"');
 
+    // Past reviews: every completed review was saved (the cancelled one was not), newest first.
+    const historyRows = page.locator('#reviewHistoryList .review-history-item');
+    await page.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 4);
+    assert.equal(await page.textContent('#reviewHistoryCount'), '4');
+    assert.match(await historyRows.nth(3).textContent(), /Diff: 1\.0\.0 → feature\/dashboard.*Blocked.*2 findings · 1 to fix · 1 dismissed/s);
+    // A reopened dashboard (as after restarting VS Code) still lists them, with the Review tab showing.
+    const reopened = await openPage(1440, 900);
+    await reopened.locator('#detailTabReview').waitFor();
+    await reopened.click('#detailTabReview');
+    await reopened.locator('#reviewHistoryList .review-history-item').nth(3).waitFor();
+    assert.equal(await reopened.getAttribute('#reviewHistory', 'open'), '', 'Past reviews should start expanded when no review is open');
+    assert.match(await reopened.textContent('#reviewBody'), /No review is open/);
+    await snap(reopened, '13-past-reviews');
+    // Opening one restores its findings and triage; export works from the saved copy.
+    await reopened.click('#reviewHistoryList .review-history-item:nth-child(4) [data-action="openStoredReview"]');
+    await reopened.locator('.review-readiness.readiness-blocked').waitFor();
+    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(4) .review-history-commit'), `${releaseSha} → ${branchSha}`);
+    assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
+    assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(4)', 'aria-current'), 'true');
+    reviewProbe.copied = null;
+    await reopened.click('[data-action="exportReview"][data-format="copy"]');
+    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await reopened.waitForTimeout(20);
+    assert.match(reviewProbe.copied || '', /dismissed: accepted risk/);
+    // Triage of a reopened review is saved again.
+    await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="triageFinding"][data-decision="fix"]');
+    await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
+    await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[3].textContent));
+    // Deleting removes it from the list; the open copy stays on screen.
+    await reopened.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
+    await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 3);
+    await reopened.close();
+
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
@@ -538,6 +610,14 @@ async function main() {
     assert.equal(await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).count(), 0);
     assert.equal(await page.locator('.sidebar-repository-item').count(), 1);
     await snap(page, '03b-other-workspace-folder');
+    // Saved reviews belong to their repository: this folder lists none.
+    assert.equal(await page.isHidden('#reviewHistory'), true);
+    // Without a release tag, Release › Summarize changes says so and summarizes nothing.
+    const summariesBefore = reviewProbe.summaries.length;
+    await page.click('.review-release-group [data-action="summarizeRelease"]');
+    await page.waitForFunction(() => /No release tag .* reachable from main/.test(document.getElementById('commitCompareStatus').textContent));
+    assert.equal(reviewProbe.summaries.length, summariesBefore);
+    await page.click('#commitCompareStatus [data-action="clearCommitComparison"]');
 
     // Continue/Abort rebase are offered only while a rebase is paused.
     const rebaseItems = page.locator('#historyContextMenu [data-requires-operation="rebase"]');
@@ -599,6 +679,8 @@ async function main() {
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
       assert.equal(layout.releaseText.toLowerCase(), '◈ changes branch');
+      assert.equal(await narrow.locator('.review-release-group [data-action="summarizeRelease"]').getAttribute('title'),
+        'Summarize the changes since the latest release tag on the current branch');
       // With a Base/Target selection, the comparison pill keeps both review buttons on screen too.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();

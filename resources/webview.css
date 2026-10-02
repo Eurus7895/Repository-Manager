@@ -2558,7 +2558,9 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .detail-tabs [role="tab"]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .detail-tab-badge:not(:empty) { margin-left: 4px; padding: 0 5px; border-radius: 8px; color: #f4a8ad; background: rgba(240, 113, 120, .16); font-size: 10px; }
 
-.review-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.review-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
+.review-panel > .review-history { grid-row: 2; }
+.review-panel > .review-body { grid-row: 3; }
 .review-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--border); }
 .review-title { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
 .review-title span { color: var(--text-secondary); font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; }
@@ -2575,6 +2577,34 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .readiness-blocked { color: #f4a8ad; border-color: rgba(240, 113, 120, .4); background: rgba(240, 113, 120, .08); }
 .readiness-needs_attention { color: #f0c07a; border-color: rgba(229, 165, 71, .4); background: rgba(229, 165, 71, .08); }
 .readiness-no_blocking_findings { color: #7fe3cb; border-color: rgba(60, 199, 166, .35); background: rgba(60, 199, 166, .07); }
+
+.review-history { padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.review-history > summary { color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+.review-history-count { margin-left: 4px; color: var(--text-muted); }
+.review-history-note { margin: 4px 0 6px; color: var(--text-muted); font-size: 11px; }
+.review-history-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; list-style: none; scrollbar-width: thin; }
+.review-history-item { display: flex; align-items: stretch; border-radius: 4px; }
+.review-history-item[aria-current="true"] { background: rgba(255, 255, 255, .06); }
+.review-history-open {
+  display: grid; flex: 1 1 auto; grid-template-columns: 76px minmax(0, 1fr) 150px 120px 200px; gap: 10px; align-items: baseline; min-width: 0;
+  padding: 4px 6px; border: 0; border-radius: 4px; color: var(--text-primary); background: transparent; font: inherit; text-align: left; cursor: pointer;
+}
+.review-history-open:hover { background: rgba(255, 255, 255, .05); }
+.review-history-open[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
+.review-history-date, .review-history-counts { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.review-history-counts { overflow: hidden; text-overflow: ellipsis; }
+.review-history-status { justify-self: start; }
+/* Narrow: the reviewed commit stays; counts are in the review itself. */
+@media (max-width: 900px) {
+  .review-history-open { grid-template-columns: 64px minmax(0, 1fr) auto auto; }
+  .review-history-counts { display: none; }
+}
+.review-history-range { overflow: hidden; font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-history-commit { color: var(--text-secondary); font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; white-space: nowrap; }
+.review-history-status { padding: 0 6px; border: 1px solid; border-radius: 8px; font-size: 10px; white-space: nowrap; }
+.review-history-delete { flex: 0 0 auto; width: 24px; border: 0; border-radius: 4px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.review-history-delete:hover { color: var(--text-primary); background: rgba(255, 255, 255, .06); }
+.compare-range.compare-error { color: #f0c07a; }
 
 .review-list { display: grid; gap: 8px; list-style: none; }
 .review-finding, .review-item { padding: 8px 10px; border-left: 3px solid var(--text-muted); border-radius: 4px; background: rgba(255, 255, 255, .03); }

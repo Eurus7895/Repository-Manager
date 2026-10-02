@@ -15,6 +15,7 @@ const { forgetReviewPermissions } = require('../../out/commands/reviewCommands.j
 Module._load = originalLoad;
 const { ReviewConsentStore } = require('../../out/reviewConsent.js');
 const { ReviewController } = require('../../out/reviewController.js');
+const { ReviewHistoryStore } = require('../../out/reviewHistory.js');
 
 class Memento {
   constructor() { this.values = new Map(); }
@@ -83,7 +84,8 @@ async function main() {
       createRunner: () => ({ review: async request => ({ request, findings: [], policyResults: [], policyStatus: 'not_configured',
         limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }) }),
       createCancellation: () => ({ token: { isCancellationRequested: false }, cancel() {}, dispose() {} }),
-      copyText: async () => {}, saveText: async () => true, openText: async () => {}, notify: () => {}
+      copyText: async () => {}, saveText: async () => true, openText: async () => {}, notify: () => {},
+      history: new ReviewHistoryStore(new Memento())
     });
     const review = requestId => controller.handle({ type: 'startReview', payload: {
       requestId, repositoryPath: '.', scope: 'branch', targetRevision: 'main' } });

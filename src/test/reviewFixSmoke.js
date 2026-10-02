@@ -6,6 +6,7 @@ const path = require('node:path');
 const { GitCommandService } = require('../../out/services/gitCommandService.js');
 const { ReviewFixService, FixError, MAX_FIX_FILES } = require('../../out/services/reviewFixService.js');
 const { ReviewController } = require('../../out/reviewController.js');
+const { ReviewHistoryStore } = require('../../out/reviewHistory.js');
 
 const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-fix-'));
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -173,7 +174,8 @@ async function main() {
       openText: async (content, revision, filePath) => { opened = { content, revision, filePath }; }, notify: () => {},
       createFixModel: () => model,
       isDirtyInEditor: () => false,
-      workingTreeChanged: () => { refreshed++; }
+      workingTreeChanged: () => { refreshed++; },
+      history: new ReviewHistoryStore(undefined)
     });
     const of = type => posts.filter(message => message.type === type);
     remembered.add(repo);

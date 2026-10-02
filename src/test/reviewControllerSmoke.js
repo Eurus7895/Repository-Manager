@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { ReviewController } = require('../../out/reviewController.js');
+const { ReviewHistoryStore } = require('../../out/reviewHistory.js');
 
 const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'review-controller-'));
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -43,7 +44,10 @@ async function main() {
     let opened = null;
     let runnerScript = async () => { throw new Error('no script'); };
     const runs = [];
+    const state = new Map();
+    const memento = { get: key => state.get(key), update: async (key, value) => { state.set(key, JSON.parse(JSON.stringify(value))); } };
     const host = {
+      history: new ReviewHistoryStore(memento),
       workspaceRoot: () => repo,
       post: async message => { posts.push(message); },
       ask: async (message, detail, actions) => { questions.push({ message, actions }); return answer; },
@@ -69,9 +73,8 @@ async function main() {
     assert.equal(controller.handles('startReview'), true);
     assert.equal(controller.handles('getHistory'), false);
 
-    // A release review names no revisions: the extension picks the latest release tag and the current branch.
     const start = (requestId, extra = {}) => controller.handle({ type: 'startReview', payload: {
-      requestId, repositoryPath: '.', scope: 'changes', kind: 'release', modelId: 'deep', ...extra } });
+      requestId, repositoryPath: '.', scope: 'changes', baseRevision: '1.5.0', targetRevision: 'main', modelId: 'deep', ...extra } });
 
     // Declining (or dismissing) consent sends nothing to the model.
     answer = undefined;
@@ -97,7 +100,7 @@ async function main() {
     assert.equal(runs.at(-1).request.targetSha, head);
     assert.deepEqual(runs.at(-1).request.categories, ['security', 'compliance']);
     assert.equal(runs.at(-1).modelId, 'deep');
-    // The dashboard learns the resolved range, since it did not choose it.
+    // The dashboard learns the labels the extension settled on.
     const labelled = of('reviewProgress').find(message => message.payload.requestId === 2 && message.payload.targetLabel);
     assert.deepEqual([labelled.payload.baseLabel, labelled.payload.targetLabel], ['1.5.0', 'main']);
     // "Start review" answers once; it does not remember.
@@ -106,14 +109,48 @@ async function main() {
     const completed = of('reviewCompleted').at(-1).payload;
     assert.equal(completed.requestId, 2);
     assert.equal(completed.readiness.status, 'blocked');
-    assert.deepEqual([completed.context.kind, completed.context.baseLabel, completed.context.targetLabel], ['release', '1.5.0', 'main']);
+    assert.deepEqual([completed.context.kind, completed.context.baseLabel, completed.context.targetLabel], ['review', '1.5.0', 'main']);
+
+    // The completed review is saved, and triage updates the saved copy.
+    assert.ok(completed.historyId, 'the review was not saved');
+    const list = async () => {
+      await controller.handle({ type: 'listReviewHistory', payload: { repositoryPath: '.', listId: 1 } });
+      return of('reviewHistoryLoaded').at(-1).payload.entries;
+    };
+    let saved1 = await list();
+    assert.equal(saved1.length, 1);
+    assert.deepEqual([saved1[0].id, saved1[0].status, saved1[0].blocking, saved1[0].baseLabel, saved1[0].targetSha],
+      [completed.historyId, 'blocked', 1, '1.5.0', head]);
+    assert.equal(saved1[0].baseSha, release, 'the list names the exact commits reviewed');
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 2, findingId: 'f1', decision: 'dismiss', reason: 'accepted_risk' } });
+    saved1 = await list();
+    assert.deepEqual([saved1[0].status, saved1[0].dismissed], ['needs_attention', 1]);
+
+    // A restart: a new controller on the same workspace state reopens it with its triage, and export works.
+    const reopened = new ReviewController(host);
+    await reopened.handle({ type: 'openStoredReview', payload: { requestId: 50, id: completed.historyId, repositoryPath: '.' } });
+    const restored = of('reviewCompleted').at(-1).payload;
+    assert.equal(restored.requestId, 50);
+    assert.deepEqual(restored.triage, { f1: { decision: 'dismiss', reason: 'accepted_risk' } });
+    assert.equal(restored.readiness.status, 'needs_attention');
+    await reopened.handle({ type: 'exportReviewReport', payload: { requestId: 50, format: 'copy' } });
+    assert.match(copied, /Dismissed/);
+    // Evidence of a reopened review resolves in its own repository, whatever path the dashboard now uses.
+    opened = null;
+    await reopened.handle({ type: 'openReviewEvidence', payload: { requestId: 50, repositoryPath: 'lib/elsewhere', revision: head, path: 'app.js', line: 3 } });
+    assert.deepEqual([opened && opened.revision, opened && opened.content], [head, 'line 1\nline 2\neval(input);\n']);
+    // Triage of the reopened copy is saved too.
+    await reopened.handle({ type: 'setFindingTriage', payload: { requestId: 50, findingId: 'f1', decision: null } });
+    assert.equal((await list())[0].status, 'blocked');
+    await reopened.handle({ type: 'openStoredReview', payload: { requestId: 51, id: 'missing', repositoryPath: '.' } });
+    assert.match(of('reviewFailed').at(-1).payload.message, /no longer exists/);
 
     // Export: copy and save (dismissing the save dialog reports nothing).
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 2, format: 'copy' } });
-    assert.match(copied, /^# Release review — Diff: 1\.5\.0 → main/);
+    assert.match(copied, /^# Security and compliance review — Diff: 1\.5\.0 → main/);
     saveAnswer = false;
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 2, format: 'save' } });
-    assert.equal(saved.name, 'release-review-1.5.0-main.md');
+    assert.equal(saved.name, 'review-review-1.5.0-main.md');
     assert.ok(!notices.some(notice => /saved/.test(notice.message)));
     await controller.handle({ type: 'exportReviewReport', payload: { requestId: 99, format: 'copy' } });
     assert.equal(notices.at(-1).isError, true);
@@ -164,7 +201,7 @@ async function main() {
     assert.equal(posts.filter(message => message.type === 'reviewFailed' && message.payload.requestId === 7).length, 1);
 
     // Unknown revision.
-    await start(6, { kind: 'review', baseRevision: 'no-such-tag', targetRevision: 'main' });
+    await start(6, { baseRevision: 'no-such-tag' });
     assert.match(of('reviewFailed').at(-1).payload.message, /Cannot resolve revision/);
 
     // "Always allow" remembers this repository: later reviews start without asking.
@@ -191,17 +228,27 @@ async function main() {
     alwaysConfirm = false;
 
     // A commit reviewed against its parent: no base revision at all.
-    await start(11, { kind: 'review', targetRevision: head });
+    await start(11, { baseRevision: undefined, targetRevision: head });
     assert.equal(runs.at(-1).request.baseSha, undefined);
     assert.equal(runs.at(-1).request.scope, 'changes');
 
-    // Without a release tag on the branch, a release diff explains what to do instead.
+    // A release review covers the current branch; the release diff is summarized, never reviewed.
     git('checkout', '-q', '--orphan', 'fresh');
     commit('other.js', 'x\n', 'fresh start');
-    await start(12);
-    assert.match(of('reviewFailed').at(-1).payload.message, /No release tag .* reachable from fresh/);
-    await start(13, { scope: 'branch' });
-    assert.equal(of('reviewCompleted').at(-1).payload.context.targetLabel, 'fresh');
+    const beforeReleaseDiff = posts.length;
+    await start(12, { kind: 'release', baseRevision: undefined, targetRevision: undefined });
+    assert.equal(posts.length, beforeReleaseDiff, 'a release diff review was started');
+    await start(13, { kind: 'release', scope: 'branch', baseRevision: undefined, targetRevision: undefined });
+    assert.deepEqual([of('reviewCompleted').at(-1).payload.context.kind, of('reviewCompleted').at(-1).payload.context.targetLabel], ['release', 'fresh']);
+
+    // Every completed review was saved, newest first; deleting one relists the rest.
+    const all = await list();
+    assert.equal(all.length, 6);
+    assert.equal(all[0].targetLabel, 'fresh');
+    await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
+    const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
+    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 5]);
+    assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.
     await controller.handle({ type: 'openReviewEvidence', payload: { repositoryPath: '.', revision: release, path: 'app.js', line: 1 } });
