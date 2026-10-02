@@ -3,6 +3,7 @@ import { PolicyRuleResult, ReviewFinding, ReviewProgressCallback, ReviewProgress
 import { GitCommandService } from './gitCommandService';
 import { validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
 import { appliesToPath, ReviewSurveyService } from './reviewSurveyService';
+import { consolidateLimitations } from './reviewLimitations';
 import { SecurityReviewProvider } from './securityReviewProvider';
 
 export class SecurityReviewService {
@@ -24,6 +25,8 @@ export class SecurityReviewService {
     const findings = new Map<string, ReviewFinding>();
     const results = new Map<string, PolicyRuleResult[]>();
     const limitations: string[] = [];
+    // What the model reports per component; merged into a short list at the end.
+    const modelLimitations: string[] = [];
     if (plan.request.categories.includes('compliance') && policy.status === 'not_configured') {
       limitations.push('Compliance policy is not configured at the target revision.');
       if (!plan.request.categories.includes('security')) {
@@ -115,7 +118,7 @@ export class SecurityReviewService {
         for (const path of raw.partialPaths) {
           coverage.skipped.push({ path, reason: 'Only the first 100 lines / 4000 characters supplied initially; remaining content may require tool reads' });
         }
-        limitations.push(...(Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
+        modelLimitations.push(...(Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
           typeof item === 'string' && item.length <= 500) : []).slice(0, 10));
         coverage.analyzed += unit.paths.length;
       } catch (error) {
@@ -161,6 +164,7 @@ export class SecurityReviewService {
     }
     coverage.complete = coverage.complete && !coverage.skipped.length && !coverage.failed.length &&
       coverage.analyzed === coverage.surveyed;
+    limitations.push(...consolidateLimitations(modelLimitations, { policyConfigured: policy.status === 'configured' }));
     if (!coverage.complete) { limitations.push('Review coverage is incomplete; missing checks are not a pass.'); }
     limitations.push('Verified findings have source and diff citations and a second AI check; this does not prove absence of other vulnerabilities.');
     return { request: plan.request, findings: [...findings.values()], policyResults, coverage,
