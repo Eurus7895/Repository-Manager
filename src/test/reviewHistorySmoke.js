@@ -3,7 +3,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { ReviewHistoryStore, MAX_PER_REPOSITORY, MAX_STORED_GAPS, summarize } = require('../../out/reviewHistory.js');
+const { ReviewHistoryStore, MAX_PER_REPOSITORY, MAX_STORED_GAPS, summarize, shortBranch } = require('../../out/reviewHistory.js');
 const { resolveReleaseRange } = require('../../out/services/releaseRange.js');
 const { GitCommandService } = require('../../out/services/gitCommandService.js');
 
@@ -44,6 +44,7 @@ async function main() {
   assert.equal(summarize(triaged, 'b'.repeat(40)).outdated, false);
   assert.equal(summarize(triaged, 'c'.repeat(40)).outdated, true);
   assert.equal(summarize(triaged).outdated, false);
+  assert.deepEqual([shortBranch('refs/heads/feature/x'), shortBranch('refs/remotes/origin/main')], ['feature/x', 'origin/main']);
 
   // A huge coverage list is cut before saving, and the cut is noted.
   const skipped = Array.from({ length: MAX_STORED_GAPS + 50 }, (_, i) => ({ path: `f${i}.bin`, reason: 'binary' }));

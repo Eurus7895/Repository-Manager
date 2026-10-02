@@ -1807,7 +1807,7 @@
           // HEAD may have moved since the open review was loaded (a checkout, a commit, an applied fix).
           const openEntry = reviewState && reviewState.historyId && reviewIsForActiveRepository()
             ? reviewHistory.entries.find(entry => entry.id === reviewState.historyId) : null;
-          if (openEntry) Object.assign(reviewState, { outdated: openEntry.outdated, head: payload.head || null });
+          if (openEntry) Object.assign(reviewState, { outdated: openEntry.outdated, branch: openEntry.branch || null, tip: openEntry.tip || null });
           renderReviewPanel();
           break;
         }
@@ -1828,7 +1828,7 @@
             if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
             Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
-              triage: payload.triage || {}, historyId: payload.historyId || null, outdated: Boolean(payload.outdated), head: payload.head || null });
+              triage: payload.triage || {}, historyId: payload.historyId || null, outdated: Boolean(payload.outdated), branch: payload.branch || null, tip: payload.tip || null });
             if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
             requestReviewHistory();
           } else {
@@ -2800,7 +2800,7 @@
           <span class="review-history-date">${escapeHtml(formatHistoryDate(entry.generatedAt))}</span>
           <span class="review-history-range">${entry.kind === 'release' ? '◈ ' : ''}${escapeHtml(range)}</span>
           <span class="review-history-badges"><span class="review-history-status readiness-${escapeHtml(entry.status)}">${escapeHtml(READINESS_LABELS[entry.status] || entry.status)}</span>${entry.outdated
-            ? `<span class="review-history-outdated" title="${escapeHtml(`Reviewed ${shortRevision(entry.targetSha)}; HEAD has moved since. Auto-fix needs the reviewed commit checked out.`)}">outdated</span>` : ''}</span>
+            ? `<span class="review-history-outdated" title="${escapeHtml(`Reviewed ${shortRevision(entry.targetSha)}; ${entry.branch || 'HEAD'} is now at ${shortRevision(entry.tip || '')}.`)}">outdated</span>` : ''}</span>
           <span class="review-history-counts">${escapeHtml(counts)}</span>
         </button>
         <button type="button" class="review-history-delete" data-action="deleteStoredReview" data-history-id="${id}" aria-label="Delete this saved review" title="Delete this saved review">×</button>
@@ -2879,7 +2879,7 @@
       ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
       : '';
     const outdatedNote = reviewState.outdated
-      ? `<div class="review-outdated" role="note"><strong>Outdated</strong> This review is of <code>${escapeHtml(shortRevision(result.request.targetSha))}</code>, but HEAD is now <code>${escapeHtml(shortRevision(reviewState.head || ''))}</code>. Findings may already be fixed or have moved; check out the reviewed commit to use auto-fix, or run the review again.</div>`
+      ? `<div class="review-outdated" role="note"><strong>Outdated</strong> This review is of <code>${escapeHtml(shortRevision(result.request.targetSha))}</code>, but <code>${escapeHtml(reviewState.branch || 'HEAD')}</code> is now at <code>${escapeHtml(shortRevision(reviewState.tip || ''))}</code>. Findings may already be fixed or have moved; run the review again for the latest code.</div>`
       : '';
     body.innerHTML = `${outdatedNote}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
       ${triageBar}
