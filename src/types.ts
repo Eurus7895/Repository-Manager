@@ -273,6 +273,8 @@ export interface HistoryPage {
   offset: number;
   commits: HistoryCommit[];
   nextOffset: number | null;
+  /** The current branch's configured upstream (`@{upstream}`, e.g. `origin/main`), or null. */
+  upstream: string | null;
 }
 
 export type ChangedFileStatus =

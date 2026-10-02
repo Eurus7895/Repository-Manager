@@ -18,25 +18,19 @@
     return head ? head.hash : '';
   }
 
-  // The current branch's upstream (origin/<branch> first) when it is ahead of HEAD and its
-  // first-parent line runs straight down to HEAD: the main column then starts at the upstream
-  // tip, so "behind by n" reads as one line, as in Git Graph. A diverged upstream is left alone.
-  function findUpstreamTip(commits, byHash, headHash) {
-    const head = byHash.get(headHash);
-    const current = head && (head.refs || []).find(ref => ref && ref.isCurrent);
-    if (!current || !current.name) return '';
-    const suffix = `/${current.name}`;
-    const candidates = commits.filter(commit => commit.hash !== headHash && (commit.refs || []).some(ref =>
-      ref && ref.kind === 'remote-branch' && typeof ref.name === 'string' && ref.name.endsWith(suffix)));
-    candidates.sort((a, b) => Number(!(a.refs || []).some(ref => ref && ref.name === `origin${suffix}`)) -
-      Number(!(b.refs || []).some(ref => ref && ref.name === `origin${suffix}`)));
-    for (const candidate of candidates) {
-      const seen = new Set();
-      for (let hash = candidate.hash; hash && byHash.has(hash) && !seen.has(hash);) {
-        if (hash === headHash) return candidate.hash;
-        seen.add(hash);
-        hash = (byHash.get(hash).parentHashes || [])[0];
-      }
+  // The current branch's configured upstream (`@{upstream}`, resolved by the extension) when it
+  // is ahead of HEAD and its first-parent line runs straight down to HEAD: the main column then
+  // starts at the upstream tip, so "behind by n" reads as one line, as in Git Graph. Nothing is
+  // guessed from branch names, and a diverged upstream is left in its own column.
+  function findUpstreamTip(commits, byHash, headHash, upstream) {
+    if (!upstream || !headHash) return '';
+    const tip = commits.find(commit => commit.hash !== headHash && (commit.refs || []).some(ref =>
+      ref && ref.name === upstream && (ref.kind === 'remote-branch' || ref.kind === 'local-branch')));
+    const seen = new Set();
+    for (let hash = tip && tip.hash; hash && byHash.has(hash) && !seen.has(hash);) {
+      if (hash === headHash) return tip.hash;
+      seen.add(hash);
+      hash = (byHash.get(hash).parentHashes || [])[0];
     }
     return '';
   }
@@ -55,7 +49,7 @@
     const byHash = new Map(list.map(commit => [commit.hash, commit]));
     const headHash = (options && options.headHash) || findHeadHash(list);
     const headChain = new Set();
-    const chainTip = findUpstreamTip(list, byHash, headHash) || headHash;
+    const chainTip = findUpstreamTip(list, byHash, headHash, options && options.upstream) || headHash;
     for (let hash = chainTip; hash && byHash.has(hash) && !headChain.has(hash);) {
       headChain.add(hash);
       hash = (byHash.get(hash).parentHashes || [])[0];

@@ -17,7 +17,8 @@ import { renderDashboardToolbar } from '../webview/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const historyGraph = require('../../resources/historyGraph.js') as {
-  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[]; refs?: Array<{ name: string; isCurrent?: boolean; kind?: string }> }>) => {
+  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[]; refs?: Array<{ name: string; isCurrent?: boolean; kind?: string }> }>,
+    options?: { upstream?: string | null }) => {
     rows: Array<{ lane: number; color: number; parentLanes: number[]; incomingLanes: number[]; isMerge: boolean; isHead: boolean;
       before: Array<string | null>; after: Array<string | null> }>;
     laneCount: number;
@@ -153,7 +154,7 @@ function testHistoryGraph(): void {
     { hash: 'u1', parentHashes: ['h'] },
     { hash: 'h', parentHashes: ['r'], refs: [local] },
     { hash: 'r', parentHashes: [] }
-  ]);
+  ], { upstream: 'origin/feature/x' });
   assert.deepEqual(ahead.rows.map(row => row.lane), [0, 0, 0, 0], 'an ahead upstream left the main column');
   assert.deepEqual(ahead.rows.map(row => row.isHead), [false, false, true, false], 'the HEAD ring moved off HEAD');
   assert.equal(ahead.laneCount, 1);
@@ -162,15 +163,25 @@ function testHistoryGraph(): void {
     { hash: 'u1', parentHashes: ['r'], refs: [{ name: 'origin/feature/x', kind: 'remote-branch' }] },
     { hash: 'h', parentHashes: ['r'], refs: [local] },
     { hash: 'r', parentHashes: [] }
-  ]);
+  ], { upstream: 'origin/feature/x' });
   assert.deepEqual(diverged.rows.map(row => row.lane), [1, 0, 0]);
-  // Only the current branch's upstream counts, not a remote branch whose name merely ends the same way.
-  const lookalike = historyGraph.buildGraphModel([
-    { hash: 'o1', parentHashes: ['h'], refs: [{ name: 'origin/other-feature/x-ish', kind: 'remote-branch' }] },
-    { hash: 'h', parentHashes: ['r'], refs: [local] },
+  // Only the configured upstream counts. `work` tracking `upstream/release`: a same-named
+  // `origin/work` descending from HEAD is not it, while the real upstream continues the column.
+  const work = { name: 'work', isCurrent: true };
+  const sameName = [
+    { hash: 'o1', parentHashes: ['h'], refs: [{ name: 'origin/work', kind: 'remote-branch' }] },
+    { hash: 'h', parentHashes: ['r'], refs: [work] },
     { hash: 'r', parentHashes: [] }
-  ]);
-  assert.deepEqual(lookalike.rows.map(row => row.lane), [1, 0, 0]);
+  ];
+  assert.deepEqual(historyGraph.buildGraphModel(sameName, { upstream: 'upstream/release' }).rows.map(row => row.lane), [1, 0, 0],
+    'a same-named remote branch was taken for the upstream');
+  assert.deepEqual(historyGraph.buildGraphModel(sameName).rows.map(row => row.lane), [1, 0, 0], 'guessed an upstream without one');
+  const tracked = historyGraph.buildGraphModel([
+    { hash: 'u1', parentHashes: ['h'], refs: [{ name: 'upstream/release', kind: 'remote-branch' }] },
+    { hash: 'h', parentHashes: ['r'], refs: [work] },
+    { hash: 'r', parentHashes: [] }
+  ], { upstream: 'upstream/release' });
+  assert.deepEqual(tracked.rows.map(row => row.lane), [0, 0, 0], 'a differently named upstream was not followed');
 
   const octopusParents = Array.from({ length: 8 }, (_, index) => `parent-${index}`);
   const octopus = historyGraph.buildGraphModel([

@@ -25,6 +25,8 @@
   let dashboardActivated = false;
   let loadedHistoryCommits = [];
   let repositoryRefs = { branches: [], tags: [], remotes: [], stashes: [] };
+  // The checked-out branch's configured upstream, from the latest first history page.
+  let loadedHistoryUpstream = null;
   let pendingBranchCheckout = null;
   let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
@@ -1344,8 +1346,9 @@
       loadedHistoryCommits = loadedHistoryCommits.concat((payload.commits || []).filter(commit => !knownHashes.has(commit.hash)));
     } else {
       loadedHistoryCommits = payload.commits || [];
+      loadedHistoryUpstream = typeof payload.upstream === 'string' ? payload.upstream : null;
     }
-    const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits);
+    const graphModel = window.RepositoryHistoryGraph.buildGraphModel(loadedHistoryCommits, { upstream: loadedHistoryUpstream });
     loadedHistoryGraphModel = graphModel;
     historyGraphGeometrySignature = '';
     const historyRegion = history.closest('.history-region');
