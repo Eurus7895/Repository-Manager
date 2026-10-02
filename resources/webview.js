@@ -1804,10 +1804,6 @@
           const payload = message.payload || {};
           if (payload.listId !== reviewHistoryListId) break;
           reviewHistory = { repositoryPath: payload.repositoryPath, entries: Array.isArray(payload.entries) ? payload.entries : [] };
-          // HEAD may have moved since the open review was loaded (a checkout, a commit, an applied fix).
-          const openEntry = reviewState && reviewState.historyId && reviewIsForActiveRepository()
-            ? reviewHistory.entries.find(entry => entry.id === reviewState.historyId) : null;
-          if (openEntry) Object.assign(reviewState, { outdated: openEntry.outdated, branch: openEntry.branch || null, tip: openEntry.tip || null });
           renderReviewPanel();
           break;
         }
@@ -1828,7 +1824,7 @@
             if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
             Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
-              triage: payload.triage || {}, historyId: payload.historyId || null, outdated: Boolean(payload.outdated), branch: payload.branch || null, tip: payload.tip || null });
+              triage: payload.triage || {}, historyId: payload.historyId || null });
             if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
             requestReviewHistory();
           } else {
@@ -1911,8 +1907,6 @@
             activateDashboardRepository(repositoryData[0].path);
           }
           renderRepositorySwitcher();
-          // A refresh follows Git actions such as checkout or commit, which can make saved reviews outdated.
-          requestReviewHistory();
           break;
         }
 
@@ -2774,6 +2768,12 @@
     return reviewHistory.repositoryPath === activeDashboardRepository ? reviewHistory.entries : [];
   }
 
+  // The exact commits a review read: a label like a branch name moves on, these do not.
+  function reviewedCommits(scope, baseSha, targetSha) {
+    if (!targetSha) return '';
+    return scope === 'changes' && baseSha ? `${shortRevision(baseSha)} → ${shortRevision(targetSha)}` : shortRevision(targetSha);
+  }
+
   const READINESS_LABELS = { blocked: 'Blocked', needs_attention: 'Needs attention', no_blocking_findings: 'No blocking findings' };
 
   // Past reviews of the active repository, newest first; the open one is marked.
@@ -2795,12 +2795,12 @@
         entry.toFix ? `${entry.toFix} to fix` : '', entry.dismissed ? `${entry.dismissed} dismissed` : ''].filter(Boolean).join(' · ');
       const current = reviewState && reviewState.historyId === entry.id;
       const id = escapeHtml(entry.id);
-      return `<li class="review-history-item${entry.outdated ? ' is-outdated' : ''}"${current ? ' aria-current="true"' : ''}>
+      return `<li class="review-history-item"${current ? ' aria-current="true"' : ''}>
         <button type="button" class="review-history-open" data-action="openStoredReview" data-history-id="${id}"${locked ? ` aria-disabled="true" title="${REVIEW_LOCK_HINT}"` : ` title="Open this review (${escapeHtml(shortRevision(entry.targetSha))})"`}>
           <span class="review-history-date">${escapeHtml(formatHistoryDate(entry.generatedAt))}</span>
           <span class="review-history-range">${entry.kind === 'release' ? '◈ ' : ''}${escapeHtml(range)}</span>
-          <span class="review-history-badges"><span class="review-history-status readiness-${escapeHtml(entry.status)}">${escapeHtml(READINESS_LABELS[entry.status] || entry.status)}</span>${entry.outdated
-            ? `<span class="review-history-outdated" title="${escapeHtml(`Reviewed ${shortRevision(entry.targetSha)}; ${entry.branch || 'HEAD'} is now at ${shortRevision(entry.tip || '')}.`)}">outdated</span>` : ''}</span>
+          <code class="review-history-commit" title="Reviewed commit${entry.scope === 'changes' && entry.baseSha ? 's' : ''}">${escapeHtml(reviewedCommits(entry.scope, entry.baseSha, entry.targetSha))}</code>
+          <span class="review-history-status readiness-${escapeHtml(entry.status)}">${escapeHtml(READINESS_LABELS[entry.status] || entry.status)}</span>
           <span class="review-history-counts">${escapeHtml(counts)}</span>
         </button>
         <button type="button" class="review-history-delete" data-action="deleteStoredReview" data-history-id="${id}" aria-label="Delete this saved review" title="Delete this saved review">×</button>
@@ -2844,7 +2844,11 @@
       : `Branch: ${target}`;
     title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
     // Name the repository when the dashboard has moved on to another one (or another folder).
-    meta.textContent = reviewIsForActiveRepository() ? label : `${label} · ${reviewState.repositoryName || reviewState.repositoryPath}`;
+    const request = reviewState.result && reviewState.result.request;
+    // The exact commits, unless the label already is them (a Base/Target selection of plain commits).
+    const shas = request ? reviewedCommits(request.scope, request.baseSha, request.targetSha) : '';
+    const commits = shas && !label.includes(shas) ? ` · ${request.baseSha ? '' : 'commit '}${shas}` : '';
+    meta.textContent = `${label}${commits}${reviewIsForActiveRepository() ? '' : ` · ${reviewState.repositoryName || reviewState.repositoryPath}`}`;
     if (running) {
       // Visible from the Changes tab too, so progress can be followed while working elsewhere.
       if (badge) badge.textContent = reviewState.detail ? `${reviewProgressPercent()}%` : '…';
@@ -2878,10 +2882,7 @@
     const triageBar = findings.length
       ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
       : '';
-    const outdatedNote = reviewState.outdated
-      ? `<div class="review-outdated" role="note"><strong>Outdated</strong> This review is of <code>${escapeHtml(shortRevision(result.request.targetSha))}</code>, but <code>${escapeHtml(reviewState.branch || 'HEAD')}</code> is now at <code>${escapeHtml(shortRevision(reviewState.tip || ''))}</code>. Findings may already be fixed or have moved; run the review again for the latest code.</div>`
-      : '';
-    body.innerHTML = `${outdatedNote}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
+    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
       ${triageBar}
       ${renderFixPanel()}
       <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>

@@ -426,7 +426,9 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
     await page.click('#detailTabReview');
     await page.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await page.textContent('#reviewMeta'), 'Diff: 1.0.0 → feature/dashboard');
+    // Labels name the tag and branch; the exact commits reviewed follow them.
+    const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
     assert.equal(await page.getAttribute('.review-release-group [data-action="reviewRelease"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
@@ -551,7 +553,8 @@ async function main() {
     // Opening one restores its findings and triage; export works from the saved copy.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(4) [data-action="openStoredReview"]');
     await reopened.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await reopened.textContent('#reviewMeta'), 'Diff: 1.0.0 → feature/dashboard');
+    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(4) .review-history-commit'), `${releaseSha} → ${branchSha}`);
     assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(4)', 'aria-current'), 'true');
     reviewProbe.copied = null;
@@ -562,18 +565,6 @@ async function main() {
     await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="triageFinding"][data-decision="fix"]');
     await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[3].textContent));
-    // A new commit on the reviewed branch: after the refresh, saved reviews and the open one are marked outdated.
-    assert.equal(await reopened.locator('.review-history-outdated').count(), 0);
-    assert.equal(await reopened.locator('.review-outdated').count(), 0);
-    git(parent, 'commit', '-q', '--allow-empty', '-m', 'chore: move the branch past the reviews');
-    await reopened.click('[data-action="refresh"]');
-    await reopened.waitForFunction(() => document.querySelectorAll('.review-history-outdated').length === 4);
-    await reopened.locator('.review-outdated').waitFor();
-    assert.match(await reopened.textContent('.review-outdated'), /feature\/dashboard is now at [0-9a-f]{8}/);
-    await snap(reopened, '13b-outdated-review');
-    git(parent, 'reset', '-q', '--hard', 'HEAD~1');
-    await reopened.click('[data-action="refresh"]');
-    await reopened.waitForFunction(() => document.querySelectorAll('.review-history-outdated').length === 0 && !document.querySelector('.review-outdated'));
     // Deleting removes it from the list; the open copy stays on screen.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
     await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 3);

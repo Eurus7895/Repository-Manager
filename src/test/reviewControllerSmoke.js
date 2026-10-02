@@ -121,7 +121,7 @@ async function main() {
     assert.equal(saved1.length, 1);
     assert.deepEqual([saved1[0].id, saved1[0].status, saved1[0].blocking, saved1[0].baseLabel, saved1[0].targetSha],
       [completed.historyId, 'blocked', 1, '1.5.0', head]);
-    assert.deepEqual([saved1[0].outdated, saved1[0].branch, saved1[0].tip], [false, 'main', head], 'main still points at the reviewed commit');
+    assert.equal(saved1[0].baseSha, release, 'the list names the exact commits reviewed');
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 2, findingId: 'f1', decision: 'dismiss', reason: 'accepted_risk' } });
     saved1 = await list();
     assert.deepEqual([saved1[0].status, saved1[0].dismissed], ['needs_attention', 1]);
@@ -133,7 +133,6 @@ async function main() {
     assert.equal(restored.requestId, 50);
     assert.deepEqual(restored.triage, { f1: { decision: 'dismiss', reason: 'accepted_risk' } });
     assert.equal(restored.readiness.status, 'needs_attention');
-    assert.equal(restored.outdated, false);
     await reopened.handle({ type: 'exportReviewReport', payload: { requestId: 50, format: 'copy' } });
     assert.match(copied, /Dismissed/);
     // Triage of the reopened copy is saved too.
@@ -242,26 +241,9 @@ async function main() {
     const all = await list();
     assert.equal(all.length, 6);
     assert.equal(all[0].targetLabel, 'fresh');
-    // Outdated compares with the reviewed branch, not HEAD: checking out `fresh` leaves main's reviews current.
-    assert.deepEqual(all.map(entry => [entry.branch, entry.outdated]),
-      [['fresh', false], ['main', false], ['main', false], ['main', false], ['main', false], ['main', false]]);
-    // A new commit on main makes main's reviews outdated, including the commit reviewed against its parent.
-    git('checkout', '-q', 'main');
-    const newer = commit('app.js', 'v4\n', 'four');
-    const moved = await list();
-    assert.deepEqual(moved.map(entry => entry.outdated), [false, true, true, true, true, true]);
-    assert.equal(moved[1].tip, newer);
-    await reopened.handle({ type: 'openStoredReview', payload: { requestId: 52, id: completed.historyId, repositoryPath: '.' } });
-    const outdated = of('reviewCompleted').at(-1).payload;
-    assert.deepEqual([outdated.outdated, outdated.branch, outdated.tip], [true, 'main', newer]);
-    // A detached HEAD records no branch, so the review is compared with HEAD instead.
-    git('checkout', '-q', '--detach', 'HEAD~1');
-    await start(14, { baseRevision: undefined, targetRevision: 'HEAD' });
-    const detached = (await list())[0];
-    assert.deepEqual([detached.branch, detached.outdated], [undefined, false]);
     await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
     const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
-    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 6]);
+    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 5]);
     assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Past reviews**: every completed review is saved with your triage, so you can check it later, even after restarting VS Code. The Review tab lists each repository's last 20 reviews with date, range, readiness and counts. Open one to see its findings, export it, or fix it; delete the ones you no longer need. A review is marked **outdated** once its branch has new commits, since its findings may already be fixed. Reviews are kept in VS Code's workspace state on this machine, never in the repository.
+- **Past reviews**: every completed review is saved with your triage, so you can check it later, even after restarting VS Code. The Review tab lists each repository's last 20 reviews with date, range, the exact commits reviewed, readiness and counts. Open one to see its findings, export it, or fix it; delete the ones you no longer need. Reviews are kept in VS Code's workspace state on this machine, never in the repository.
 
 ### Changed
 

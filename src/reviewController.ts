@@ -11,7 +11,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, ReviewFixService } from './services/reviewFixService';
 import { resolveReleaseRange } from './services/releaseRange';
-import { ReviewHistoryEntry, ReviewHistoryStore, summarize } from './reviewHistory';
+import { ReviewHistoryStore, summarize } from './reviewHistory';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
 
@@ -162,7 +162,6 @@ export class ReviewController {
       await reply('reviewFailed', { message: `Cannot resolve revision: ${error instanceof Error ? error.message : String(error)}` });
       return;
     }
-    const branch = await this.reviewedBranch(git, root, target);
     const baseLabel = scope === 'changes' ? optionalString(payload.baseLabel) || baseRevision : undefined;
     const targetLabel = optionalString(payload.targetLabel) || target;
     const needsConsent = this.host.alwaysConfirm() || !this.host.isConsentRemembered(root);
@@ -200,7 +199,7 @@ export class ReviewController {
       context.generatedAt = new Date();
       const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
       // Saving is best effort: a full or failing workspace state must not lose the result on screen.
-      const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage: {}, branch })
+      const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage: {} })
         .then(entry => entry.id, () => undefined);
       this.remember(requestId, { result, context, triage: {}, workspaceRoot, historyId });
       await reply('reviewCompleted', { result, readiness: assessReadiness(result), context: storedContext, historyId });
@@ -355,35 +354,9 @@ export class ReviewController {
   private async listHistory(payload: Record<string, unknown>): Promise<void> {
     const repositoryPath = optionalString(payload.repositoryPath);
     if (!repositoryPath) { return; }
-    const git = this.git();
-    const root = git.resolveRepositoryPath(repositoryPath);
-    const tips = new Map<string, Promise<string | undefined>>();
-    const entries = await Promise.all(this.host.history.list(root).map(async entry => summarize(entry, await this.tip(git, root, entry, tips))));
-    await this.host.post({ type: 'reviewHistoryLoaded', payload: { repositoryPath, listId: payload.listId, entries } });
-  }
-
-  /**
-   * The branch a review is about: the target itself when it names a branch, otherwise the
-   * branch checked out now (a commit reviewed from the history belongs to the branch being worked on).
-   */
-  private async reviewedBranch(git: GitCommandService, root: string, target: string): Promise<string | undefined> {
-    const run = (args: string[]) => git.execGit(args, root, 5000).then(out => out.trim(), () => '');
-    const named = await run(['rev-parse', '--symbolic-full-name', target]);
-    if (/^refs\/(heads|remotes)\//.test(named)) { return named; }
-    const current = await run(['symbolic-ref', '--quiet', 'HEAD']);
-    return current.startsWith('refs/heads/') ? current : undefined;
-  }
-
-  /**
-   * The commit a saved review's branch points at now; HEAD for reviews saved without a branch.
-   * Undefined when it cannot be read (e.g. the branch was deleted), so nothing is marked outdated.
-   */
-  private tip(git: GitCommandService, root: string, entry: ReviewHistoryEntry, cache = new Map<string, Promise<string | undefined>>()): Promise<string | undefined> {
-    const ref = entry.branch || 'HEAD';
-    if (!cache.has(ref)) {
-      cache.set(ref, git.execGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], root, 5000).then(out => out.trim() || undefined, () => undefined));
-    }
-    return cache.get(ref) as Promise<string | undefined>;
+    const root = this.git().resolveRepositoryPath(repositoryPath);
+    await this.host.post({ type: 'reviewHistoryLoaded', payload: { repositoryPath, listId: payload.listId,
+      entries: this.host.history.list(root).map(summarize) } });
   }
 
   /** Reopens a saved review under the dashboard's new request id, with its triage. */
@@ -401,10 +374,8 @@ export class ReviewController {
     this.cancelFixQuietly();
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
-    const summary = summarize(entry, await this.tip(this.git(entry.workspaceRoot), entry.repositoryRoot, entry));
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
-      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id,
-      outdated: summary.outdated, branch: summary.branch, tip: summary.tip } });
+      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id } });
   }
 
   private async deleteStored(payload: Record<string, unknown>): Promise<void> {

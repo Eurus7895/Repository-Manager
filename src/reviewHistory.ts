@@ -32,11 +32,6 @@ export interface ReviewHistoryEntry {
   context: StoredReviewContext;
   result: ReviewResult;
   triage: ReviewTriage;
-  /**
-   * The branch the review is about, as a full ref (`refs/heads/…` or `refs/remotes/…`): the
-   * reviewed branch, or the branch checked out when a commit was reviewed. Absent when HEAD was detached.
-   */
-  branch?: string;
 }
 
 /** One row of the Past reviews list. */
@@ -47,6 +42,8 @@ export interface ReviewHistorySummary {
   scope: 'changes' | 'branch';
   baseLabel?: string;
   targetLabel: string;
+  /** The reviewed commits: the target, and the base of a diff review (absent: the parent). */
+  baseSha?: string;
   targetSha: string;
   status: ReturnType<typeof assessReadiness>['status'];
   blocking: number;
@@ -55,15 +52,7 @@ export interface ReviewHistorySummary {
   toFix: number;
   findings: number;
   modelId?: string;
-  /** The branch the review is about (short name), and the commit it points at now. */
-  branch?: string;
-  tip?: string;
-  /** The branch has moved past the reviewed commit (a branch that cannot be read: false). */
-  outdated: boolean;
 }
-
-/** `refs/heads/feature/x` → `feature/x`, `refs/remotes/origin/main` → `origin/main`. */
-export const shortBranch = (ref: string) => ref.replace(/^refs\/(heads|remotes)\//, '');
 
 function isEntry(value: unknown): value is ReviewHistoryEntry {
   const entry = value as ReviewHistoryEntry;
@@ -85,16 +74,13 @@ export function compactResult(result: ReviewResult): ReviewResult {
     limitations: [...result.limitations, `The saved review lists ${MAX_STORED_GAPS} skipped or failed files; ${dropped} more were left out to keep it small.`] };
 }
 
-/** `tip`: the commit the review's branch points at now, or undefined when it cannot be read. */
-export function summarize(entry: ReviewHistoryEntry, tip?: string): ReviewHistorySummary {
+export function summarize(entry: ReviewHistoryEntry): ReviewHistorySummary {
   const readiness = assessReadiness(entry.result, entry.triage);
   return {
     id: entry.id, generatedAt: entry.context.generatedAt, kind: entry.context.kind, scope: entry.result.request.scope,
-    baseLabel: entry.context.baseLabel, targetLabel: entry.context.targetLabel, targetSha: entry.result.request.targetSha,
+    baseLabel: entry.context.baseLabel, targetLabel: entry.context.targetLabel, baseSha: entry.result.request.baseSha, targetSha: entry.result.request.targetSha,
     status: readiness.status, blocking: readiness.blocking.length, attention: readiness.attention.length,
-    dismissed: readiness.dismissed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId,
-    branch: entry.branch ? shortBranch(entry.branch) : undefined, tip,
-    outdated: Boolean(tip) && entry.result.request.targetSha !== tip
+    dismissed: readiness.dismissed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId
   };
 }
 
