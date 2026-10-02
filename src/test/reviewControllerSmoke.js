@@ -135,6 +135,10 @@ async function main() {
     assert.equal(restored.readiness.status, 'needs_attention');
     await reopened.handle({ type: 'exportReviewReport', payload: { requestId: 50, format: 'copy' } });
     assert.match(copied, /Dismissed/);
+    // Evidence of a reopened review resolves in its own repository, whatever path the dashboard now uses.
+    opened = null;
+    await reopened.handle({ type: 'openReviewEvidence', payload: { requestId: 50, repositoryPath: 'lib/elsewhere', revision: head, path: 'app.js', line: 3 } });
+    assert.deepEqual([opened && opened.revision, opened && opened.content], [head, 'line 1\nline 2\neval(input);\n']);
     // Triage of the reopened copy is saved too.
     await reopened.handle({ type: 'setFindingTriage', payload: { requestId: 50, findingId: 'f1', decision: null } });
     assert.equal((await list())[0].status, 'blocked');

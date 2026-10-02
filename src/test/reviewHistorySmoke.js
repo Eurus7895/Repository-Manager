@@ -79,6 +79,8 @@ async function main() {
     assert.equal((await resolveReleaseRange(service, repo)).latestReleaseTag, '1.10.0', 'version order, not name order');
     git('checkout', '-q', '--detach');
     assert.equal((await resolveReleaseRange(service, repo)).currentBranch, 'HEAD');
+    // A Git failure while listing tags is an error, not "no release tag".
+    await assert.rejects(resolveReleaseRange(service, path.join(repo, 'missing')));
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

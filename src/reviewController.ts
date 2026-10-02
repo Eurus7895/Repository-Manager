@@ -397,11 +397,14 @@ export class ReviewController {
         filePath.startsWith('/') || filePath.startsWith('-') || filePath.split('/').includes('..') || !Number.isInteger(line) || line < 1) {
       return;
     }
-    // Evidence from a stored review resolves in the folder that review ran in.
+    // Evidence from a stored review resolves where that review ran: its folder and its repository
+    // path there. The dashboard may now show the same repository under another path (e.g. `lib`
+    // reviewed from a parent folder, reopened as `.`), so its own path is not combined with that folder.
     const stored = typeof payload.requestId === 'number' ? this.reviews.get(payload.requestId) : undefined;
     const git = this.git(stored?.workspaceRoot);
     try {
-      const content = await git.execGitRaw(['show', `${revision}:${filePath}`], git.resolveRepositoryPath(repositoryPath), 10000);
+      const root = git.resolveRepositoryPath(stored ? stored.result.request.repositoryPath : repositoryPath);
+      const content = await git.execGitRaw(['show', `${revision}:${filePath}`], root, 10000);
       await this.host.openText(content, revision, filePath, line);
     } catch (error) {
       this.host.notify(`Cannot open ${filePath} at ${revision.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`, true);
