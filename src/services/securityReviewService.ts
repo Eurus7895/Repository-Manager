@@ -115,8 +115,8 @@ export class SecurityReviewService {
             coverage.failed.push({ path: unit.component, reason: `No policy result for ${rule.id}` });
           }
         }
-        for (const path of raw.partialPaths) {
-          coverage.skipped.push({ path, reason: 'Only the first 100 lines / 4000 characters supplied initially; remaining content may require tool reads' });
+        for (const file of raw.partialPaths) {
+          coverage.skipped.push({ path: file.path, reason: `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` });
         }
         modelLimitations.push(...(Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
           typeof item === 'string' && item.length <= 500) : []).slice(0, 10));

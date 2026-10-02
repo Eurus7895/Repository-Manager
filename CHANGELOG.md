@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One toolbar for what the dashboard shows: **Summarize changes**, **Review changes** and **Review branch** now sit together above the changed files and act on the selected commit or the loaded comparison. The comparison status next to the search only names the range, so it no longer pushes the search box off screen.
 - **◈ Release › Load range** replaces Release › Summarize changes, which had the same name as the toolbar button but did something else. It loads the changes since the latest release tag on the current branch; summarize or review them from the toolbar.
 
+### Fixed
+
+- Reviews no longer lose whole components to model hiccups. A reply with text around its JSON is read anyway, and an unreadable reply gets one more try. A tool the model may not use (such as reading a diff in a branch review) is reported back to the model instead of failing every file in the component. When the model runs out of tool calls, it is asked for its result from what it has read.
+- Long files are no longer listed as skipped after the first 100 lines. Each file now sends up to 400 lines at first, a file the model reads to the end counts as reviewed, and the rest say how much was read (for example "Partly reviewed: the model saw 400 of 2,315 lines").
+
 ## [1.8.0] - 2026-10-02
 
 ### Added
