@@ -45,6 +45,7 @@ async function main() {
     assert.deepEqual([...changedLines('@@ -1 +1,2 @@\n a\n+eval(x);', 'target')], [2]);
 
     let searchCalls = 0;
+    const analyzePrompts = [];
     let invalidEvidence = false;
     let verdictDecision = 'supported';
     const model = { id: 'mock', version: '1', name: 'Mock', maxInputTokens: 100000,
@@ -74,7 +75,9 @@ async function main() {
               findings: includesCode ? [candidate('security'), candidate('compliance')] : [],
               policyResults: includesCode ? [{ ruleId: 'TEAM-01', status: 'violation', reason: 'Untrusted execution', evidence },
                 { ruleId: 'TEAM-MANUAL', status: 'insufficient_evidence', reason: 'Needs external approval', evidence: [] }] : [],
-              limitations: [] };
+              // Every component repeats a scope note and the same real gap.
+              limitations: ['Review was limited to the requested files.', 'Whether input reaches eval depends on callers that were not supplied.'] };
+            analyzePrompts.push(messages[0]);
           }
         }
         return { text: (async function* () { yield JSON.stringify(response); })() };
@@ -93,7 +96,12 @@ async function main() {
       repositoryPath: '.', targetSha: base, scope: 'changes', categories: ['security'] });
     assert.deepEqual(rootPlan.changedPaths, ['src/app.js']);
     const updates = [];
+    analyzePrompts.length = 0;
     const result = await service.review(request, token, (message, detail) => updates.push({ message, detail }));
+    // Limitations: the real gap once, however many components repeat it; scope notes dropped.
+    assert.ok(analyzePrompts.length >= 1 && analyzePrompts.every(prompt => /do not restate which files were in scope/.test(prompt)));
+    assert.equal(result.limitations.filter(item => item === 'Whether input reaches eval depends on callers that were not supplied.').length, 1);
+    assert.ok(!result.limitations.some(item => /limited to the requested files/.test(item)), 'scope notes were kept');
     // Progress: planning first, then the plan with every component, steps in order, then finishing.
     const details = updates.map(update => update.detail).filter(Boolean);
     assert.equal(details[0].phase, 'planning');

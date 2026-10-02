@@ -5,7 +5,13 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.0] - Unreleased
+## [1.7.1] - Unreleased
+
+### Fixed
+
+- Review results no longer repeat the same limitation for every component reviewed. Notes that the report already gives once are left out: which files were in scope, that no policy was configured, that content was truncated, or that no flaw was found. The notes that remain are specific to the code, such as behavior that depends on callers that weren't reviewed.
+
+## [1.7.0] - 2026-10-02
 
 ### Added
 
