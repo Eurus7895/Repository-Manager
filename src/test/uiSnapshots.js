@@ -387,7 +387,10 @@ async function main() {
     await page.click('#commitCompareStatus [data-action="reviewComparison"][data-scope="changes"]');
     assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
-    assert.equal(await page.textContent('#reviewStatus'), 'Waiting for confirmation…');
+    // The labels come from the page itself now, so wait for the extension's own reply too.
+    await page.waitForFunction(() => document.getElementById('reviewStatus').textContent === 'Waiting for confirmation…');
+    // The extension posts that status, then asks: wait for the question as well.
+    for (let i = 0; i < 100 && !answerConsent; i++) await page.waitForTimeout(20);
     assert.deepEqual(reviewProbe.questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
     // Not snap(): the host is busy on purpose, waiting for the answer.
     await page.waitForTimeout(150);
