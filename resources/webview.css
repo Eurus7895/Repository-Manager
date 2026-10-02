@@ -2057,6 +2057,10 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 
 /* Resizable history columns */
 .history-region {
+  /* The column follows the panel, not its content: the content width is computed from this
+     width, so a content-sized column could only shrink by its overflow on each pass, which
+     took about a second after the window got narrower. */
+  grid-template-columns: minmax(0, 1fr);
   --history-graph-column-width: 76px;
   --history-message-column-width: 420px;
   --history-author-column-width: 150px;
@@ -2083,6 +2087,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 }
 
 .history-table {
+  min-width: 0;
   overflow-x: hidden;
   scrollbar-gutter: stable;
 }

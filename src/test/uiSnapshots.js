@@ -559,6 +559,33 @@ async function main() {
 
     await page.close();
     // Narrow editor splits: rows keep one-line ref pills, and the subject keeps a readable width.
+    // Narrowing the window re-lays the history out in a few frames. A content-sized history
+    // column used to shrink by its overflow once per frame: about a second of relayout.
+    const resizing = await openPage(1440, 900);
+    const settleFrames = () => resizing.evaluate(() => new Promise(resolve => {
+      const region = document.querySelector('.history-region');
+      const sample = () => ['graph', 'message', 'author', 'date', 'commit']
+        .map(name => region.style.getPropertyValue(`--history-${name}-column-width`)).join('|');
+      let last = sample();
+      let changed = 0;
+      let frames = 0;
+      let quiet = 0;
+      const tick = () => {
+        frames++;
+        const now = sample();
+        if (now !== last) { changed++; last = now; quiet = 0; } else { quiet++; }
+        if (quiet >= 20 || frames > 300) resolve(changed); else requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }));
+    for (const [width, height] of [[900, 700], [1440, 900]]) {
+      const pending = settleFrames();
+      await resizing.setViewportSize({ width, height });
+      const changed = await pending;
+      assert.ok(changed <= 3, `resizing to ${width}px re-laid the history out on ${changed} frames`);
+    }
+    await resizing.close();
+
     for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
       const narrow = await openPage(width, 700);
       const layout = await narrow.evaluate(() => ({
