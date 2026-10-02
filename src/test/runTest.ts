@@ -17,7 +17,7 @@ import { renderDashboardToolbar } from '../webview/toolbar';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const historyGraph = require('../../resources/historyGraph.js') as {
-  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[]; refs?: Array<{ name: string; isCurrent?: boolean }> }>) => {
+  buildGraphModel: (commits: Array<{ hash: string; parentHashes: string[]; refs?: Array<{ name: string; isCurrent?: boolean; kind?: string }> }>) => {
     rows: Array<{ lane: number; color: number; parentLanes: number[]; incomingLanes: number[]; isMerge: boolean; isHead: boolean;
       before: Array<string | null>; after: Array<string | null> }>;
     laneCount: number;
@@ -145,6 +145,32 @@ function testHistoryGraph(): void {
   assert.deepEqual(forked.rows.map(row => row.lane), [1, 0, 0]);
   assert.deepEqual(forked.rows[1].incomingLanes, [1], 'the topic branch does not curve into HEAD');
   assert.deepEqual(forked.rows[1].after.filter(Boolean), ['r'], 'a lane was left dangling');
+
+  // An upstream ahead of HEAD continues the main column instead of opening a side lane.
+  const local = { name: 'feature/x', isCurrent: true };
+  const ahead = historyGraph.buildGraphModel([
+    { hash: 'u2', parentHashes: ['u1'], refs: [{ name: 'origin/feature/x', kind: 'remote-branch' }] },
+    { hash: 'u1', parentHashes: ['h'] },
+    { hash: 'h', parentHashes: ['r'], refs: [local] },
+    { hash: 'r', parentHashes: [] }
+  ]);
+  assert.deepEqual(ahead.rows.map(row => row.lane), [0, 0, 0, 0], 'an ahead upstream left the main column');
+  assert.deepEqual(ahead.rows.map(row => row.isHead), [false, false, true, false], 'the HEAD ring moved off HEAD');
+  assert.equal(ahead.laneCount, 1);
+  // A diverged upstream is a real fork and keeps its own column.
+  const diverged = historyGraph.buildGraphModel([
+    { hash: 'u1', parentHashes: ['r'], refs: [{ name: 'origin/feature/x', kind: 'remote-branch' }] },
+    { hash: 'h', parentHashes: ['r'], refs: [local] },
+    { hash: 'r', parentHashes: [] }
+  ]);
+  assert.deepEqual(diverged.rows.map(row => row.lane), [1, 0, 0]);
+  // Only the current branch's upstream counts, not a remote branch whose name merely ends the same way.
+  const lookalike = historyGraph.buildGraphModel([
+    { hash: 'o1', parentHashes: ['h'], refs: [{ name: 'origin/other-feature/x-ish', kind: 'remote-branch' }] },
+    { hash: 'h', parentHashes: ['r'], refs: [local] },
+    { hash: 'r', parentHashes: [] }
+  ]);
+  assert.deepEqual(lookalike.rows.map(row => row.lane), [1, 0, 0]);
 
   const octopusParents = Array.from({ length: 8 }, (_, index) => `parent-${index}`);
   const octopus = historyGraph.buildGraphModel([
