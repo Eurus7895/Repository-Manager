@@ -189,6 +189,8 @@ function startServer(workspace, otherFolder) {
         reviewProbe.summaries.push(message.payload);
         await post({ type: 'changeSummaryProgress', payload: { requestId: message.payload.requestId,
           repositoryPath: message.payload.repositoryPath, status: 'Waiting for confirmation…' } });
+      } else if (message.type === 'refreshRepositories') {
+        await refresh();
       } else if (message.type === 'refresh') {
         await refresh();
         await post({ type: 'repositoryOperationResult', payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' } });

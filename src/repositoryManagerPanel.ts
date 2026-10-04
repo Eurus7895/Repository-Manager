@@ -25,7 +25,7 @@ const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
 const READ_ONLY_MESSAGES = new Set([
   'getHistory', 'getCommitDetail', 'getFileDiff', 'getRepositoryRefs', 'getWorkingTreeChanges',
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
-  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels', 'resolveReleaseRange',
+  'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels', 'resolveReleaseRange', 'refreshRepositories',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
   'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview'
@@ -351,6 +351,11 @@ export class RepositoryManagerPanel {
             message: error instanceof Error ? error.message : 'Unable to load Copilot models.'
           } });
         }
+        return;
+      }
+      // The repository list only (switching repository): no result, so nothing else reloads.
+      if (message.type === 'refreshRepositories') {
+        await this.refresh();
         return;
       }
       // Handle refresh separately as it's not in the handler map

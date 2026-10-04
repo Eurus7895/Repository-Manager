@@ -55,6 +55,7 @@
   // Security and compliance review; declared early because rendering checks the review lock.
   let reviewRequestId = 0;
   let historyDateFormat = null; // shared by every history row (see formatHistoryDate)
+  let repositoryDataAt = Date.now(); // when the repository list was last received (the page starts with it)
   // Release › Load range: the request resolving the range since the latest release tag.
   let releaseRange = null; // { requestId, repositoryPath }
   // Names for the ends of the loaded comparison (e.g. a release tag and a branch), for reviews of it.
@@ -1232,7 +1233,9 @@
     saveState();
     requestDashboardHistory(0, false);
     postMessage('getRepositoryRefs', { repositoryPath });
-    postMessage('refresh', { repositoryPath });
+    // Update the repository list (ahead/behind, changes) only when it is not fresh. It used to send
+    // 'refresh', whose result reloads history and refs: opening the dashboard loaded everything twice.
+    if (Date.now() - repositoryDataAt > 5000) postMessage('refreshRepositories', {});
   }
 
   function captureHistoryViewport(history) {
@@ -1921,6 +1924,7 @@
         case 'workspaceFolderChanged': {
           // Paths such as '.' now point into a different folder: forget everything tied to the old one.
           repositoryData = (message.payload && message.payload.repositories) || [];
+          repositoryDataAt = Date.now();
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
           // A review keeps running (and its results stay) across folders: it is pinned to its own folder.
@@ -1943,6 +1947,7 @@
 
         case 'updateSubmodules': {
           repositoryData = message.payload.submodules;
+          repositoryDataAt = Date.now();
           saveState();
           updateRepositoryRows(repositoryData);
           // The active repository can vanish (e.g. removed from .gitmodules); fall back to one that exists.
