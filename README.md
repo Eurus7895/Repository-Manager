@@ -10,7 +10,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 - See the parent repository and linked repositories in one dashboard.
 - Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
-- Browse the active repository's commit graph, Git Graph style: the checked-out branch stays in the first column, and each branch keeps its own column and colour, with tag, remote, and stash context. The sidebar lists branches as a folder tree (`feature/…`, `release/…`).
+- Browse the active repository's commit graph, Git Graph style: the checked-out branch stays in the first column, and each branch keeps its own column and colour, with tag, remote, and stash context. The Side Bar lists repositories and branches, the branches as a folder tree (`feature/…`, `release/…`).
 - Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
 - Resize the history, changed-files, and diff panes to suit the current review task.
 - Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
@@ -100,7 +100,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 
 - Command Palette: **Repository Manager: Open Repository Manager**
 - Keyboard: `Ctrl+Shift+G M` (`Cmd+Shift+G M` on macOS)
-- Activity Bar: select the Repository Manager icon to launch the editor dashboard
+- Activity Bar: select the Repository Manager icon to show repositories, branches, tags, remotes and stashes in the Side Bar; it opens the editor dashboard next to it. Choosing a repository or branch there acts on the dashboard; hiding the Side Bar leaves the dashboard the whole editor.
 
 ### Create a branch across repositories
 

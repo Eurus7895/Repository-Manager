@@ -1758,6 +1758,43 @@
     });
   }
 
+  // The repository and branch list is shown in VS Code's Side Bar, not in this tab. The dashboard
+  // still renders it (hidden here) and owns its state; it sends a copy to the Side Bar after every
+  // change and runs the Side Bar's clicks on its own elements, through the same handlers.
+  const dashboardSidebar = document.querySelector('.dashboard-shell .dashboard-sidebar');
+  // An element's key names what it does (its action and data), so it stays valid across refreshes.
+  const mirrorKey = element => JSON.stringify(Object.keys(element.dataset).filter(name => name !== 'mirrorKey').sort()
+    .map(name => [name, element.dataset[name]]));
+  let sidebarPublishPending = false;
+  function publishSidebar() {
+    sidebarPublishPending = false;
+    if (!dashboardSidebar) return;
+    dashboardSidebar.querySelectorAll('[data-action]').forEach(element => {
+      const key = mirrorKey(element);
+      if (element.dataset.mirrorKey !== key) element.dataset.mirrorKey = key;
+    });
+    postMessage('sidebarSnapshot', { html: dashboardSidebar.innerHTML });
+  }
+  function scheduleSidebarPublish() {
+    if (sidebarPublishPending) return;
+    sidebarPublishPending = true;
+    requestAnimationFrame(publishSidebar);
+  }
+  if (dashboardSidebar && typeof MutationObserver === 'function') {
+    new MutationObserver(records => {
+      // Writing the keys is itself a change; only other changes need a new copy.
+      if (records.some(record => record.attributeName !== 'data-mirror-key')) scheduleSidebarPublish();
+    }).observe(dashboardSidebar, { subtree: true, childList: true, characterData: true, attributes: true });
+  }
+  function runSidebarAction(payload) {
+    if (!dashboardSidebar || !payload || typeof payload.key !== 'string') return;
+    const target = Array.from(dashboardSidebar.querySelectorAll('[data-action]')).find(element => mirrorKey(element) === payload.key);
+    // A click from an older copy whose item is gone (or now disabled) does nothing.
+    if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
+    if (payload.event === 'dblclick') target.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    else target.click();
+  }
+
   // Handle messages from extension
   window.addEventListener('message', event => {
     const message = event.data;
@@ -2046,6 +2083,14 @@
 
         case 'dashboardError':
           renderDashboardError(message.payload);
+          break;
+
+        case 'publishSidebar':
+          publishSidebar();
+          break;
+
+        case 'sidebarAction':
+          runSidebarAction(message.payload);
           break;
 
         case 'branchCreationResults': {

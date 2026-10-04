@@ -511,7 +511,7 @@ select {
 
 .dashboard-body {
   display: grid;
-  grid-template-columns: clamp(248px, 21vw, 310px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -956,7 +956,6 @@ select {
 
 @media (max-width: 850px) {
   .dashboard-command-bar { grid-template-columns: 1fr minmax(160px, 1.2fr) auto; }
-  .dashboard-body { grid-template-columns: 220px minmax(0, 1fr); }
   .history-controls { gap: 6px; }
   .dashboard-search { width: 45%; }
   .history-table-header,
@@ -971,7 +970,6 @@ select {
   .command-cluster .dashboard-command:nth-child(4),
   .command-cluster-right { display: none; }
   .dashboard-command { min-width: 44px; height: 43px; padding: 2px 5px; }
-  .dashboard-body { grid-template-columns: 175px minmax(0, 1fr); }
   .dashboard-main { grid-template-rows: 42px minmax(190px, 43%) minmax(210px, 1fr); }
   .history-controls select { min-width: 105px; }
   .dashboard-search { width: auto; flex: 1; }
@@ -1253,7 +1251,7 @@ body {
 }
 
 .dashboard-body {
-  grid-template-columns: clamp(230px, 19.4vw, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dashboard-sidebar {
@@ -2035,7 +2033,6 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   .dashboard-command { padding: 0 11px; }
   .dashboard-command-sync { width: 36px; min-width: 36px; padding: 0; }
   .dashboard-command-sync .command-label { display: none; }
-  .dashboard-body { grid-template-columns: 248px minmax(0, 1fr); }
   .history-table-header,
   .history-row { grid-template-columns: var(--graph-width) minmax(245px, 1fr) 125px 98px 68px; gap: 8px; }
   .history-region { --history-horizontal-padding: 12px; }
@@ -2047,7 +2044,6 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   .command-cluster-right { display: flex; gap: 6px; }
   /* Refresh/Fetch/Pull/Push/Sync stay available as compact icon buttons. */
   .dashboard-remote-actions .dashboard-command { min-width: 34px; padding: 0 8px; }
-  .dashboard-body { grid-template-columns: 190px minmax(0, 1fr); }
   .dashboard-main { grid-template-rows: 50px minmax(140px, 40%) 6px minmax(160px, 1fr); }
   .dashboard-command-secondary { width: 38px; min-width: 38px; padding: 0; }
   .dashboard-command-secondary .command-label { display: none; }
@@ -2746,3 +2742,20 @@ body.review-tab.review-expanded .dashboard-main > #historyDiffSplitter { display
 
 /* Old history stays while the new one loads: dimmed and not clickable (it may be another repository). */
 #dashboardHistory.history-stale { opacity: .5; pointer-events: none; transition: opacity .12s ease; }
+
+/* The repository and branch list lives in VS Code's Side Bar (sidebar.js). The dashboard keeps
+   rendering it, hidden, as the source of the Side Bar's copy. */
+.dashboard-shell .dashboard-sidebar { display: none; }
+
+body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-background, var(--bg-secondary)); }
+.sidebar-view .dashboard-sidebar {
+  box-sizing: border-box;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 8px 8px 10px;
+  background: transparent;
+  border-right: 0;
+}
+.sidebar-view .repo-copy strong,
+.sidebar-view .repo-copy code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-closed { display: grid; gap: 10px; padding: 12px 4px; }
