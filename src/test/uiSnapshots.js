@@ -374,7 +374,7 @@ async function main() {
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
     assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
-      ['Load models', 'Summarize changes', 'Review changes', 'Review branch']);
+      ['Summarize changes', 'Review changes', 'Review branch']);
     await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
     assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
@@ -804,6 +804,55 @@ async function main() {
     }
     await snap(light, '14-light-theme');
     await light.close();
+
+    // Navigation: Ctrl+click compares, the model list loads on first open, switching keeps the old
+    // rows dimmed until the new ones arrive, and scrolling to the end asks for the next page.
+    const nav = await openPage(1440, 900);
+    const rows = nav.locator('.history-row');
+    const [olderHash, newerHash] = [await rows.nth(1).getAttribute('data-commit'), await rows.nth(0).getAttribute('data-commit')];
+    await rows.nth(1).click({ modifiers: ['Control'] });
+    await rows.nth(0).click({ modifiers: ['Shift'] });
+    await nav.waitForFunction(() => /Compare/.test(document.getElementById('dashboardCommitSummary').textContent));
+    assert.deepEqual([await nav.getAttribute(`.graph-node-control[data-commit="${olderHash}"]`, 'data-marker'),
+      await nav.getAttribute(`.graph-node-control[data-commit="${newerHash}"]`, 'data-marker')], ['B', 'T']);
+    await nav.click('[data-action="clearCommitComparison"]');
+    await nav.evaluate(() => { const toHost = window.__postToHost; window.__sent = []; window.__postToHost = m => { window.__sent.push(m); return toHost(m); }; });
+    await nav.focus('#summaryModelSelect');
+    assert.match(await nav.textContent('#summaryModelSelect option'), /loading list/);
+    assert.equal(await nav.evaluate(() => window.__sent.filter(m => m.type === 'loadSummaryModels').length), 1);
+    await nav.evaluate(() => document.getElementById('summaryModelSelect').blur());
+    await nav.focus('#summaryModelSelect');
+    assert.equal(await nav.evaluate(() => window.__sent.filter(m => m.type === 'loadSummaryModels').length), 1, 'the list loaded twice');
+    const dimmed = nav.evaluate(() => new Promise(resolve => {
+      const history = document.getElementById('dashboardHistory');
+      const seen = { stale: false, flashed: false };
+      const observer = new MutationObserver(() => {
+        if (history.classList.contains('history-stale')) seen.stale = true;
+        if (history.querySelector('.dashboard-loading')) seen.flashed = true;
+      });
+      observer.observe(history, { attributes: true, childList: true, subtree: false });
+      setTimeout(() => { observer.disconnect(); resolve(seen); }, 2500);
+    }));
+    await nav.click('.sidebar-repository-item[data-path="lib-b"]');
+    assert.deepEqual(await dimmed, { stale: true, flashed: false });
+    await nav.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor();
+    assert.equal(await nav.evaluate(() => document.getElementById('dashboardHistory').classList.contains('history-stale')), false);
+    const nextPage = await nav.evaluate(async () => {
+      const last = window.__sent.filter(m => m.type === 'getHistory').at(-1).payload;
+      const hex = n => n.toString(16).padStart(40, '0');
+      const commits = Array.from({ length: 100 }, (_, i) => ({ hash: hex(i + 1), shortHash: hex(i + 1).slice(-7), parentHashes: [hex(i + 2)],
+        authorName: 'A', authorEmail: 'a@x', authoredAt: '2025-01-15T10:00:00Z', subject: `commit ${i}`, refs: [] }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'historyLoaded', payload: { repositoryPath: last.repositoryPath,
+        requestId: last.requestId, offset: 0, commits, nextOffset: 100, upstream: null } } }));
+      const history = document.getElementById('dashboardHistory');
+      history.scrollTop = history.scrollHeight;
+      await new Promise(r => setTimeout(r, 200));
+      history.dispatchEvent(new Event('scroll'));
+      await new Promise(r => setTimeout(r, 50));
+      return window.__sent.filter(m => m.type === 'getHistory' && m.payload.append).map(m => m.payload.offset);
+    });
+    assert.deepEqual(nextPage, [100], 'scrolling to the end did not ask for exactly one next page');
+    await nav.close();
 
     for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
       const narrow = await openPage(width, 700);

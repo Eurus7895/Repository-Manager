@@ -2743,3 +2743,6 @@ body.review-tab.review-expanded .dashboard-main > .history-controls,
 body.review-tab.review-expanded .dashboard-main > .history-region,
 body.review-tab.review-expanded .dashboard-main > #historyDiffSplitter { display: none; }
 #expandReviewButton[aria-pressed="true"] { border-color: var(--accent); }
+
+/* Old history stays while the new one loads: dimmed and not clickable (it may be another repository). */
+#dashboardHistory.history-stale { opacity: .5; pointer-events: none; transition: opacity .12s ease; }

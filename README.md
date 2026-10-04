@@ -17,6 +17,8 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Filter history by branch, include remote refs, or search by author, hash, message, and ref; these filters are remembered per repository.
 - Review the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
+- Compare two commits: Ctrl+click (Cmd+click on macOS) or Shift+click a second history row, or click the graph nodes. Scrolling to the end loads more history.
+- The dashboard follows your VS Code colour theme, light, dark or high contrast.
 - Filter history from the dashboard branch list or selector; both controls stay synchronized and highlight the selected branch.
 - Expand tags, remotes, and stashes to inspect hashes, timestamps, subjects, and remote URLs; tags and stashes can open their history directly.
 - Switch between workspace folders in multi-root VS Code workspaces.
@@ -45,7 +47,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - **◈ Release › Load range** loads the changes since the latest release tag (`1.5.0` or `v1.5.0`) on the current branch into the dashboard; then summarize or review them from the toolbar.
 - One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
 - A progress view shows the component being reviewed, files done and elapsed time. The review runs in the background: switch repository, folder or tab while it continues, and follow its percentage on the Review tab.
-- Results are classified as blocked, needs attention, or no blocking findings. Mark each finding **Needs fix**, **Dismiss** with a reason, or **Fixed**; dismissed and fixed findings no longer count toward readiness but stay in the report, each in its own section.
+- Results are classified as blocked, needs attention, or no blocking findings; what the review could not establish (no policy, an unresolved rule, incomplete coverage) is listed apart as **Review gaps**. **Expand** gives the Review tab the whole dashboard. Mark each finding **Needs fix**, **Dismiss** with a reason, or **Fixed**; dismissed and fixed findings no longer count toward readiness but stay in the report, each in its own section.
 - **Fix with Copilot** proposes edits for the findings marked Needs fix, showing each step while it works (checking the files, what is sent, how much of the reply has arrived). You see the diff of each file first, with the findings it fixes; **Apply all** writes every file, or untick files and **Apply selected**, which leaves the rest proposed. Nothing is staged or committed. Findings whose edits were all applied move to **Fixed**. It needs the reviewed commit checked out and the cited files unchanged.
 - Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
 - Completed reviews are saved under **Past reviews** in the Review tab, newest first: the last 20 per repository, with your triage and the exact commits each one reviewed. Open one later (also after restarting VS Code) to check its findings, export it, or fix it; delete the ones you no longer need. They are kept in VS Code's workspace state on this machine, never in the repository.
@@ -108,7 +110,7 @@ Press `F5` in VS Code to launch an Extension Development Host.
 
 ### Synchronize recorded versions
 
-Select **Sync Versions** to restore linked repositories to the commits recorded by the parent repository. To reset one repository, use **Reset to recorded** on its row in the Repositories list.
+Select **Align** to restore linked repositories to the commits recorded by the parent repository. To reset one repository, use **Reset to recorded** on its row in the Repositories list.
 
 ## Configuration
 
