@@ -678,8 +678,7 @@
       document.getElementById('reviewBranchModal').classList.remove('active');
     },
 
-    // Every entry point offers the same two choices and starts at once: "changes" reviews the
-    // diff Base → Target, "branch" reviews every file at Target.
+    // Reviews start at once: "changes" reviews the diff Base → Target, "branch" every file at Target.
     reviewRelease: () => startReview({ kind: 'release', scope: 'branch' }),
     loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
@@ -687,18 +686,14 @@
       showReleaseStatus('Release: finding the latest release tag…');
       postMessage('resolveReleaseRange', { requestId: releaseRange.requestId, repositoryPath: activeDashboardRepository });
     },
-    // Review what the detail pane shows: the selected commit against its parent, or the loaded comparison.
-    reviewSelection: (el) => {
+    // Review the changes the detail pane shows: the selected commit against its parent, or the
+    // loaded comparison from Base to Target. Every file is reviewed from Release › Review branch.
+    reviewSelection: () => {
       if (!changeSummarySelection) return;
       const { baseSha, targetSha } = changeSummarySelection;
       const labels = comparisonLabels || {};
-      if (el.dataset.scope === 'branch') {
-        startReview({ scope: 'branch', target: targetSha, targetLabel: labels.target });
-      } else {
-        // A single commit is reviewed against its parent; a comparison from Base to Target.
-        startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
-          baseLabel: labels.base, targetLabel: labels.target });
-      }
+      startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
+        baseLabel: labels.base, targetLabel: labels.target });
     },
 
 

@@ -374,7 +374,7 @@ async function main() {
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
     assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
-      ['Summarize changes', 'Review changes', 'Review branch']);
+      ['Summarize changes', 'Review changes']);
     await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
     assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
@@ -402,7 +402,7 @@ async function main() {
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    // Every entry point offers "Review changes" and "Review branch"; one click starts, no dialog.
+    // Reviews start with one click, without a dialog.
     assert.equal(await page.locator('.review-release-group button').count(), 2);
     assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
     // The consent question is held open so the header can be checked while it waits.
@@ -581,11 +581,13 @@ async function main() {
     await page.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
     assert.equal(await page.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
+    // Every file is reviewed from one place only: Release › Review branch, at the current branch.
     await page.click('#detailTabChanges');
-    await page.click('#reviewSelectionBranchButton');
+    assert.equal(await page.locator('.change-summary-toolbar [data-scope="branch"]').count(), 0, 'the toolbar still has a branch review');
+    await page.click('.review-release-group [data-action="reviewRelease"]');
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Branch: '));
     for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
-    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['branch', undefined, targetHash]);
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['branch', undefined]);
     assert.deepEqual(runs.at(-1).categories, ['security', 'compliance']);
     // Compare branches: a review of that comparison keeps the branch names, not the resolved hashes.
     await page.click('#detailTabChanges');

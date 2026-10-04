@@ -5,6 +5,12 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - Unreleased
+
+### Changed
+
+- The toolbar above the changed files no longer has its own **Review branch**. It reviewed every file at the selected commit under the same name as **◈ Release › Review branch**, which reviews the current branch. Every file is now reviewed from ◈ Release › Review branch, or at any commit from the history right-click menu.
+
 ## [1.9.0] - 2026-10-04
 
 ### Changed
