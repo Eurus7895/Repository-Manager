@@ -7,6 +7,20 @@ export const RELEASE_TAG = /^v?(\d+)\.(\d+)\.(\d+)$/;
  * Versions are compared as numbers here: Git's `v:refname` sort orders `v1.9.0` above `1.10.0`
  * because it compares the `v` prefix as text.
  */
+/**
+ * The default branch to measure the current branch against: the remote's HEAD (origin/main), else a
+ * local or remote main/master. Returns undefined when none exists.
+ */
+export async function resolveDefaultBranch(git: GitCommandService, root: string): Promise<string | undefined> {
+  const remoteHead = (await git.execGit(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], root, 10000).catch(() => '')).trim();
+  for (const candidate of [remoteHead, 'main', 'master', 'origin/main', 'origin/master']) {
+    if (!candidate) { continue; }
+    const exists = await git.execGit(['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`], root, 10000).then(() => true, () => false);
+    if (exists) { return candidate; }
+  }
+  return undefined;
+}
+
 export async function resolveReleaseRange(git: GitCommandService, root: string): Promise<{ currentBranch: string; latestReleaseTag?: string }> {
   // A detached HEAD makes symbolic-ref fail, which is expected; any other Git failure (listing
   // tags) propagates, so it is not reported as "no release tag".

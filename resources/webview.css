@@ -2661,8 +2661,8 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-entry button { padding: 0 8px; color: var(--text-secondary); background: var(--bg-tertiary); font: inherit; cursor: pointer; }
 .review-entry button:hover { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
 .review-entry button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.review-release-group { align-items: stretch; height: 30px; font-size: 12px; }
-.review-release-group > * { display: block; line-height: 28px; }
+.review-release-group, .review-current-group { align-items: stretch; height: 30px; font-size: 12px; }
+.review-release-group > *, .review-current-group > * { display: block; line-height: 28px; }
 .review-entry-label { padding: 0 8px; color: var(--text-muted); }
 /* Compact: "◈ | Changes | Whole"; the buttons' titles still say what each one reviews. */
 @media (max-width: 1100px) {

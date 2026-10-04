@@ -43,7 +43,11 @@ Its primary focus is repository and branch workflow management: inspect reposito
 
 ### Security and compliance review
 
-- The toolbar above the changed files acts on what the dashboard shows (a selected commit, a Base/Target selection, a branch comparison or the release range): **Summarize changes** (AI summary), and **Review changes** (security review of the diff; a single commit against its parent). **◈ Release › Review branch** reviews every file on the current branch, and the history right-click menu reviews one commit or every file at it.
+- Three reviews, by what they cover:
+  - **Review commit**, in the toolbar above the changed files, reviews what the dashboard shows: the selected commit against its parent, or a Base/Target selection, branch comparison or the release range. **Summarize changes** sits next to it.
+  - **Review branch**, at the top, reviews what the current branch adds: the committed changes since it left the default branch (`origin/HEAD`, else `main` or `master`), as a pull request shows them.
+  - **Review all**, next to it, reviews every committed file at the tip of the current branch.
+  - Reviews read commits only, never uncommitted changes. The history right-click menu reviews any commit, or every file at it.
 - **◈ Release › Load range** loads the changes since the latest release tag (`1.5.0` or `v1.5.0`) on the current branch into the dashboard; then summarize or review them from the toolbar.
 - One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
 - A progress view shows the component being reviewed, files done and elapsed time. The review runs in the background: switch repository, folder or tab while it continues, and follow its percentage on the Review tab.

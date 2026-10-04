@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The toolbar above the changed files no longer has its own **Review branch**. It reviewed every file at the selected commit under the same name as **◈ Release › Review branch**, which reviews the current branch. Every file is now reviewed from ◈ Release › Review branch, or at any commit from the history right-click menu.
+- Reviews are split by what they cover, so no two buttons share a name:
+  - **Review commit** (the toolbar above the changed files, formerly Review changes) reviews the selected commit or the loaded comparison.
+  - **Review branch** (new, at the top) reviews what the current branch adds since it left the default branch, as a pull request shows it.
+  - **Review all** (at the top, formerly ◈ Release › Review branch) reviews every committed file at the tip of the current branch.
+- The toolbar no longer has its own Review branch, which reviewed every file at the selected commit under the same name as the one at the top.
+- Tooltips say that reviews read committed files only.
 
 ## [1.9.0] - 2026-10-04
 

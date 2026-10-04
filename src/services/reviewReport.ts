@@ -44,7 +44,7 @@ export const DISMISS_REASONS: Record<DismissReason, string> = {
 /* eslint-enable @typescript-eslint/naming-convention */
 
 export interface ReviewReportContext {
-  /** 'release' for a release-range review. */
+  /** 'release' for a review of the current branch (Review branch or Review all). */
   kind: 'review' | 'release';
   repositoryName: string;
   /** What the user picked, e.g. a tag or branch name; the resolved SHAs come from the result. */
@@ -188,7 +188,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   const range = request.scope === 'changes'
     ? `${code(context.baseLabel || short(request.baseSha) || 'parent')} (${short(request.baseSha) || 'root'}) → ${code(context.targetLabel)} (${short(request.targetSha)})`
     : `Every file at ${code(context.targetLabel)} (${short(request.targetSha)})`;
-  const title = `${context.kind === 'release' ? 'Release review' : 'Security and compliance review'} — ${request.scope === 'changes'
+  const title = `${context.kind === 'release' ? 'Current branch review' : 'Security and compliance review'} — ${request.scope === 'changes'
     ? `Diff: ${context.baseLabel || short(request.baseSha) || 'parent'} → ${context.targetLabel}`
     : `Branch: ${context.targetLabel}`}`;
   const findingsById = new Map(result.findings.map(finding => [finding.id, finding]));

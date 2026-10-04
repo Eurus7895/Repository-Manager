@@ -10,7 +10,7 @@ import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } fro
 import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
-import { resolveReleaseRange } from './services/releaseRange';
+import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewHistoryStore, summarize } from './reviewHistory';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
@@ -134,10 +134,11 @@ export class ReviewController {
     const scope = payload.scope;
     const kind: 'review' | 'release' = payload.kind === 'release' ? 'release' : 'review';
     let targetRevision = optionalString(payload.targetRevision);
-    const baseRevision = optionalString(payload.baseRevision);
-    // A release review covers the whole current branch; the release diff is summarized instead.
+    let baseRevision = optionalString(payload.baseRevision);
+    // A current-branch review ('release') names no revisions: it covers what the current branch adds
+    // ('changes') or every file at its tip ('branch'). Any other review names its target.
     if (typeof requestId !== 'number' || !repositoryPath || (scope !== 'changes' && scope !== 'branch') ||
-        (kind === 'release' ? scope !== 'branch' : !targetRevision)) {
+        (kind === 'release' ? Boolean(targetRevision || baseRevision) : !targetRevision)) {
       return;
     }
     this.cancel();
@@ -156,8 +157,28 @@ export class ReviewController {
     const git = this.git(workspaceRoot);
     const root = git.resolveRepositoryPath(repositoryPath);
     const repositoryName = path.basename(root);
-    if (kind === 'release' && !targetRevision) {
+    let branchBaseLabel: string | undefined;
+    if (kind === 'release') {
       targetRevision = (await resolveReleaseRange(git, root)).currentBranch;
+      if (scope === 'changes') {
+        // What the branch adds: the diff from where it left the default branch, as a pull request shows it.
+        const defaultBranch = await resolveDefaultBranch(git, root);
+        const forkPoint = defaultBranch
+          ? await git.execGit(['merge-base', defaultBranch, targetRevision], root, 10000).catch(() => '')
+          : '';
+        if (!forkPoint) {
+          await reply('reviewFailed', { message: defaultBranch
+            ? `${targetRevision} shares no history with ${defaultBranch}: use Review all instead.`
+            : 'No default branch (main or master) to compare the current branch with: use Review all instead.' });
+          return;
+        }
+        if (forkPoint === await git.execGit(['rev-parse', `${targetRevision}^{commit}`], root, 10000)) {
+          await reply('reviewFailed', { message: `Nothing to review: ${targetRevision} has no commits that ${defaultBranch} does not have.` });
+          return;
+        }
+        baseRevision = forkPoint;
+        branchBaseLabel = `${defaultBranch} (merge-base)`;
+      }
     }
     const target = targetRevision as string;
     let targetSha: string;
@@ -169,7 +190,7 @@ export class ReviewController {
       await reply('reviewFailed', { message: `Cannot resolve revision: ${error instanceof Error ? error.message : String(error)}` });
       return;
     }
-    const baseLabel = scope === 'changes' ? optionalString(payload.baseLabel) || baseRevision : undefined;
+    const baseLabel = scope === 'changes' ? branchBaseLabel || optionalString(payload.baseLabel) || baseRevision : undefined;
     const targetLabel = optionalString(payload.targetLabel) || target;
     const needsConsent = this.host.alwaysConfirm() || !this.host.isConsentRemembered(root);
     await reply('reviewProgress', { message: needsConsent ? 'Waiting for confirmation…' : 'Planning the review…', baseLabel, targetLabel });

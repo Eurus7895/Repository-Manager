@@ -679,7 +679,8 @@
     },
 
     // Reviews start at once: "changes" reviews the diff Base → Target, "branch" every file at Target.
-    reviewRelease: () => startReview({ kind: 'release', scope: 'branch' }),
+    // The current branch: what it adds since the default branch ('changes'), or every file at its tip.
+    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' }),
     loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
       releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
@@ -2991,7 +2992,7 @@
     const label = reviewState.scope === 'changes'
       ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
       : `Branch: ${target}`;
-    title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
+    title.textContent = reviewState.kind === 'release' ? 'Current branch review' : 'Review';
     // Name the repository when the dashboard has moved on to another one (or another folder).
     const request = reviewState.result && reviewState.result.request;
     // The exact commits, unless the label already is them (a Base/Target selection of plain commits).
