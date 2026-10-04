@@ -21,7 +21,10 @@ export interface ReadinessItem {
 export interface ReviewReadiness {
   status: ReadinessStatus;
   blocking: ReadinessItem[];
+  /** Findings that need a look without blocking (hypotheses, verified medium and low). */
   attention: ReadinessItem[];
+  /** What the review could not establish: unconfigured policy, unresolved rules, incomplete coverage. */
+  gaps: ReadinessItem[];
   /** Findings the reviewer dismissed; they no longer count toward readiness, but stay on record. */
   dismissed: ReadinessItem[];
   /** Findings fixed (by an applied auto-fix or by hand); like dismissed ones, out of readiness but on record. */
@@ -96,6 +99,7 @@ export function normalizeTriage(result: ReviewResult, triage: unknown): ReviewTr
 export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {}): ReviewReadiness {
   const blocking: ReadinessItem[] = [];
   const attention: ReadinessItem[] = [];
+  const gaps: ReadinessItem[] = [];
   const dismissed: ReadinessItem[] = [];
   const fixed: ReadinessItem[] = [];
   let toFix = 0;
@@ -121,24 +125,25 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
     if (policy.status === 'violation') {
       blocking.push({ kind: 'policy', ruleId: policy.ruleId, title: `Policy violation: ${policy.ruleId}`, detail: policy.reason });
     } else if (policy.status === 'insufficient_evidence') {
-      attention.push({ kind: 'policy', ruleId: policy.ruleId, title: `Not established: ${policy.ruleId}`, detail: policy.reason });
+      gaps.push({ kind: 'policy', ruleId: policy.ruleId, title: `Not established: ${policy.ruleId}`, detail: policy.reason });
     }
   }
   if (result.request.categories.includes('compliance') && result.policyStatus === 'not_configured') {
-    attention.push({ kind: 'policy', title: 'Compliance policy is not configured',
+    gaps.push({ kind: 'policy', title: 'Compliance policy is not configured',
       detail: 'Add .repository-manager/review-policy.json at the reviewed revision to check team rules.' });
   }
   if (!result.coverage.complete) {
     const { surveyed, analyzed, skipped, failed } = result.coverage;
-    attention.push({ kind: 'coverage', title: 'Review coverage is incomplete',
+    gaps.push({ kind: 'coverage', title: 'Review coverage is incomplete',
       detail: `${analyzed} of ${surveyed} files analyzed; ${skipped.length} skipped, ${failed.length} failed checks.` });
   }
   blocking.sort(bySeverity);
   attention.sort(bySeverity);
   dismissed.sort(bySeverity);
   fixed.sort(bySeverity);
-  const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length ? 'needs_attention' : 'no_blocking_findings';
-  return { status, blocking, attention, dismissed, fixed, toFix, untriaged };
+  // A gap still keeps a review from looking clean: what was not checked is not a pass.
+  const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length || gaps.length ? 'needs_attention' : 'no_blocking_findings';
+  return { status, blocking, attention, gaps, dismissed, fixed, toFix, untriaged };
 }
 
 export function readinessLabel(status: ReadinessStatus): string {
@@ -199,7 +204,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     `| Model | ${cell(result.modelId || 'n/a')} |`,
     `| Generated | ${context.generatedAt.toISOString()} |`,
     '',
-    `**Readiness: ${readinessLabel(readiness.status)}** (${readiness.blocking.length} blocking, ${readiness.attention.length} needing attention)`,
+    `**Readiness: ${readinessLabel(readiness.status)}** (${readiness.blocking.length} blocking, ${readiness.attention.length} needing attention, ${readiness.gaps.length} review gaps)`,
     '',
     `Triage: ${readiness.toFix} marked to fix, ${readiness.fixed.length} fixed, ${readiness.dismissed.length} dismissed, ${readiness.untriaged} not triaged.`,
     '',
@@ -220,6 +225,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   };
   section('Blocking', readiness.blocking);
   section('Needs attention', readiness.attention);
+  if (readiness.gaps.length) { section('Review gaps', readiness.gaps); }
   if (readiness.fixed.length) { section('Fixed', readiness.fixed); }
   if (readiness.dismissed.length) { section('Dismissed by reviewer', readiness.dismissed); }
   if (result.policyResults.length) {

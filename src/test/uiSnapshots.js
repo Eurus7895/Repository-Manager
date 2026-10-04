@@ -460,6 +460,10 @@ async function main() {
     assert.equal(await page.getAttribute('.review-release-group [data-action="reviewRelease"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
+    // Review gaps (here: no compliance policy) are their own section, apart from the findings.
+    assert.match(await page.textContent('.review-gaps-section'), /Compliance policy is not configured/);
+    assert.equal(await page.locator('.review-gaps-section .review-finding').count(), 0, 'a finding is listed as a gap');
+    assert.equal(await page.locator('.review-body').getByText('Advisory', { exact: false }).count(), 1, 'the advisory note repeats');
     assert.match(blocking, /Changed line passes input to eval/);
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);

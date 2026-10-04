@@ -2960,7 +2960,9 @@
     status.textContent = result.modelId ? `Model ${result.modelId}` : '';
     const banner = {
       blocked: `Blocked: ${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`,
-      needs_attention: `Needs attention: ${readiness.attention.length} item${readiness.attention.length === 1 ? '' : 's'}`,
+      // Findings and review gaps are counted apart: "5 items" hid that 2 of them were not findings.
+      needs_attention: `Needs attention: ${[readiness.attention.length ? `${readiness.attention.length} finding${readiness.attention.length === 1 ? '' : 's'}` : '',
+        (readiness.gaps || []).length ? `${readiness.gaps.length} review gap${readiness.gaps.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}`,
       no_blocking_findings: 'No blocking findings in what was reviewed'
     }[readiness.status];
     const coverage = result.coverage;
@@ -2972,17 +2974,19 @@
     const triageBar = findings.length
       ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
       : '';
-    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
+    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${triageBar}
       ${renderFixPanel()}
       <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
       <section class="review-attention"><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${(readiness.gaps || []).length ? `<section class="review-gaps-section"><h4>Review gaps</h4><p class="review-gaps-note">What this review could not establish. Not findings, but not passes either.</p>${renderReviewItems(readiness.gaps, findings)}</section>` : ''}
       ${(readiness.fixed || []).length ? `<section class="review-fixed"><h4>Fixed</h4>${renderReviewItems(readiness.fixed, findings)}</section>` : ''}
       ${(readiness.dismissed || []).length ? `<section class="review-dismissed"><h4>Dismissed by you</h4>${renderReviewItems(readiness.dismissed, findings)}</section>` : ''}
       ${policy}
       <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
-      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}`;
+      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
+      <p class="review-advisory">Advisory: verified findings passed mechanical evidence checks and a second AI assessment. No findings does not mean no vulnerabilities.</p>`;
     tickFixClock();
   }
 
