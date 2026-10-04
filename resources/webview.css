@@ -2734,3 +2734,12 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .branch-depth-4 { padding-left: 48px; }
 .branch-depth-5 { padding-left: 60px; }
 .branch-depth-6 { padding-left: 72px; }
+
+/* The Review tab: the commit header and summary toolbar belong to Changes; Expand hides the history too. */
+body.review-tab #dashboardCommitSummary,
+body.review-tab #changeSummary { display: none; }
+body.review-tab.review-expanded .dashboard-main { grid-template-rows: minmax(0, 1fr) !important; }
+body.review-tab.review-expanded .dashboard-main > .history-controls,
+body.review-tab.review-expanded .dashboard-main > .history-region,
+body.review-tab.review-expanded .dashboard-main > #historyDiffSplitter { display: none; }
+#expandReviewButton[aria-pressed="true"] { border-color: var(--accent); }

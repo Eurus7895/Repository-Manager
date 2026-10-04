@@ -30,6 +30,8 @@
   let pendingBranchCheckout = null;
   let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
+  // The Review tab can take the whole dashboard (history hidden); remembered across reloads.
+  let reviewExpanded = Boolean(previousState.reviewExpanded);
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
   let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
@@ -222,6 +224,7 @@
       comparisonRepository,
       dashboardHistoryState,
       historyPanelHeight,
+      reviewExpanded,
       filesPanelWidth,
       historyColumnWidths
     });
@@ -702,6 +705,11 @@
       startReview({ scope: 'branch', target: historyContextTarget.hash });
     },
 
+    toggleReviewExpanded: () => {
+      reviewExpanded = !reviewExpanded;
+      applyReviewExpanded();
+      saveState();
+    },
     cancelReview: () => postMessage('cancelReview', {}),
 
     openStoredReview: (el) => {
@@ -2656,8 +2664,21 @@
     });
   }
 
+  function applyReviewExpanded() {
+    if (document.body && document.body.classList) document.body.classList.toggle('review-expanded', reviewExpanded);
+    const button = document.getElementById('expandReviewButton');
+    if (button) {
+      button.setAttribute('aria-pressed', String(reviewExpanded));
+      button.textContent = reviewExpanded ? 'Collapse' : 'Expand';
+      button.title = reviewExpanded ? 'Show the history again' : 'Give the review the whole dashboard';
+    }
+  }
+
   function showDetailTab(tab) {
     const review = tab === 'review';
+    // On the Review tab the commit header and its summary toolbar make room for the review.
+    if (document.body && document.body.classList) document.body.classList.toggle('review-tab', review);
+    applyReviewExpanded();
     const panel = document.getElementById('reviewPanel');
     const content = document.getElementById('commitContent');
     if (panel) panel.hidden = !review;

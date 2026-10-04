@@ -346,6 +346,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
                 <div class="review-title"><strong id="reviewTitle">Review</strong><span id="reviewMeta"></span></div>
                 <div class="review-actions">
                   <span class="review-status" id="reviewStatus" role="status" aria-live="polite"></span>
+                  <button type="button" class="btn" data-action="toggleReviewExpanded" id="expandReviewButton" aria-pressed="false" title="Give the review the whole dashboard">Expand</button>
                   <button type="button" class="btn" data-action="cancelReview" id="cancelReviewButton" hidden>Cancel</button>
                   <button type="button" class="btn" data-action="exportReview" data-format="copy" id="copyReviewButton" hidden>Copy Markdown</button>
                   <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>

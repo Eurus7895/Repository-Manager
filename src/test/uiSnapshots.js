@@ -468,6 +468,17 @@ async function main() {
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);
     await snap(page, '10-review-results');
+    // The Review tab drops the commit header and summary toolbar; Expand also hides the history.
+    assert.equal(await page.isVisible('#dashboardCommitSummary'), false);
+    const reviewHeight = () => page.evaluate(() => document.getElementById('reviewPanel').getBoundingClientRect().height);
+    const compact = await reviewHeight();
+    await page.click('#expandReviewButton');
+    assert.equal(await page.isVisible('.history-region'), false, 'Expand left the history on screen');
+    assert.ok(await reviewHeight() > compact + 200, `the expanded review is only ${await reviewHeight()}px tall`);
+    assert.equal(await page.textContent('#expandReviewButton'), 'Collapse');
+    await snap(page, '10d-review-expanded');
+    await page.click('#expandReviewButton');
+    await page.locator('.history-region').waitFor();
 
     // Triage: Needs fix keeps a finding in place; Dismiss moves it out of readiness, with a reason.
     assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
