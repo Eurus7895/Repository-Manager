@@ -54,6 +54,7 @@
   let selectedSummaryModelId = '';
   // Security and compliance review; declared early because rendering checks the review lock.
   let reviewRequestId = 0;
+  let historyDateFormat = null; // shared by every history row (see formatHistoryDate)
   // Release › Load range: the request resolving the range since the latest release tag.
   let releaseRange = null; // { requestId, repositoryPath }
   // Names for the ends of the loaded comparison (e.g. a release tag and a branch), for reviews of it.
@@ -1320,9 +1321,9 @@
     if (ageMs >= 0 && ageMs < 60 * 60 * 1000) return `${Math.max(1, Math.floor(ageMs / 60000))} min ago`;
     if (ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) return `${Math.floor(ageMs / 3600000)} h ago`;
     if (ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(ageMs / 86400000)} d ago`;
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short', day: '2-digit', year: 'numeric'
-    }).format(date);
+    // One formatter for every row: building an Intl.DateTimeFormat per date cost ~140 ms per 2000 rows.
+    if (!historyDateFormat) historyDateFormat = new Intl.DateTimeFormat(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
+    return historyDateFormat.format(date);
   }
 
   function renderHistoryGraph(commits, graphModel, rowHeights = []) {
@@ -1407,9 +1408,12 @@
     const loadMore = document.getElementById('loadMoreHistory');
     if (!history) return;
 
+    const renderedCount = loadedHistoryCommits.length;
+    let addedCommits = [];
     if (payload.offset > 0) {
       const knownHashes = new Set(loadedHistoryCommits.map(commit => commit.hash));
-      loadedHistoryCommits = loadedHistoryCommits.concat((payload.commits || []).filter(commit => !knownHashes.has(commit.hash)));
+      addedCommits = (payload.commits || []).filter(commit => !knownHashes.has(commit.hash));
+      loadedHistoryCommits = loadedHistoryCommits.concat(addedCommits);
     } else {
       loadedHistoryCommits = payload.commits || [];
       loadedHistoryUpstream = typeof payload.upstream === 'string' ? payload.upstream : null;
@@ -1420,7 +1424,7 @@
     const historyRegion = history.closest('.history-region');
     historyGraphWidth = graphModel.width;
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
-    const rows = loadedHistoryCommits.map((commit, index) => {
+    const renderRows = commits => commits.map(commit => {
       const refs = renderHistoryRefs(commit.refs, true);
       return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}" tabindex="0">
         ${renderGraphCell()}
@@ -1432,10 +1436,21 @@
     }).join('');
 
     const append = payload.offset > 0;
-    history.innerHTML = rows
-      ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
-      : '<div class="dashboard-empty">No commits match this view.</div>';
+    // Column widths read the current layout, so they are set before the rows change: reading it
+    // after writing 2000 rows forced a full layout right away (~160 ms).
     applyHistoryColumnWidths(historyColumnWidths);
+    const content = history.querySelector('.history-table-content');
+    if (append && content && content.querySelectorAll('.history-row').length === renderedCount) {
+      // Load more adds only the new rows; the graph is redrawn once, from the rows' real heights,
+      // by the geometry pass in the next frame. Re-rendering every row made each page slower.
+      if (addedCommits.length) content.insertAdjacentHTML('beforeend', renderRows(addedCommits));
+      scheduleHistoryGraphGeometry();
+    } else {
+      const rows = renderRows(loadedHistoryCommits);
+      history.innerHTML = rows
+        ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
+        : '<div class="dashboard-empty">No commits match this view.</div>';
+    }
     const viewport = pendingHistoryViewport;
     if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
       const anchor = viewport.commit
