@@ -30,6 +30,10 @@
   let pendingBranchCheckout = null;
   let pendingHistoryViewport = null;
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
+  let historyAppendPending = false; // a Load more page is on its way (also started by scrolling)
+  let summaryModelsState = 'idle'; // the Model menu's list: idle (not loaded), loading, loaded
+  // The Review tab can take the whole dashboard (history hidden); remembered across reloads.
+  let reviewExpanded = Boolean(previousState.reviewExpanded);
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
   let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
@@ -222,6 +226,7 @@
       comparisonRepository,
       dashboardHistoryState,
       historyPanelHeight,
+      reviewExpanded,
       filesPanelWidth,
       historyColumnWidths
     });
@@ -346,10 +351,12 @@
       hideHistoryContextMenu();
       actions.openCreateBranchModal(true);
     },
+    // The model list loads when the Model menu is first opened (no separate button).
     loadSummaryModels: () => {
-      const button = document.getElementById('loadSummaryModelsButton');
-      button.disabled = true;
-      button.textContent = 'Loading models…';
+      if (summaryModelsState === 'loading') return;
+      summaryModelsState = 'loading';
+      const select = document.getElementById('summaryModelSelect');
+      if (select && select.options && select.options[0]) select.options[0].textContent = 'Default Copilot model (loading list…)';
       postMessage('loadSummaryModels', {});
     },
     summarizeChanges: () => {
@@ -378,12 +385,18 @@
     fetchActiveRepository: () => runToolbarOperation('fetch', 'fetchUpdates'),
 
     loadMoreHistory: () => {
-      if (historyNextOffset !== null) requestDashboardHistory(historyNextOffset, true);
+      if (historyNextOffset !== null && !historyAppendPending) requestDashboardHistory(historyNextOffset, true);
     },
 
-    selectHistoryCommit: (el) => {
+    selectHistoryCommit: (el, event) => {
       const commitHash = el.dataset.commit;
-      if (!commitHash) return;
+      // Rows of a history being replaced may belong to the previous repository.
+      if (!commitHash || (el.closest && el.closest('.history-stale'))) return;
+      // Ctrl/Cmd-click or Shift-click picks the row for a comparison, like the graph node (as Git Graph does).
+      if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+        toggleCommitCompareNode(commitHash);
+        return;
+      }
       clearCommitComparison(false);
       loadParentCommitDetail(commitHash);
       showDetailTab('changes');
@@ -702,6 +715,11 @@
       startReview({ scope: 'branch', target: historyContextTarget.hash });
     },
 
+    toggleReviewExpanded: () => {
+      reviewExpanded = !reviewExpanded;
+      applyReviewExpanded();
+      saveState();
+    },
     cancelReview: () => postMessage('cancelReview', {}),
 
     openStoredReview: (el) => {
@@ -1046,7 +1064,7 @@
     }
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
-      ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · select a second graph node <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
+      ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · Ctrl+click a second commit <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
       : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     applyReviewLock();
   }
@@ -1228,7 +1246,7 @@
     }
 
     const history = document.getElementById('dashboardHistory');
-    if (history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    showHistoryLoading(history);
     clearCommitDetail();
     saveState();
     requestDashboardHistory(0, false);
@@ -1236,6 +1254,15 @@
     // Update the repository list (ahead/behind, changes) only when it is not fresh. It used to send
     // 'refresh', whose result reloads history and refs: opening the dashboard loaded everything twice.
     if (Date.now() - repositoryDataAt > 5000) postMessage('refreshRepositories', {});
+  }
+
+  // While new history loads, the old rows stay (dimmed, not clickable) instead of the list
+  // flashing to a loading message; with nothing shown yet, the message appears.
+  function showHistoryLoading(history) {
+    if (!history) return;
+    // inert keeps keyboard focus and Enter off the old rows too, not only the pointer.
+    if (history.querySelector('.history-row')) { history.classList.add('history-stale'); history.inert = true; }
+    else history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
   }
 
   function captureHistoryViewport(history) {
@@ -1260,7 +1287,9 @@
     captureDashboardFilters();
     const filters = getDashboardFilters(activeDashboardRepository);
     saveState();
-    if (!append && !preserveViewport && history) history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    if (!append && !preserveViewport) showHistoryLoading(history);
+    // A fresh load supersedes a page still on its way, whose reply will be dropped.
+    historyAppendPending = Boolean(append);
     if (!append) historyRequestId += 1;
     pendingHistoryViewport = viewport
       ? Object.assign({}, viewport, { requestId: historyRequestId, repositoryPath: activeDashboardRepository })
@@ -1411,6 +1440,9 @@
     const loadMore = document.getElementById('loadMoreHistory');
     if (!history) return;
 
+    history.classList.remove('history-stale');
+    history.inert = false;
+    if (payload.offset > 0) historyAppendPending = false;
     const renderedCount = loadedHistoryCommits.length;
     let addedCommits = [];
     if (payload.offset > 0) {
@@ -1429,7 +1461,7 @@
     if (historyRegion) historyRegion.style.setProperty('--graph-width', `${graphModel.width}px`);
     const renderRows = commits => commits.map(commit => {
       const refs = renderHistoryRefs(commit.refs, true);
-      return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}" tabindex="0">
+      return `<div class="history-row" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}" tabindex="0" title="Ctrl+click or Shift+click to compare">
         ${renderGraphCell()}
         <span class="history-message">${refs ? `<span class="history-refs">${refs}</span>` : ''}<button class="history-subject" type="button" data-action="selectHistoryCommit" data-commit="${escapeHtml(commit.hash)}">${escapeHtml(commit.subject)}</button></span>
         <span class="history-author" title="${escapeHtml(commit.authorEmail)}">${escapeHtml(commit.authorName)}</span>
@@ -1616,6 +1648,9 @@
     if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
     const history = document.getElementById('dashboardHistory');
     if (payload.request === 'getHistory' && history) {
+      historyAppendPending = false;
+      history.classList.remove('history-stale');
+      history.inert = false;
       history.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`;
       return;
     }
@@ -1653,7 +1688,7 @@
         const action = el.dataset.action;
         if (actions[action]) {
           e.preventDefault();
-          actions[action](el);
+          actions[action](el, e);
         }
         return;
       }
@@ -1745,17 +1780,17 @@
             cancelPendingChangeSummary();
             selectedSummaryModelId = '';
           }
+          select.innerHTML += '<option value="__reload__">↻ Reload model list</option>';
           select.value = selectedSummaryModelId;
-          const button = document.getElementById('loadSummaryModelsButton');
-          button.disabled = false;
-          button.textContent = 'Reload models';
+          summaryModelsState = 'loaded';
           restoreChangeSummary();
           break;
         }
         case 'summaryModelsError': {
-          const button = document.getElementById('loadSummaryModelsButton');
-          button.disabled = false;
-          button.textContent = 'Load models';
+          // Opening the menu again retries.
+          summaryModelsState = 'idle';
+          const select = document.getElementById('summaryModelSelect');
+          if (select && select.options && select.options[0]) select.options[0].textContent = 'Default Copilot model';
           document.getElementById('changeSummaryStatus').textContent = message.payload?.message || 'Unable to load models.';
           break;
         }
@@ -2331,10 +2366,26 @@
     });
   }
 
+  // Scrolling near the end loads the next page; the Load more button stays for keyboard use.
+  const historyList = document.getElementById('dashboardHistory');
+  if (historyList) historyList.addEventListener('scroll', function () {
+    if (historyNextOffset === null || historyAppendPending) return;
+    if (historyList.scrollTop + historyList.clientHeight >= historyList.scrollHeight - 400) actions.loadMoreHistory();
+  }, { passive: true });
+
   const dashboardSearch = document.getElementById('dashboardSearch');
   const summaryModelSelect = document.getElementById('summaryModelSelect');
   if (summaryModelSelect) {
+    const loadOnOpen = function () { if (summaryModelsState === 'idle') actions.loadSummaryModels(); };
+    summaryModelSelect.addEventListener('focus', loadOnOpen);
+    summaryModelSelect.addEventListener('mousedown', loadOnOpen);
     summaryModelSelect.addEventListener('change', function () {
+      if (summaryModelSelect.value === '__reload__') {
+        summaryModelSelect.value = selectedSummaryModelId;
+        summaryModelsState = 'idle';
+        actions.loadSummaryModels();
+        return;
+      }
       if (summaryModelSelect.value === selectedSummaryModelId) return;
       cancelPendingChangeSummary();
       selectedSummaryModelId = summaryModelSelect.value;
@@ -2656,8 +2707,21 @@
     });
   }
 
+  function applyReviewExpanded() {
+    if (document.body && document.body.classList) document.body.classList.toggle('review-expanded', reviewExpanded);
+    const button = document.getElementById('expandReviewButton');
+    if (button) {
+      button.setAttribute('aria-pressed', String(reviewExpanded));
+      button.textContent = reviewExpanded ? 'Collapse' : 'Expand';
+      button.title = reviewExpanded ? 'Show the history again' : 'Give the review the whole dashboard';
+    }
+  }
+
   function showDetailTab(tab) {
     const review = tab === 'review';
+    // On the Review tab the commit header and its summary toolbar make room for the review.
+    if (document.body && document.body.classList) document.body.classList.toggle('review-tab', review);
+    applyReviewExpanded();
     const panel = document.getElementById('reviewPanel');
     const content = document.getElementById('commitContent');
     if (panel) panel.hidden = !review;
@@ -2958,9 +3022,15 @@
     const findings = result.findings || [];
     if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
     status.textContent = result.modelId ? `Model ${result.modelId}` : '';
+    // Findings and review gaps are counted apart ("5 items" hid that 2 of them were not findings),
+    // in a blocked result too.
+    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const findingAndGapCounts = [readiness.attention.length
+      ? plural(readiness.attention.length, readiness.status === 'blocked' ? 'other finding' : 'finding') : '',
+      (readiness.gaps || []).length ? plural(readiness.gaps.length, 'review gap') : ''].filter(Boolean);
     const banner = {
-      blocked: `Blocked: ${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`,
-      needs_attention: `Needs attention: ${readiness.attention.length} item${readiness.attention.length === 1 ? '' : 's'}`,
+      blocked: `Blocked: ${[`${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`, ...findingAndGapCounts].join(' · ')}`,
+      needs_attention: `Needs attention: ${findingAndGapCounts.join(' · ')}`,
       no_blocking_findings: 'No blocking findings in what was reviewed'
     }[readiness.status];
     const coverage = result.coverage;
@@ -2972,17 +3042,19 @@
     const triageBar = findings.length
       ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
       : '';
-    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong><span>Advisory. Verified findings passed mechanical evidence checks and a second AI assessment; no findings does not mean no vulnerabilities.</span></div>
+    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${triageBar}
       ${renderFixPanel()}
       <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
       <section class="review-attention"><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      ${(readiness.gaps || []).length ? `<section class="review-gaps-section"><h4>Review gaps</h4><p class="review-gaps-note">What this review could not establish. Not findings, but not passes either.</p>${renderReviewItems(readiness.gaps, findings)}</section>` : ''}
       ${(readiness.fixed || []).length ? `<section class="review-fixed"><h4>Fixed</h4>${renderReviewItems(readiness.fixed, findings)}</section>` : ''}
       ${(readiness.dismissed || []).length ? `<section class="review-dismissed"><h4>Dismissed by you</h4>${renderReviewItems(readiness.dismissed, findings)}</section>` : ''}
       ${policy}
       <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
-      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}`;
+      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
+      <p class="review-advisory">Advisory: verified findings passed mechanical evidence checks and a second AI assessment. No findings does not mean no vulnerabilities.</p>`;
     tickFixClock();
   }
 

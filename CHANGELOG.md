@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The dashboard follows the VS Code colour theme: light, dark and high-contrast themes get their own colours instead of the fixed dark palette.
+- Review results separate findings from **Review gaps** (no policy, an unresolved rule, incomplete coverage): the banner counts each ("3 findings · 2 review gaps"), and the advisory note appears once, at the end.
+- The Review tab has more room: the commit header and summary toolbar give way to it, and **Expand** hides the history for the whole review.
+- Ctrl+click (Cmd+click) or Shift+click a history row to pick it for a comparison, as in Git Graph.
+- The Model menu loads its list when you open it, so the Load models button is gone; the list ends with **Reload model list**.
+- **Sync** is now **Align**, matching the "aligned" count of linked repositories and no longer reading like VS Code's Sync (pull and push).
+- Switching repository or filters keeps the current history dimmed until the new one arrives, instead of flashing a loading message; scrolling to the end loads more history.
 - One toolbar for what the dashboard shows: **Summarize changes**, **Review changes** and **Review branch** now sit together above the changed files and act on the selected commit or the loaded comparison. The comparison status next to the search only names the range, so it no longer pushes the search box off screen.
 - **◈ Release › Load range** replaces Release › Summarize changes, which had the same name as the toolbar button but did something else. It loads the changes since the latest release tag on the current branch; summarize or review them from the toolbar.
 

@@ -46,6 +46,14 @@ const themeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-font-
 --vscode-testing-iconPassed:#73c991;--vscode-editorWarning-foreground:#cca700;--vscode-errorForeground:#f85149;--vscode-editorInfo-foreground:#3794ff;--vscode-list-activeSelectionBackground:#04395e;--vscode-list-activeSelectionForeground:#fff;
 --vscode-list-hoverBackground:#2a2d2e;--vscode-focusBorder:#0078d4;--vscode-dropdown-background:#313131;--vscode-dropdown-foreground:#ccc;--vscode-dropdown-border:#3c3c3c;--vscode-menu-background:#1f1f1f;--vscode-menu-foreground:#ccc;--vscode-menu-border:#454545}`;
 
+// VS Code "Light Modern": the dashboard must follow a light theme too.
+const lightThemeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;--vscode-editor-font-size:12px;
+--vscode-editor-background:#ffffff;--vscode-editor-foreground:#3b3b3b;--vscode-foreground:#3b3b3b;--vscode-sideBar-background:#f8f8f8;--vscode-input-background:#ffffff;--vscode-input-foreground:#3b3b3b;--vscode-input-border:#cecece;
+--vscode-descriptionForeground:#3b3b3b;--vscode-disabledForeground:#6e6e6e;--vscode-button-background:#005fb8;--vscode-button-hoverBackground:#0258a8;--vscode-button-foreground:#ffffff;--vscode-panel-border:#e5e5e5;--vscode-panel-background:#f8f8f8;
+--vscode-editorWidget-background:#f8f8f8;--vscode-testing-iconPassed:#388a34;--vscode-editorWarning-foreground:#bf8803;--vscode-errorForeground:#f85149;--vscode-textLink-foreground:#005fb8;
+--vscode-charts-green:#388a34;--vscode-charts-yellow:#bf8803;--vscode-charts-red:#e51400;--vscode-charts-blue:#1a85ff;--vscode-charts-purple:#652d90;--vscode-charts-orange:#d18616;--vscode-list-activeSelectionBackground:#e8e8e8;--vscode-list-activeSelectionForeground:#000;
+--vscode-list-hoverBackground:#f2f2f2;--vscode-toolbar-hoverBackground:rgba(184,184,184,.31);--vscode-focusBorder:#005fb8;--vscode-dropdown-background:#ffffff;--vscode-dropdown-foreground:#3b3b3b;--vscode-dropdown-border:#cecece;--vscode-menu-background:#ffffff;--vscode-menu-foreground:#3b3b3b;--vscode-menu-border:#cecece}`;
+
 function git(cwd, ...args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
@@ -204,7 +212,8 @@ function startServer(workspace, otherFolder) {
   };
   const server = http.createServer(async (req, res) => {
     try {
-      if (req.url === '/') {
+      if (req.url === '/' || req.url === '/?theme=light') {
+        const light = req.url.endsWith('light');
         ops = new GitOperations(workspace); // every page starts in the main workspace folder
         currentRoot = workspace;
         const html = getHtmlForWebview(await listRepositories(), {
@@ -213,7 +222,8 @@ function startServer(workspace, otherFolder) {
           styleUri: resource('/resources/webview.css')
         }, [{ name: 'workspace', path: workspace, isCurrent: true }, { name: 'other', path: otherFolder, isCurrent: false }])
           .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
-          .replace('<head>', `<head><style>${themeCss}</style><script>
+          .replace('<body>', light ? '<body class="vscode-light">' : '<body>')
+          .replace('<head>', `<head><style>${light ? lightThemeCss : themeCss}</style><script>
             window.acquireVsCodeApi = () => ({
               getState() { return null; }, setState() {},
               postMessage(message) { window.__postToHost(message); }
@@ -242,11 +252,11 @@ async function main() {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
   fs.mkdirSync(outputDir, { recursive: true });
-  const openPage = async (width, height) => {
+  const openPage = async (width, height, theme) => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', error => pageErrors.push(error.message));
     await connect(page);
-    await page.goto(url);
+    await page.goto(theme === 'light' ? `${url}?theme=light` : url);
     await page.locator('.history-row').first().waitFor();
     return page;
   };
@@ -364,7 +374,7 @@ async function main() {
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
     assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
-      ['Load models', 'Summarize changes', 'Review changes', 'Review branch']);
+      ['Summarize changes', 'Review changes', 'Review branch']);
     await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
     assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
@@ -444,16 +454,33 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
     await page.click('#detailTabReview');
     await page.locator('.review-readiness.readiness-blocked').waitFor();
+    // A blocked banner still counts the other findings and the review gaps.
+    assert.equal(await page.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
     // Labels name the tag and branch; the exact commits reviewed follow them.
     const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
     assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
     assert.equal(await page.getAttribute('.review-release-group [data-action="reviewRelease"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
+    // Review gaps (here: no compliance policy) are their own section, apart from the findings.
+    assert.match(await page.textContent('.review-gaps-section'), /Compliance policy is not configured/);
+    assert.equal(await page.locator('.review-gaps-section .review-finding').count(), 0, 'a finding is listed as a gap');
+    assert.equal(await page.locator('.review-body').getByText('Advisory', { exact: false }).count(), 1, 'the advisory note repeats');
     assert.match(blocking, /Changed line passes input to eval/);
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);
     await snap(page, '10-review-results');
+    // The Review tab drops the commit header and summary toolbar; Expand also hides the history.
+    assert.equal(await page.isVisible('#dashboardCommitSummary'), false);
+    const reviewHeight = () => page.evaluate(() => document.getElementById('reviewPanel').getBoundingClientRect().height);
+    const compact = await reviewHeight();
+    await page.click('#expandReviewButton');
+    assert.equal(await page.isVisible('.history-region'), false, 'Expand left the history on screen');
+    assert.ok(await reviewHeight() > compact + 200, `the expanded review is only ${await reviewHeight()}px tall`);
+    assert.equal(await page.textContent('#expandReviewButton'), 'Collapse');
+    await snap(page, '10d-review-expanded');
+    await page.click('#expandReviewButton');
+    await page.locator('.history-region').waitFor();
 
     // Triage: Needs fix keeps a finding in place; Dismiss moves it out of readiness, with a reason.
     assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
@@ -748,6 +775,101 @@ async function main() {
     });
     assert.deepEqual(appended, { rows: 200, sameFirst: true, lastSubject: true, graphCovers: true, nodes: 200 });
     await paging.close();
+
+    // A light theme: the dashboard takes the theme's colours, and its text stays readable.
+    const light = await openPage(1440, 900, 'light');
+    await light.locator('.commit-summary-copy strong').waitFor();
+    const contrast = await light.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const ratio = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + .05) / (y + .05); };
+      // The colour shown behind an element: translucent backgrounds blended down to the first opaque one.
+      const background = element => {
+        const layers = [];
+        for (let node = element; node; node = node.parentElement) {
+          const parts = (getComputedStyle(node).backgroundColor.match(/\d+(\.\d+)?/g) || []).map(Number);
+          const alpha = parts.length > 3 ? parts[3] : 1;
+          if (alpha > 0) layers.push([parts.slice(0, 3), alpha]);
+          if (alpha >= 1) break;
+        }
+        return layers.reverse().reduce((under, [color, alpha]) => color.map((c, i) => c * alpha + under[i] * (1 - alpha)), [255, 255, 255]);
+      };
+      const check = selector => { const element = document.querySelector(selector); return element ? +ratio(rgb(getComputedStyle(element).color), background(element)).toFixed(2) : null; };
+      return { body: rgb(getComputedStyle(document.body).backgroundColor), subject: check('.history-subject'), author: check('.history-author'),
+        repository: check('.sidebar-repository-item strong'), detail: check('.commit-summary-copy strong'),
+        tag: check('.history-ref.ref-tag'), branch: check('.history-ref.ref-local-branch') };
+    });
+    assert.deepEqual(contrast.body, [255, 255, 255], 'the dashboard ignores the light theme background');
+    for (const [name, value] of Object.entries(contrast)) {
+      if (name !== 'body') assert.ok(value >= 4.5, `${name} text has contrast ${value} in a light theme`);
+    }
+    await snap(light, '14-light-theme');
+    // Dialogs take the theme's surface too (the modal kept a fixed dark background).
+    await light.click('[data-action="openCreateBranchModal"]');
+    await light.locator('#createBranchModal.active').waitFor();
+    const modalContrast = await light.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const title = document.querySelector('#createBranchModal .modal-title');
+      const surface = document.querySelector('#createBranchModal .modal');
+      const [x, y] = [luminance(rgb(getComputedStyle(title).color)), luminance(rgb(getComputedStyle(surface).backgroundColor))].sort((m, n) => n - m);
+      return +((x + .05) / (y + .05)).toFixed(2);
+    });
+    assert.ok(modalContrast >= 4.5, `the dialog title has contrast ${modalContrast} in a light theme`);
+    await light.close();
+
+    // Navigation: Ctrl+click compares, the model list loads on first open, switching keeps the old
+    // rows dimmed until the new ones arrive, and scrolling to the end asks for the next page.
+    const nav = await openPage(1440, 900);
+    const rows = nav.locator('.history-row');
+    const [olderHash, newerHash] = [await rows.nth(1).getAttribute('data-commit'), await rows.nth(0).getAttribute('data-commit')];
+    await rows.nth(1).click({ modifiers: ['Control'] });
+    await rows.nth(0).click({ modifiers: ['Shift'] });
+    await nav.waitForFunction(() => /Compare/.test(document.getElementById('dashboardCommitSummary').textContent));
+    assert.deepEqual([await nav.getAttribute(`.graph-node-control[data-commit="${olderHash}"]`, 'data-marker'),
+      await nav.getAttribute(`.graph-node-control[data-commit="${newerHash}"]`, 'data-marker')], ['B', 'T']);
+    await nav.click('[data-action="clearCommitComparison"]');
+    await nav.evaluate(() => { const toHost = window.__postToHost; window.__sent = []; window.__postToHost = m => { window.__sent.push(m); return toHost(m); }; });
+    // The Model menu is hidden until the commit detail is back; a hidden control gets no focus.
+    await nav.locator('#summaryModelSelect').waitFor({ state: 'visible' });
+    await nav.focus('#summaryModelSelect');
+    assert.match(await nav.textContent('#summaryModelSelect option'), /loading list/);
+    assert.equal(await nav.evaluate(() => window.__sent.filter(m => m.type === 'loadSummaryModels').length), 1);
+    await nav.evaluate(() => document.getElementById('summaryModelSelect').blur());
+    await nav.focus('#summaryModelSelect');
+    assert.equal(await nav.evaluate(() => window.__sent.filter(m => m.type === 'loadSummaryModels').length), 1, 'the list loaded twice');
+    const dimmed = nav.evaluate(() => new Promise(resolve => {
+      const history = document.getElementById('dashboardHistory');
+      const seen = { stale: false, flashed: false };
+      const observer = new MutationObserver(() => {
+        if (history.classList.contains('history-stale')) seen.stale = true;
+        if (history.querySelector('.dashboard-loading')) seen.flashed = true;
+      });
+      observer.observe(history, { attributes: true, childList: true, subtree: false });
+      setTimeout(() => { observer.disconnect(); resolve(seen); }, 2500);
+    }));
+    await nav.click('.sidebar-repository-item[data-path="lib-b"]');
+    assert.deepEqual(await dimmed, { stale: true, flashed: false });
+    await nav.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor();
+    assert.equal(await nav.evaluate(() => document.getElementById('dashboardHistory').classList.contains('history-stale')), false);
+    const nextPage = await nav.evaluate(async () => {
+      const last = window.__sent.filter(m => m.type === 'getHistory').at(-1).payload;
+      const hex = n => n.toString(16).padStart(40, '0');
+      const commits = Array.from({ length: 100 }, (_, i) => ({ hash: hex(i + 1), shortHash: hex(i + 1).slice(-7), parentHashes: [hex(i + 2)],
+        authorName: 'A', authorEmail: 'a@x', authoredAt: '2025-01-15T10:00:00Z', subject: `commit ${i}`, refs: [] }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'historyLoaded', payload: { repositoryPath: last.repositoryPath,
+        requestId: last.requestId, offset: 0, commits, nextOffset: 100, upstream: null } } }));
+      const history = document.getElementById('dashboardHistory');
+      history.scrollTop = history.scrollHeight;
+      await new Promise(r => setTimeout(r, 200));
+      history.dispatchEvent(new Event('scroll'));
+      await new Promise(r => setTimeout(r, 50));
+      return window.__sent.filter(m => m.type === 'getHistory' && m.payload.append).map(m => m.payload.offset);
+    });
+    assert.deepEqual(nextPage, [100], 'scrolling to the end did not ask for exactly one next page');
+    await nav.close();
 
     for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
       const narrow = await openPage(width, 700);

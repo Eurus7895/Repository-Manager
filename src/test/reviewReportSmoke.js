@@ -38,7 +38,9 @@ const mixed = assessReadiness(result({
 assert.equal(mixed.status, 'blocked');
 assert.deepEqual(mixed.blocking.map(item => item.findingId || item.ruleId), ['high-verified', 'R-1']);
 assert.equal(mixed.attention[0].findingId, 'crit-hypo');
-assert.deepEqual(mixed.attention.map(item => item.findingId || item.ruleId).sort(), ['R-2', 'crit-hypo', 'low-verified', 'med-verified']);
+// Findings and review gaps are kept apart: an unresolved rule is a gap, not a finding.
+assert.deepEqual(mixed.attention.map(item => item.findingId).sort(), ['crit-hypo', 'low-verified', 'med-verified']);
+assert.deepEqual(mixed.gaps.map(item => item.ruleId), ['R-2']);
 
 // Unconfigured compliance and incomplete coverage are never silently clean.
 const gaps = assessReadiness(result({
@@ -46,7 +48,8 @@ const gaps = assessReadiness(result({
   coverage: { surveyed: 3, analyzed: 1, skipped: [{ path: 'x', reason: 'budget' }], failed: [], complete: false }
 }));
 assert.equal(gaps.status, 'needs_attention');
-assert.deepEqual(gaps.attention.map(item => item.kind).sort(), ['coverage', 'policy']);
+assert.deepEqual(gaps.attention, []);
+assert.deepEqual(gaps.gaps.map(item => item.kind).sort(), ['coverage', 'policy']);
 
 // Markdown names the range and readiness, and escapes untrusted model text.
 const markdown = renderReviewMarkdown(result({
