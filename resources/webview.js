@@ -390,7 +390,8 @@
 
     selectHistoryCommit: (el, event) => {
       const commitHash = el.dataset.commit;
-      if (!commitHash) return;
+      // Rows of a history being replaced may belong to the previous repository.
+      if (!commitHash || (el.closest && el.closest('.history-stale'))) return;
       // Ctrl/Cmd-click or Shift-click picks the row for a comparison, like the graph node (as Git Graph does).
       if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
         toggleCommitCompareNode(commitHash);
@@ -1259,7 +1260,8 @@
   // flashing to a loading message; with nothing shown yet, the message appears.
   function showHistoryLoading(history) {
     if (!history) return;
-    if (history.querySelector('.history-row')) history.classList.add('history-stale');
+    // inert keeps keyboard focus and Enter off the old rows too, not only the pointer.
+    if (history.querySelector('.history-row')) { history.classList.add('history-stale'); history.inert = true; }
     else history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
   }
 
@@ -1286,7 +1288,8 @@
     const filters = getDashboardFilters(activeDashboardRepository);
     saveState();
     if (!append && !preserveViewport) showHistoryLoading(history);
-    if (append) historyAppendPending = true;
+    // A fresh load supersedes a page still on its way, whose reply will be dropped.
+    historyAppendPending = Boolean(append);
     if (!append) historyRequestId += 1;
     pendingHistoryViewport = viewport
       ? Object.assign({}, viewport, { requestId: historyRequestId, repositoryPath: activeDashboardRepository })
@@ -1438,6 +1441,7 @@
     if (!history) return;
 
     history.classList.remove('history-stale');
+    history.inert = false;
     if (payload.offset > 0) historyAppendPending = false;
     const renderedCount = loadedHistoryCommits.length;
     let addedCommits = [];
@@ -1646,6 +1650,7 @@
     if (payload.request === 'getHistory' && history) {
       historyAppendPending = false;
       history.classList.remove('history-stale');
+      history.inert = false;
       history.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`;
       return;
     }
@@ -3017,11 +3022,15 @@
     const findings = result.findings || [];
     if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
     status.textContent = result.modelId ? `Model ${result.modelId}` : '';
+    // Findings and review gaps are counted apart ("5 items" hid that 2 of them were not findings),
+    // in a blocked result too.
+    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const findingAndGapCounts = [readiness.attention.length
+      ? plural(readiness.attention.length, readiness.status === 'blocked' ? 'other finding' : 'finding') : '',
+      (readiness.gaps || []).length ? plural(readiness.gaps.length, 'review gap') : ''].filter(Boolean);
     const banner = {
-      blocked: `Blocked: ${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`,
-      // Findings and review gaps are counted apart: "5 items" hid that 2 of them were not findings.
-      needs_attention: `Needs attention: ${[readiness.attention.length ? `${readiness.attention.length} finding${readiness.attention.length === 1 ? '' : 's'}` : '',
-        (readiness.gaps || []).length ? `${readiness.gaps.length} review gap${readiness.gaps.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}`,
+      blocked: `Blocked: ${[`${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`, ...findingAndGapCounts].join(' · ')}`,
+      needs_attention: `Needs attention: ${findingAndGapCounts.join(' · ')}`,
       no_blocking_findings: 'No blocking findings in what was reviewed'
     }[readiness.status];
     const coverage = result.coverage;

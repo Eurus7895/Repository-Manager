@@ -65,7 +65,7 @@
       },
       {
         "command": "repositoryManager.syncVersions",
-        "title": "Sync Versions",
+        "title": "Align Linked Repositories with Recorded Commits",
         "category": "Repository Manager",
         "icon": "$(sync)"
       },

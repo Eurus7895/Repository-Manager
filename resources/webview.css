@@ -1445,12 +1445,12 @@ body {
   border: 0;
   border-radius: 5px;
   color: var(--text-secondary);
-  background: #171a20;
+  background: var(--bg-raised);
   text-align: left;
 }
 
 button.reference-detail-item { cursor: pointer; }
-button.reference-detail-item:hover { background: #222730; }
+button.reference-detail-item:hover { background: var(--bg-hover); }
 .reference-detail-item > span:first-child { color: var(--accent); text-align: center; }
 .reference-detail-copy { display: flex; flex-direction: column; min-width: 0; }
 .reference-detail-copy strong,
@@ -1903,7 +1903,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 
 .diff-addition { color: var(--tone-ok); background: rgba(86, 211, 100, .10); }
 .diff-deletion { color: var(--tone-error); background: rgba(240, 113, 120, .10); }
-.diff-hunk { color: #9cb7ff; background: rgba(139, 167, 240, .08); }
+.diff-hunk { color: var(--tone-info); background: rgba(139, 167, 240, .08); }
 .diff-meta { color: var(--text-muted); }
 
 .modal-overlay {
@@ -1916,7 +1916,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   max-height: calc(100vh - 40px);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
-  background: #1a1d23;
+  background: var(--bg-raised);
   box-shadow: 0 24px 64px rgba(0, 0, 0, .5);
 }
 
@@ -2641,7 +2641,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-badge-hypothesis, .review-badge-candidate { color: var(--tone-warn); background: rgba(229, 165, 71, .14); }
 .review-evidence-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .review-evidence {
-  padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: #a9c8f5; background: transparent;
+  padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--tone-info); background: transparent;
   font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; cursor: pointer;
 }
 .review-evidence:hover { background: var(--vscode-list-hoverBackground); }

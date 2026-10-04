@@ -454,6 +454,8 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
     await page.click('#detailTabReview');
     await page.locator('.review-readiness.readiness-blocked').waitFor();
+    // A blocked banner still counts the other findings and the review gaps.
+    assert.equal(await page.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
     // Labels name the tag and branch; the exact commits reviewed follow them.
     const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
     assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
@@ -803,6 +805,19 @@ async function main() {
       if (name !== 'body') assert.ok(value >= 4.5, `${name} text has contrast ${value} in a light theme`);
     }
     await snap(light, '14-light-theme');
+    // Dialogs take the theme's surface too (the modal kept a fixed dark background).
+    await light.click('[data-action="openCreateBranchModal"]');
+    await light.locator('#createBranchModal.active').waitFor();
+    const modalContrast = await light.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const title = document.querySelector('#createBranchModal .modal-title');
+      const surface = document.querySelector('#createBranchModal .modal');
+      const [x, y] = [luminance(rgb(getComputedStyle(title).color)), luminance(rgb(getComputedStyle(surface).backgroundColor))].sort((m, n) => n - m);
+      return +((x + .05) / (y + .05)).toFixed(2);
+    });
+    assert.ok(modalContrast >= 4.5, `the dialog title has contrast ${modalContrast} in a light theme`);
     await light.close();
 
     // Navigation: Ctrl+click compares, the model list loads on first open, switching keeps the old
@@ -817,6 +832,8 @@ async function main() {
       await nav.getAttribute(`.graph-node-control[data-commit="${newerHash}"]`, 'data-marker')], ['B', 'T']);
     await nav.click('[data-action="clearCommitComparison"]');
     await nav.evaluate(() => { const toHost = window.__postToHost; window.__sent = []; window.__postToHost = m => { window.__sent.push(m); return toHost(m); }; });
+    // The Model menu is hidden until the commit detail is back; a hidden control gets no focus.
+    await nav.locator('#summaryModelSelect').waitFor({ state: 'visible' });
     await nav.focus('#summaryModelSelect');
     assert.match(await nav.textContent('#summaryModelSelect option'), /loading list/);
     assert.equal(await nav.evaluate(() => window.__sent.filter(m => m.type === 'loadSummaryModels').length), 1);
