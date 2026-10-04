@@ -678,27 +678,23 @@
       document.getElementById('reviewBranchModal').classList.remove('active');
     },
 
-    // Every entry point offers the same two choices and starts at once: "changes" reviews the
-    // diff Base → Target, "branch" reviews every file at Target.
-    reviewRelease: () => startReview({ kind: 'release', scope: 'branch' }),
+    // Reviews start at once: "changes" reviews the diff Base → Target, "branch" every file at Target.
+    // The current branch: what it adds since the default branch ('changes'), or every file at its tip.
+    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' }),
     loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
       releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
       showReleaseStatus('Release: finding the latest release tag…');
       postMessage('resolveReleaseRange', { requestId: releaseRange.requestId, repositoryPath: activeDashboardRepository });
     },
-    // Review what the detail pane shows: the selected commit against its parent, or the loaded comparison.
-    reviewSelection: (el) => {
+    // Review the changes the detail pane shows: the selected commit against its parent, or the
+    // loaded comparison from Base to Target. Every file is reviewed from Release › Review branch.
+    reviewSelection: () => {
       if (!changeSummarySelection) return;
       const { baseSha, targetSha } = changeSummarySelection;
       const labels = comparisonLabels || {};
-      if (el.dataset.scope === 'branch') {
-        startReview({ scope: 'branch', target: targetSha, targetLabel: labels.target });
-      } else {
-        // A single commit is reviewed against its parent; a comparison from Base to Target.
-        startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
-          baseLabel: labels.base, targetLabel: labels.target });
-      }
+      startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
+        baseLabel: labels.base, targetLabel: labels.target });
     },
 
 
@@ -2996,7 +2992,7 @@
     const label = reviewState.scope === 'changes'
       ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
       : `Branch: ${target}`;
-    title.textContent = reviewState.kind === 'release' ? 'Release review' : 'Review';
+    title.textContent = reviewState.kind === 'release' ? 'Current branch review' : 'Review';
     // Name the repository when the dashboard has moved on to another one (or another folder).
     const request = reviewState.result && reviewState.result.request;
     // The exact commits, unless the label already is them (a Base/Target selection of plain commits).

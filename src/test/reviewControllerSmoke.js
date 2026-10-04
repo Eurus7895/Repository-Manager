@@ -232,22 +232,41 @@ async function main() {
     assert.equal(runs.at(-1).request.baseSha, undefined);
     assert.equal(runs.at(-1).request.scope, 'changes');
 
-    // A release review covers the current branch; the release diff is summarized, never reviewed.
+    // Review branch: what the current branch adds since it left the default branch (its merge-base).
+    const current = { kind: 'release', baseRevision: undefined, targetRevision: undefined };
+    const failure = () => of('reviewFailed').at(-1).payload.message;
+    const runsBefore = runs.length;
+    await start(20, current);
+    assert.match(failure(), /^Nothing to review: main has no commits that main does not have/);
+    git('checkout', '-q', '-b', 'topic');
+    const topic = commit('app.js', 'topic\n', 'topic work');
+    git('checkout', '-q', 'main');
+    commit('main.js', 'later\n', 'main moves on');
+    git('checkout', '-q', 'topic');
+    await start(21, current);
+    await untilRuns(runs, runsBefore + 1);
+    assert.deepEqual([runs.at(-1).request.scope, runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], ['changes', head, topic]);
+    assert.equal(of('reviewCompleted').at(-1).payload.context.baseLabel, 'main (merge-base)');
+    // A current-branch review names no revisions; one that does is ignored.
+    const beforeNamed = posts.length;
+    await start(22, { kind: 'release', baseRevision: 'main', targetRevision: undefined });
+    assert.equal(posts.length, beforeNamed, 'a current-branch review accepted a base revision');
+
+    // Review all: every file at the tip of the current branch; with no shared history, Review branch fails.
     git('checkout', '-q', '--orphan', 'fresh');
     commit('other.js', 'x\n', 'fresh start');
-    const beforeReleaseDiff = posts.length;
-    await start(12, { kind: 'release', baseRevision: undefined, targetRevision: undefined });
-    assert.equal(posts.length, beforeReleaseDiff, 'a release diff review was started');
+    await start(12, current);
+    assert.match(failure(), /^fresh shares no history with main: use Review all instead\./);
     await start(13, { kind: 'release', scope: 'branch', baseRevision: undefined, targetRevision: undefined });
     assert.deepEqual([of('reviewCompleted').at(-1).payload.context.kind, of('reviewCompleted').at(-1).payload.context.targetLabel], ['release', 'fresh']);
 
     // Every completed review was saved, newest first; deleting one relists the rest.
     const all = await list();
-    assert.equal(all.length, 6);
+    assert.equal(all.length, 7);
     assert.equal(all[0].targetLabel, 'fresh');
     await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
     const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
-    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 5]);
+    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 6]);
     assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.
