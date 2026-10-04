@@ -3,6 +3,9 @@
  */
 
 import { GitCommandService } from './gitCommandService';
+
+/** The search scanning each repository: a newer history request stops it (typing a query). */
+const activeSearches = new Map<string, AbortController>();
 import { GitRefLabel, GitRefKind, HistoryCommit, HistoryPage, HistoryQuery } from '../types';
 
 const FIELD_SEPARATOR = '\x1f';
@@ -87,9 +90,9 @@ export class HistoryService {
     const offset = clamp(query.offset, 0, 0, 100000);
     const search = query.search?.trim().toLowerCase() || '';
     const args = search
-      // A search reads the whole history, in Git's own order so the first matches arrive at once;
-      // it stops as soon as it has this page and one more match.
-      ? ['log', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`]
+      // A search reads the whole history (topological, like the graph, so no parent precedes its
+      // child) and stops as soon as it has this page and one more match.
+      ? ['log', '--topo-order', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`]
       : ['log', `--max-count=${limit + 1}`, '--topo-order', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`];
 
     if (!search && offset > 0) {
@@ -105,14 +108,27 @@ export class HistoryService {
     }
 
     let commits: HistoryCommit[];
+    // Any new history request for this repository replaces a search still scanning it.
+    activeSearches.get(repositoryRoot)?.abort();
+    activeSearches.delete(repositoryRoot);
     if (search) {
       const matches: HistoryCommit[] = [];
       const wanted = offset + limit + 1;
-      await this.gitCmd.scanGitRecords(args, repositoryRoot, RECORD_SEPARATOR, record => {
-        const [commit] = parseHistoryOutput(record);
-        if (commit && matchesSearch(commit, search)) { matches.push(commit); }
-        return matches.length >= wanted;
-      }, 30000);
+      const controller = new AbortController();
+      activeSearches.set(repositoryRoot, controller);
+      try {
+        await this.gitCmd.scanGitRecords(args, repositoryRoot, RECORD_SEPARATOR, record => {
+          // A subject containing the record separator splits its commit into malformed pieces: skip
+          // those rather than failing the search.
+          let parsed: HistoryCommit[] = [];
+          try { parsed = parseHistoryOutput(record); } catch { return false; }
+          const [commit] = parsed;
+          if (commit && matchesSearch(commit, search)) { matches.push(commit); }
+          return matches.length >= wanted;
+        }, 30000, controller.signal);
+      } finally {
+        if (activeSearches.get(repositoryRoot) === controller) { activeSearches.delete(repositoryRoot); }
+      }
       commits = matches.slice(offset);
     } else {
       commits = parseHistoryOutput(await this.gitCmd.execGitRaw(args, repositoryRoot, 15000));

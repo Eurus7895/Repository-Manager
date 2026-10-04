@@ -73,6 +73,19 @@ async function main() {
     ]);
     // The same answer for one submodule on its own (used by pull requests).
     assert.deepEqual(strip(await service.getSubmoduleInfo('libs/lib-a', 'libs/lib-a')), list[0]);
+    // A slow or failing status (here: a corrupt index) keeps the parent listed, with its state unknown.
+    const index = path.join(parent, '.git', 'index');
+    const saved = fs.readFileSync(index);
+    fs.writeFileSync(index, 'not an index');
+    const degraded = await service.getParentRepoInfo();
+    assert.deepEqual([degraded && degraded.path, degraded && degraded.status], ['.', 'unknown']);
+    fs.writeFileSync(index, saved);
+    // A submodule path Git would quote (non-ASCII) still finds its recorded commit.
+    git(parent, 'submodule', 'add', '-q', path.join(base, 'lib-a.git'), 'libs/módulo');
+    git(parent, 'commit', '-qm', 'add a library with an accented path');
+    const accented = (await service.getSubmodules()).find(item => item.path === 'libs/módulo');
+    assert.equal(accented.recordedCommit, git(parent, 'rev-parse', 'HEAD:libs/módulo').slice(0, 8));
+    assert.equal(accented.atRecordedCommit, true);
     // Not a repository at all: no parent, no submodules.
     const plain = fs.mkdtempSync(path.join(base, 'plain-'));
     const none = new SubmoduleService(new GitCommandService(plain));

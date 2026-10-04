@@ -3,7 +3,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { GitCommandService } = require('../../out/services/gitCommandService.js');
+const { GitCommandService, SupersededError } = require('../../out/services/gitCommandService.js');
 const { HistoryService } = require('../../out/services/historyService.js');
 
 const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'history-search-'));
@@ -45,6 +45,29 @@ async function main() {
     const plain = await history.getHistory({ repositoryPath: '.', limit: 50 });
     assert.equal(plain.commits.length, 50);
     assert.equal(plain.commits[0].subject, 'fix: change 2599');
+    // A subject containing the record separator does not break the search (or the extension host).
+    const entry = (message, time, from) => `commit refs/heads/odd\nauthor Dev <d@x.org> ${time} +0000\ncommitter Dev <d@x.org> ${time} +0000\n` +
+      `data ${Buffer.byteLength(message)}\n${message}\n${from ? `from ${from}\n` : ''}\n`;
+    const stream2 = entry('parent findable', 1700000000, 'refs/heads/main') +
+      // A child committed with an older date than its parent: Git's default order would list the parent first.
+      entry('child findable', 1500000000) + entry('odd \x1e subject findable', 1400000000);
+    execFileSync('git', ['fast-import', '--quiet'], { cwd: repo, env, input: stream2 });
+    // Topological order, as the graph needs: the child before its parent. The subject holding the
+    // record separator is skipped; it does not break the search (or the extension host).
+    assert.deepEqual((await search('findable', { includeRemotes: true })).commits.map(commit => commit.subject),
+      ['child findable', 'parent findable']);
+    // A newer request stops a search still scanning: Git is stopped and the old request ends as superseded.
+    const service = new GitCommandService(repo);
+    const controller = new AbortController();
+    const slow = service.scanGitRecords(['log', '--format=%H%x1e'], repo, '\x1e', () => false, 30000, controller.signal);
+    controller.abort();
+    await assert.rejects(slow, error => error instanceof SupersededError);
+    const replaced = history.getHistory({ repositoryPath: '.', limit: 100, search: 'no such commit anywhere' });
+    const replacing = history.getHistory({ repositoryPath: '.', limit: 50 });
+    await assert.rejects(replaced, error => error.name === 'SupersededError');
+    assert.equal((await replacing).commits.length, 50);
+    // An exception thrown while handling a record rejects the scan instead of escaping.
+    await assert.rejects(service.scanGitRecords(['log', '--format=%H%x1e'], repo, '\x1e', () => { throw new Error('boom'); }), /boom/);
     console.log('History search smoke passed');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

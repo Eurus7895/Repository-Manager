@@ -47,11 +47,19 @@ export class SubmoduleService {
    */
   async getParentRepoInfo(): Promise<SubmoduleInfo | null> {
     const workspaceRoot = this.gitCmd.getWorkspaceRoot();
-    const [state, remoteUrl] = await Promise.all([
+    // Whether it is a repository is asked on its own: a slow or failing status (a huge working tree,
+    // a timeout) must not make the parent disappear; its state is then just unknown.
+    const [isRepository, state, remoteUrl] = await Promise.all([
+      this.gitCmd.execGit(['rev-parse', '--git-dir']).then(() => true, () => false),
       this.readState(workspaceRoot, true).catch(() => null),
       this.gitCmd.execGit(['remote', 'get-url', 'origin']).catch(() => '')
     ]);
-    if (!state) { return null; }
+    if (!isRepository) { return null; }
+    if (!state) {
+      const name = remoteUrl.match(/\/([^/]+?)(\.git)?$/)?.[1] || path.basename(workspaceRoot) || 'Parent Repository';
+      return { name, path: '.', url: '', branch: 'main', currentCommit: '', currentBranch: '', status: 'unknown',
+        hasChanges: false, ahead: 0, behind: 0, isParentRepo: true };
+    }
     const match = remoteUrl.match(/\/([^/]+?)(\.git)?$/);
     return {
       name: match ? match[1] : path.basename(workspaceRoot) || 'Parent Repository',
@@ -87,9 +95,11 @@ export class SubmoduleService {
   private async readRecordedCommits(paths: string[]): Promise<Map<string, string>> {
     const recorded = new Map<string, string>();
     if (!paths.length) { return recorded; }
-    const output = await this.gitCmd.execGit(['ls-tree', 'HEAD', '--', ...paths]).catch(() => '');
-    for (const line of output.split('\n')) {
-      const match = line.match(/^\d+ commit ([0-9a-f]+)\t(.+)$/);
+    // -z: entries end with NUL and paths are not quoted (one with non-ASCII characters would
+    // otherwise come back as "m\303\263d" and match no .gitmodules path).
+    const output = await this.gitCmd.execGitRaw(['ls-tree', '-z', 'HEAD', '--', ...paths], undefined, 30000).catch(() => '');
+    for (const entry of output.split('\0')) {
+      const match = entry.match(/^\d+ commit ([0-9a-f]+)\t(.+)$/s);
       if (match) { recorded.set(match[2], match[1]); }
     }
     return recorded;
