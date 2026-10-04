@@ -558,12 +558,26 @@ async function main() {
     for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['branch', undefined, targetHash]);
     assert.deepEqual(runs.at(-1).categories, ['security', 'compliance']);
+    // Compare branches: a review of that comparison keeps the branch names, not the resolved hashes.
+    await page.click('#detailTabChanges');
+    await page.click('[data-action="openBranchCompareModal"]');
+    await page.locator('#branchCompareModal.active').waitFor();
+    await page.selectOption('#compareBaseBranch', 'main');
+    await page.selectOption('#compareTargetBranch', 'feature/dashboard');
+    await page.click('#branchCompareModal [data-action="compareBranches"]');
+    await page.waitForFunction(() => /Branches: main → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
+    await page.locator('#reviewSelectionChangesButton').waitFor({ state: 'visible' });
+    await page.click('#reviewSelectionChangesButton');
+    await page.waitForFunction(() => /^Diff: main → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent));
+    for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
+    await page.click('#detailTabChanges');
+    await page.click('[data-action="clearCommitComparison"]');
 
     // History menu: "changes" reviews the commit against its parent; "branch" every file at it.
     await page.locator('.history-row').first().click({ button: 'right' });
     assert.match(await page.textContent('#historyContextMenu [data-action="contextReviewCommit"]'), /Review changes/);
     await page.click('#historyContextMenu [data-action="contextReviewCommit"]');
-    for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
+    for (let i = 0; i < 100 && runs.length < 4; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['changes', undefined]);
     await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Diff: parent → '));
     // Cancelling a running branch review.
@@ -580,24 +594,24 @@ async function main() {
 
     // Past reviews: every completed review was saved (the cancelled one was not), newest first.
     const historyRows = page.locator('#reviewHistoryList .review-history-item');
-    await page.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 4);
-    assert.equal(await page.textContent('#reviewHistoryCount'), '4');
-    assert.match(await historyRows.nth(3).textContent(), /Diff: 1\.0\.0 → feature\/dashboard.*Blocked.*2 findings · 1 to fix · 1 dismissed/s);
+    await page.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 5);
+    assert.equal(await page.textContent('#reviewHistoryCount'), '5');
+    assert.match(await historyRows.nth(4).textContent(), /Diff: 1\.0\.0 → feature\/dashboard.*Blocked.*2 findings · 1 to fix · 1 dismissed/s);
     // A reopened dashboard (as after restarting VS Code) still lists them, with the Review tab showing.
     const reopened = await openPage(1440, 900);
     await reopened.locator('#detailTabReview').waitFor();
     await reopened.click('#detailTabReview');
-    await reopened.locator('#reviewHistoryList .review-history-item').nth(3).waitFor();
+    await reopened.locator('#reviewHistoryList .review-history-item').nth(4).waitFor();
     assert.equal(await reopened.getAttribute('#reviewHistory', 'open'), '', 'Past reviews should start expanded when no review is open');
     assert.match(await reopened.textContent('#reviewBody'), /No review is open/);
     await snap(reopened, '13-past-reviews');
     // Opening one restores its findings and triage; export works from the saved copy.
-    await reopened.click('#reviewHistoryList .review-history-item:nth-child(4) [data-action="openStoredReview"]');
+    await reopened.click('#reviewHistoryList .review-history-item:nth-child(5) [data-action="openStoredReview"]');
     await reopened.locator('.review-readiness.readiness-blocked').waitFor();
     assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
-    assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(4) .review-history-commit'), `${releaseSha} → ${branchSha}`);
+    assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(5) .review-history-commit'), `${releaseSha} → ${branchSha}`);
     assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
-    assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(4)', 'aria-current'), 'true');
+    assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(5)', 'aria-current'), 'true');
     reviewProbe.copied = null;
     await reopened.click('[data-action="exportReview"][data-format="copy"]');
     for (let i = 0; i < 100 && !reviewProbe.copied; i++) await reopened.waitForTimeout(20);
@@ -605,10 +619,10 @@ async function main() {
     // Triage of a reopened review is saved again.
     await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="triageFinding"][data-decision="fix"]');
     await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
-    await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[3].textContent));
+    await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[4].textContent));
     // Deleting removes it from the list; the open copy stays on screen.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
-    await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 3);
+    await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 4);
     await reopened.close();
 
     // One click switches the dashboard to the selected repository; no Refresh needed.

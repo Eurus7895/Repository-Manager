@@ -116,7 +116,9 @@ export class SecurityReviewService {
           }
         }
         for (const file of raw.partialPaths) {
-          coverage.skipped.push({ path: file.path, reason: `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` });
+          coverage.skipped.push({ path: file.path, reason: file.characters
+            ? `Partly reviewed: the model saw the first ${file.characters.toLocaleString('en-US')} characters of line 1 (of ${file.total.toLocaleString('en-US')})`
+            : `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` });
         }
         modelLimitations.push(...(Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
           typeof item === 'string' && item.length <= 500) : []).slice(0, 10));

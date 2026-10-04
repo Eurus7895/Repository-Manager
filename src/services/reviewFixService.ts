@@ -196,9 +196,11 @@ export class ReviewFixService {
         rejected.push(`An edit to ${filePath} was ignored: the text to replace was ${count ? 'found more than once' : 'not found'}.`); continue;
       }
       after.set(filePath, current.replace(edit.find, () => edit.replace as string));
-      // An edit names the finding it fixes; without a valid one it counts for the findings citing the file.
-      const ids = typeof edit.findingId === 'string' && selected.has(edit.findingId) ? [edit.findingId]
-        : findings.filter(finding => ReviewFixService.citedPaths(params.result, [finding]).includes(filePath)).map(finding => finding.id);
+      // An edit names the finding it fixes, but only a finding that cites this file can be fixed by it:
+      // otherwise an unrelated edit could mark that finding Fixed. Without a valid name, the edit counts
+      // for the findings citing the file.
+      const citing = findings.filter(finding => ReviewFixService.citedPaths(params.result, [finding]).includes(filePath)).map(finding => finding.id);
+      const ids = typeof edit.findingId === 'string' && selected.has(edit.findingId) && citing.includes(edit.findingId) ? [edit.findingId] : citing;
       ids.forEach(id => addressed.get(filePath)!.add(id));
     }
     const files: FixFile[] = [];

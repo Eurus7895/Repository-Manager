@@ -10,7 +10,7 @@ Module._load = function (name, parent, isMain) {
   if (name === 'vscode') return {};
   return originalLoad.call(this, name, parent, isMain);
 };
-const { SecurityReviewProvider, parseModelJson } = require('../../out/services/securityReviewProvider.js');
+const { SecurityReviewProvider, parseModelJson, INITIAL_UNIT_CHARS } = require('../../out/services/securityReviewProvider.js');
 const { SecurityReviewService } = require('../../out/services/securityReviewService.js');
 const { GitCommandService } = require('../../out/services/gitCommandService.js');
 Module._load = originalLoad;
@@ -110,6 +110,36 @@ async function main() {
     result = await review();
     assert.deepEqual(result.coverage.skipped, [], 'a file read to the end is not partly reviewed');
     assert.equal(result.coverage.complete, true);
+
+    // A second commit: eight large files in one component, and a minified one-line file.
+    fs.mkdirSync(path.join(repo, 'lib'));
+    for (let i = 0; i < 8; i++) {
+      fs.writeFileSync(path.join(repo, 'lib', `big${i}.py`), Array.from({ length: 300 }, (_, line) => `value_${i}_${line} = '${'x'.repeat(60)}'`).join('\n') + '\n');
+    }
+    fs.writeFileSync(path.join(repo, 'lib', 'bundle.min.js'), `var a=${'1+'.repeat(30000)}1;\n`);
+    git('add', '.');
+    git('commit', '-qm', 'two');
+    const second = git('rev-parse', 'HEAD');
+    const reviewSecond = () => service.review({ repositoryPath: '.', targetSha: second, scope: 'branch', categories: ['security'] },
+      { isCancellationRequested: false }, () => {});
+    const doneSecond = { ...done, targetSha: second };
+    seen = [];
+    script = (messages, call) => call === 1 && JSON.parse(messages[1]).component === 'lib'
+      ? { toolCall: { name: 'read_file', args: { path: 'lib/bundle.min.js' } } } : doneSecond;
+    result = await reviewSecond();
+    const libPacket = seen.map(sent => JSON.parse(sent[1])).find(packet => packet.component === 'lib');
+    // The component's files together stay within its budget, and each still gets a share.
+    const sentChars = libPacket.files.reduce((sum, file) => sum + file.content.length, 0);
+    assert.ok(sentChars <= INITIAL_UNIT_CHARS, `the first look sent ${sentChars} characters`);
+    assert.ok(libPacket.files.every(file => file.content.length > 0), 'a file was sent empty');
+    // A single line longer than the limit is cut inside the line, not dropped; reads are bounded too.
+    // (Eight files per component: the planner puts the ninth into a second 'lib' component.)
+    const bundle = seen.map(sent => JSON.parse(sent[1])).flatMap(packet => packet.files || []).find(file => file.path === 'lib/bundle.min.js');
+    assert.ok(bundle.content.startsWith('var a=1+1+') && bundle.endLine === 0 && bundle.truncated);
+    const readReply = JSON.parse(seen.find(sent => JSON.parse(sent[1]).component === 'lib' && sent.length > 2).at(-1)).result;
+    assert.ok(readReply.content.length <= 16000 && /only its start is shown/.test(readReply.note));
+    assert.match(result.coverage.skipped.find(item => item.path === 'lib/bundle.min.js').reason,
+      /^Partly reviewed: the model saw the first [\d,]+ characters of line 1 \(of 1\)$/);
     console.log('Review conversation smoke passed');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

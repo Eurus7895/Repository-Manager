@@ -17,6 +17,15 @@ const result = (overrides = {}) => ({
 // Clean result.
 assert.equal(assessReadiness(result()).status, 'no_blocking_findings');
 
+// A policy violation stops blocking once every compliance finding behind it is fixed or dismissed.
+const compliance = id => finding(id, 'high', 'verified', { category: 'compliance', ruleId: 'R-9' });
+const violated = result({ findings: [compliance('c1'), compliance('c2')],
+  policyResults: [{ ruleId: 'R-9', status: 'violation', reason: 'secret in config', evidence: [] }] });
+assert.deepEqual(assessReadiness(violated).blocking.map(item => item.findingId || item.ruleId), ['c1', 'c2', 'R-9']);
+assert.deepEqual(assessReadiness(violated, { c1: { decision: 'fixed' } }).blocking.map(item => item.findingId || item.ruleId), ['c2', 'R-9'],
+  'the violation stopped blocking while one of its findings is still open');
+assert.equal(assessReadiness(violated, { c1: { decision: 'fixed' }, c2: { decision: 'dismiss', reason: 'accepted_risk' } }).status, 'no_blocking_findings');
+
 // Verified critical/high and violations block; hypotheses and lower severities need attention,
 // most severe first, so a critical hypothesis leads the attention list without blocking.
 const mixed = assessReadiness(result({

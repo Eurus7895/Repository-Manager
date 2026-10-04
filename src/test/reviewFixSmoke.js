@@ -152,6 +152,10 @@ async function main() {
     git('checkout', '--', 'app.js', 'util.js');
     // Each file records the findings its edits address (here: the findings citing it).
     assert.deepEqual(pair.files.map(file => file.findingIds), [['f1'], ['f2']]);
+    // An edit naming a finding that does not cite its file counts for the finding that does.
+    response = { edits: [{ path: 'util.js', findingId: 'f1', find: 'exports.x = 1;', replace: 'exports.x = 2;' }] };
+    const misnamed = await propose({ findingIds: ['f1', 'f2'] });
+    assert.deepEqual(misnamed.files.map(file => [file.path, file.findingIds]), [['util.js', ['f2']]]);
     // Apply selected writes only the chosen files.
     assert.deepEqual(await service.apply(pair, () => false, ['util.js']), ['util.js']);
     assert.equal(git('status', '--porcelain'), 'M util.js');

@@ -21,14 +21,32 @@ export interface RawUnitReview {
   findings: unknown[];
   policyResults: unknown[];
   limitations: string[];
-  /** Files the model did not see in full: lines seen (sent at first, or read with read_file) of the total. */
-  partialPaths: Array<{ path: string; seen: number; total: number }>;
+  /**
+   * Files the model did not see in full: whole lines seen (sent at first, or read with read_file) of
+   * the total, and for a file whose first line alone is too long, how many characters of it were sent.
+   */
+  partialPaths: Array<{ path: string; seen: number; total: number; characters?: number }>;
 }
 
 /** What a component sends up front: per file, and for all of its files together. */
 export const INITIAL_FILE_LINES = 400;
 export const INITIAL_FILE_CHARS = 16000;
 export const INITIAL_UNIT_CHARS = 64000;
+
+/**
+ * Cuts file content to `limit` characters on a line boundary. A first line longer than the limit
+ * (minified code, generated manifests) is cut inside the line instead of being dropped.
+ */
+function boundContent<T extends { content: string; startLine: number; endLine: number; truncated: boolean }>(file: T, limit: number):
+  T & { partialLine?: number } {
+  if (file.content.length <= limit) { return file; }
+  const cut = file.content.lastIndexOf('\n', limit);
+  if (cut > 0) {
+    const content = file.content.slice(0, cut);
+    return { ...file, content, endLine: file.startLine + content.split('\n').length - 1, truncated: true };
+  }
+  return { ...file, content: file.content.slice(0, limit), endLine: file.startLine - 1, truncated: true, partialLine: limit };
+}
 
 /** Line ranges of one file the model has seen, merged; counts the lines covered. */
 function linesCovered(ranges: Array<[number, number]>): number {
@@ -99,25 +117,23 @@ export class SecurityReviewProvider {
     // Lines of each file the model has seen, by revision and path: what is sent now, plus its reads.
     const seen = new Map<string, Array<[number, number]>>();
     const totals = new Map<string, number>();
+    const partialLines = new Map<string, number>();
     let budget = INITIAL_UNIT_CHARS;
-    for (const path of unit.paths) {
+    // Every file keeps a share of the component's budget, so early large files cannot crowd out the
+    // rest, and all of them together stay within INITIAL_UNIT_CHARS.
+    const floor = Math.min(4000, Math.floor(INITIAL_UNIT_CHARS / Math.max(1, unit.paths.length)));
+    for (const [index, path] of unit.paths.entries()) {
       const source = plan.snapshot.fileExists(path) ? plan.snapshot : plan.base;
       if (!source) { throw new Error(`File missing from both revisions: ${path}`); }
-      const file = await source.readFile(path, 1, INITIAL_FILE_LINES);
-      // Whole lines only, within the file's share of what is left of the component's budget.
-      const limit = Math.max(4000, Math.min(INITIAL_FILE_CHARS, budget));
-      let content = file.content;
-      let endLine = file.endLine;
-      if (content.length > limit) {
-        content = content.slice(0, Math.max(0, content.lastIndexOf('\n', limit)));
-        endLine = content ? content.split('\n').length : 0;
-      }
-      budget = Math.max(0, budget - content.length);
+      const limit = Math.min(INITIAL_FILE_CHARS, budget - (unit.paths.length - index - 1) * floor);
+      const file = boundContent(await source.readFile(path, 1, INITIAL_FILE_LINES), limit);
+      budget -= file.content.length;
       const key = `${source.targetSha}:${path}`;
-      seen.set(key, endLine ? [[1, endLine]] : []);
+      seen.set(key, file.endLine ? [[1, file.endLine]] : []);
       totals.set(key, file.totalLines);
-      files.push({ path, revision: source.targetSha, startLine: 1, endLine, totalLines: file.totalLines,
-        content, truncated: endLine < file.totalLines });
+      if (file.partialLine) { partialLines.set(key, file.partialLine); }
+      files.push({ path, revision: source.targetSha, startLine: 1, endLine: file.endLine, totalLines: file.totalLines,
+        content: file.content, truncated: file.endLine < file.totalLines });
     }
     const input = { request: plan.request, component: unit.component, files, rules: unit.rules,
       tree: plan.snapshot.listTree('', 100), policyStatus: plan.policy.status };
@@ -128,7 +144,9 @@ export class SecurityReviewProvider {
       seen.get(`${read.revision}:${read.path}`)?.push([read.startLine, read.endLine]);
     });
     const partialPaths = [...seen.entries()].map(([key, ranges]) => ({ path: key.slice(key.indexOf(':') + 1),
-      seen: linesCovered(ranges), total: totals.get(key) || 0 })).filter(file => file.seen < file.total);
+      seen: linesCovered(ranges), total: totals.get(key) || 0, characters: partialLines.get(key) }))
+      .filter(file => file.seen < file.total)
+      .map(file => (file.seen === 0 && file.characters ? file : { path: file.path, seen: file.seen, total: file.total }));
     if (result.schemaVersion !== 1 || result.targetSha !== plan.snapshot.targetSha ||
         !Array.isArray(result.findings) || !Array.isArray(result.policyResults)) {
       throw new Error('AI review returned an invalid result or revision');
@@ -261,8 +279,11 @@ export class SecurityReviewProvider {
       if (typeof args.path !== 'string') { throw new Error('read_file requires path'); }
       const source = args.side === 'base' ? plan.base : plan.snapshot;
       if (!source) { throw new Error('Base revision unavailable'); }
-      return source.readFile(args.path, args.startLine === undefined ? 1 : Number(args.startLine),
-        args.lineCount === undefined ? 100 : Number(args.lineCount));
+      // A read is bounded like the first look, so one huge line cannot overflow the model's context.
+      const file = boundContent(await source.readFile(args.path, args.startLine === undefined ? 1 : Number(args.startLine),
+        args.lineCount === undefined ? 100 : Number(args.lineCount)), INITIAL_FILE_CHARS);
+      const { partialLine, ...result } = file as typeof file & { partialLine?: number };
+      return partialLine ? { ...result, note: `Line ${file.startLine} is longer than ${partialLine} characters; only its start is shown.` } : result;
     }
     if (name === 'file_exists') {
       if (typeof args.path !== 'string') { throw new Error('file_exists requires path'); }

@@ -486,7 +486,8 @@
       if (modal) modal.classList.remove('active');
       commitCompareSelection = [];
       comparisonRepository = activeDashboardRepository;
-      loadComparison(base.value, target.value, 'branches');
+      // The picked names label the comparison and any review of it (not the resolved hashes).
+      loadComparison(base.value, target.value, 'branches', { base: base.value, target: target.value });
     },
 
     clearCommitComparison: () => clearCommitComparison(true),

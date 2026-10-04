@@ -110,7 +110,14 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
     if (finding.status === 'verified' && BLOCKING_SEVERITIES.has(finding.severity)) { blocking.push(item); }
     else { attention.push(item); }
   }
+  // A violation is corroborated by its compliance findings; once all of them are fixed or dismissed,
+  // the violation no longer blocks either (it would keep a fixed review Blocked).
+  const resolvedRule = (ruleId: string) => {
+    const related = result.findings.filter(finding => finding.category === 'compliance' && finding.ruleId === ruleId);
+    return related.length > 0 && related.every(finding => ['fixed', 'dismiss'].includes(triage[finding.id]?.decision || ''));
+  };
   for (const policy of result.policyResults) {
+    if (policy.status === 'violation' && resolvedRule(policy.ruleId)) { continue; }
     if (policy.status === 'violation') {
       blocking.push({ kind: 'policy', ruleId: policy.ruleId, title: `Policy violation: ${policy.ruleId}`, detail: policy.reason });
     } else if (policy.status === 'insufficient_evidence') {
