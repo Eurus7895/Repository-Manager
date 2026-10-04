@@ -189,6 +189,8 @@ function startServer(workspace, otherFolder) {
         reviewProbe.summaries.push(message.payload);
         await post({ type: 'changeSummaryProgress', payload: { requestId: message.payload.requestId,
           repositoryPath: message.payload.repositoryPath, status: 'Waiting for confirmation…' } });
+      } else if (message.type === 'refreshRepositories') {
+        await refresh();
       } else if (message.type === 'refresh') {
         await refresh();
         await post({ type: 'repositoryOperationResult', payload: { operation: 'refresh', success: true, message: 'Dashboard refreshed' } });
@@ -717,6 +719,35 @@ async function main() {
       assert.ok(changed <= 3, `resizing to ${width}px re-laid the history out on ${changed} frames`);
     }
     await resizing.close();
+
+    // Load more appends: the rows already shown stay the same elements, and the graph covers them all.
+    const paging = await openPage(1440, 900);
+    const appended = await paging.evaluate(async () => {
+      const sent = [];
+      const toHost = window.__postToHost;
+      window.__postToHost = message => { sent.push(message); return toHost(message); };
+      document.getElementById('dashboardIncludeRemotes').click();
+      for (let i = 0; i < 100 && !sent.some(message => message.type === 'getHistory'); i++) await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 500)); // let the real (short) replies land first
+      const request = sent.filter(message => message.type === 'getHistory').at(-1).payload;
+      const hex = n => n.toString(16).padStart(40, '0');
+      const commit = n => ({ hash: hex(n + 1), shortHash: hex(n + 1).slice(-7), parentHashes: n < 199 ? [hex(n + 2)] : [], authorName: 'A', authorEmail: 'a@x',
+        authoredAt: '2025-01-15T10:00:00Z', subject: `commit ${n}`, refs: [] });
+      const page = offset => ({ type: 'historyLoaded', payload: { repositoryPath: request.repositoryPath, requestId: request.requestId, offset,
+        commits: Array.from({ length: 100 }, (_, i) => commit(offset + i)), nextOffset: offset ? null : 100, upstream: null } });
+      window.dispatchEvent(new MessageEvent('message', { data: page(0) }));
+      const first = document.querySelector('.history-row[data-commit="' + hex(1) + '"]');
+      window.dispatchEvent(new MessageEvent('message', { data: page(100) }));
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const rows = document.querySelectorAll('.history-row');
+      const overlay = document.querySelector('.history-graph-overlay');
+      const content = document.querySelector('.history-table-content');
+      return { rows: rows.length, sameFirst: rows[0] === first, lastSubject: rows[rows.length - 1].textContent.includes('commit 199'),
+        graphCovers: Math.abs(overlay.getBoundingClientRect().height - (rows[rows.length - 1].getBoundingClientRect().bottom - content.getBoundingClientRect().top)) <= 2,
+        nodes: document.querySelectorAll('.graph-node-control').length };
+    });
+    assert.deepEqual(appended, { rows: 200, sameFirst: true, lastSubject: true, graphCovers: true, nodes: 200 });
+    await paging.close();
 
     for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
       const narrow = await openPage(width, 700);

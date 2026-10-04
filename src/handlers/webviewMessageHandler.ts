@@ -109,6 +109,8 @@ export async function handleGetHistory(ctx: MessageHandlerContext, payload: unkn
       }
     });
   } catch (error) {
+    // A search replaced by a newer request has no one waiting; reporting it would cover the new result.
+    if (error instanceof Error && error.name === 'SupersededError') { return; }
     await sendDashboardError(ctx, 'getHistory', repositoryPath, error);
   }
 }

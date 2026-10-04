@@ -6,6 +6,11 @@
 import { execFile, spawn } from 'child_process';
 import * as path from 'path';
 
+/** A request was replaced by a newer one before it finished; nobody is waiting for its answer. */
+export class SupersededError extends Error {
+  constructor() { super('Superseded by a newer request'); this.name = 'SupersededError'; }
+}
+
 export class GitCommandService {
   constructor(protected workspaceRoot: string) {}
 
@@ -115,6 +120,54 @@ export class GitCommandService {
       throw new Error('File path escapes the repository');
     }
     return normalized.split(path.sep).join('/');
+  }
+
+  /**
+   * Runs Git and hands its output to `onRecord` one `separator`-terminated record at a time, without
+   * buffering it all. `onRecord` returns true to stop: Git is then killed, so a search can end as soon
+   * as it has enough matches instead of reading a whole history.
+   */
+  scanGitRecords(args: string[], cwd: string, separator: string, onRecord: (record: string) => boolean, timeoutMs = 30000,
+    signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(new SupersededError()); return; }
+      const child = spawn('git', args, { cwd, windowsHide: true });
+      let pending = '';
+      let stderr = '';
+      let done = false;
+      const finish = (error?: Error) => {
+        if (done) { return; }
+        done = true;
+        clearTimeout(timer);
+        if (error) { reject(error); } else { resolve(); }
+      };
+      const timer = setTimeout(() => { child.kill(); finish(new Error(`Git command timed out after ${timeoutMs}ms`)); }, timeoutMs);
+      // A newer request replaced this one: stop Git instead of letting it read on.
+      signal?.addEventListener('abort', () => { child.kill(); finish(new SupersededError()); }, { once: true });
+      // onRecord runs inside a stream event: an exception there must reject this promise, not escape
+      // into the extension host.
+      const handle = (record: string): boolean => {
+        try { return onRecord(record); } catch (error) { child.kill(); finish(error instanceof Error ? error : new Error(String(error))); return true; }
+      };
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        if (done) { return; }
+        pending += chunk;
+        let index = pending.indexOf(separator);
+        while (index >= 0) {
+          const record = pending.slice(0, index);
+          pending = pending.slice(index + separator.length);
+          if (handle(record)) { child.kill(); finish(); return; }
+          index = pending.indexOf(separator);
+        }
+      });
+      child.stderr.on('data', data => { stderr += data.toString(); });
+      child.on('error', error => finish(error));
+      child.on('close', code => {
+        if (!done && code === 0 && pending.trim()) { handle(pending); }
+        finish(code === 0 ? undefined : new Error(stderr.trim() || `Git command failed with code ${code}`));
+      });
+    });
   }
 
   /**

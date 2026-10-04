@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reviews no longer lose whole components to model hiccups. A reply with text around its JSON is read anyway, and an unreadable reply gets one more try. A tool the model may not use (such as reading a diff in a branch review) is reported back to the model instead of failing every file in the component. When the model runs out of tool calls, it is asked for its result from what it has read.
 - Long files are no longer listed as skipped after the first 100 lines. Each file now sends up to 400 lines at first, a file the model reads to the end counts as reviewed, and the rest say how much was read (for example "Partly reviewed: the model saw 400 of 2,315 lines").
+- History search finds commits anywhere in the history. It used to look only at the newest 2,000 commits and show no result for older matches.
+- The dashboard opens faster: on a repository with 20,000 commits and 8 submodules, the history appeared after about 1.5 s and now after about 0.4 s. The repository list needs 13 Git processes instead of 64, they run in parallel, and opening no longer loads the history, branches and commit details twice.
+- **Load more** stays fast: each click adds its rows instead of redrawing the whole list, so it no longer gets slower with every page (at 2,000 rows, about 0.4 s instead of 1.7 s).
+- A submodule that is not initialized is shown as uninitialized. It used to show the parent repository's branch, commit and changes.
+- The parent repository is marked modified when its own files change or a submodule moves to another commit, but no longer when a submodule only has uncommitted edits; that submodule's own row shows them.
 
 ## [1.8.0] - 2026-10-02
 

@@ -3,6 +3,9 @@
  */
 
 import { GitCommandService } from './gitCommandService';
+
+/** The search scanning each repository: a newer history request stops it (typing a query). */
+const activeSearches = new Map<string, AbortController>();
 import { GitRefLabel, GitRefKind, HistoryCommit, HistoryPage, HistoryQuery } from '../types';
 
 const FIELD_SEPARATOR = '\x1f';
@@ -67,6 +70,12 @@ export function parseHistoryOutput(output: string): HistoryCommit[] {
     });
 }
 
+/** What a history search looks in: hashes, author, subject and ref names, ignoring case. */
+function matchesSearch(commit: HistoryCommit, search: string): boolean {
+  return [commit.hash, commit.shortHash, commit.authorName, commit.authorEmail, commit.subject, ...commit.refs.map(ref => ref.name)]
+    .join('\n').toLowerCase().includes(search);
+}
+
 function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
   const normalized = Number.isFinite(value) ? Math.trunc(value as number) : fallback;
   return Math.min(max, Math.max(min, normalized));
@@ -80,15 +89,11 @@ export class HistoryService {
     const limit = clamp(query.limit, 100, 1, 200);
     const offset = clamp(query.offset, 0, 0, 100000);
     const search = query.search?.trim().toLowerCase() || '';
-    const requestedCount = search ? Math.min(2000, Math.max(500, offset + limit + 1)) : limit + 1;
-    const args = [
-      'log',
-      `--max-count=${requestedCount}`,
-      '--topo-order',
-      '--date=iso-strict',
-      '--decorate=full',
-      `--format=${HISTORY_FORMAT}`
-    ];
+    const args = search
+      // A search reads the whole history (topological, like the graph, so no parent precedes its
+      // child) and stops as soon as it has this page and one more match.
+      ? ['log', '--topo-order', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`]
+      : ['log', `--max-count=${limit + 1}`, '--topo-order', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`];
 
     if (!search && offset > 0) {
       args.push(`--skip=${offset}`);
@@ -102,21 +107,31 @@ export class HistoryService {
       args.push('HEAD');
     }
 
-    const output = await this.gitCmd.execGitRaw(args, repositoryRoot, 15000);
-    let commits = parseHistoryOutput(output);
-
+    let commits: HistoryCommit[];
+    // Any new history request for this repository replaces a search still scanning it.
+    activeSearches.get(repositoryRoot)?.abort();
+    activeSearches.delete(repositoryRoot);
     if (search) {
-      commits = commits.filter(commit => {
-        const searchable = [
-          commit.hash,
-          commit.shortHash,
-          commit.authorName,
-          commit.authorEmail,
-          commit.subject,
-          ...commit.refs.map(ref => ref.name)
-        ].join('\n').toLowerCase();
-        return searchable.includes(search);
-      }).slice(offset);
+      const matches: HistoryCommit[] = [];
+      const wanted = offset + limit + 1;
+      const controller = new AbortController();
+      activeSearches.set(repositoryRoot, controller);
+      try {
+        await this.gitCmd.scanGitRecords(args, repositoryRoot, RECORD_SEPARATOR, record => {
+          // A subject containing the record separator splits its commit into malformed pieces: skip
+          // those rather than failing the search.
+          let parsed: HistoryCommit[] = [];
+          try { parsed = parseHistoryOutput(record); } catch { return false; }
+          const [commit] = parsed;
+          if (commit && matchesSearch(commit, search)) { matches.push(commit); }
+          return matches.length >= wanted;
+        }, 30000, controller.signal);
+      } finally {
+        if (activeSearches.get(repositoryRoot) === controller) { activeSearches.delete(repositoryRoot); }
+      }
+      commits = matches.slice(offset);
+    } else {
+      commits = parseHistoryOutput(await this.gitCmd.execGitRaw(args, repositoryRoot, 15000));
     }
 
     const hasMore = commits.length > limit;

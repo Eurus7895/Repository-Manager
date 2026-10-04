@@ -3,6 +3,7 @@
  * Handles submodule-specific operations
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { GitCommandService } from './gitCommandService';
 import { SubmoduleInfo, SubmoduleStatus, CommandResult, GitStatus } from '../types';
@@ -11,20 +12,34 @@ export class SubmoduleService {
   constructor(private gitCmd: GitCommandService) {}
 
   /**
-   * Commits behind/ahead of the branch's upstream (what Pull and Push use),
-   * falling back to the same-named branch on origin when no upstream is set.
+   * Branch, commit, ahead/behind and local changes of one repository in a single Git process
+   * (`status --porcelain=v2 --branch`), instead of one process per question. Ahead/behind come
+   * from the upstream; a branch without one falls back to the same-named branch on origin.
    */
-  private async countAheadBehind(currentBranch: string, cwd?: string): Promise<{ ahead: number; behind: number }> {
-    for (const upstream of ['@{upstream}', `origin/${currentBranch}`]) {
+  private async readState(cwd: string, ignoreSubmoduleContent: boolean): Promise<{ commit: string; branch: string; detached: boolean;
+    hasChanges: boolean; ahead: number; behind: number }> {
+    const args = ['status', '--porcelain=v2', '--branch'];
+    // A parent lists a submodule with new commits, but not edits inside it: each submodule reports those itself.
+    if (ignoreSubmoduleContent) { args.push('--ignore-submodules=dirty'); }
+    const lines = (await this.gitCmd.execGitRaw(args, cwd)).split('\n');
+    const header = (key: string) => lines.find(line => line.startsWith(`# branch.${key} `))?.slice(`# branch.${key} `.length).trim() || '';
+    const oid = header('oid');
+    const head = header('head');
+    const detached = head === '(detached)';
+    const branch = detached ? '' : head;
+    const counts = /^\+(\d+) -(\d+)$/.exec(header('ab'));
+    let ahead = counts ? Number(counts[1]) : 0;
+    let behind = counts ? Number(counts[2]) : 0;
+    if (!counts && branch && oid !== '(initial)') {
       try {
-        const tracking = await this.gitCmd.execGit(['rev-list', '--left-right', '--count', `${upstream}...HEAD`], cwd);
-        const [behindStr, aheadStr] = tracking.split('\t');
-        return { behind: parseInt(behindStr, 10) || 0, ahead: parseInt(aheadStr, 10) || 0 };
+        const [behindStr, aheadStr] = (await this.gitCmd.execGit(['rev-list', '--left-right', '--count', `origin/${branch}...HEAD`], cwd)).split('\t');
+        behind = parseInt(behindStr, 10) || 0;
+        ahead = parseInt(aheadStr, 10) || 0;
       } catch {
-        // Try the next candidate
+        // No upstream and no same-named remote branch: nothing to compare with.
       }
     }
-    return { ahead: 0, behind: 0 };
+    return { commit: oid === '(initial)' ? '' : oid, branch, detached, hasChanges: lines.some(line => line && !line.startsWith('#')), ahead, behind };
   }
 
   /**
@@ -32,217 +47,114 @@ export class SubmoduleService {
    */
   async getParentRepoInfo(): Promise<SubmoduleInfo | null> {
     const workspaceRoot = this.gitCmd.getWorkspaceRoot();
-
-    try {
-      // Check if it's a git repo
-      await this.gitCmd.execGit(['rev-parse', '--git-dir']);
-
-      // Get repo name from the root folder or remote URL
-      let name = 'Parent Repository';
-      try {
-        const remoteUrl = await this.gitCmd.execGit(['remote', 'get-url', 'origin']);
-        const match = remoteUrl.match(/\/([^/]+?)(\.git)?$/);
-        if (match) {
-          name = match[1];
-        }
-      } catch {
-        // Use folder name if no remote
-        name = path.basename(workspaceRoot);
-      }
-
-      // Get current commit
-      let currentCommit = '';
-      try {
-        currentCommit = await this.gitCmd.execGit(['rev-parse', 'HEAD']);
-      } catch {
-        // No commits yet
-      }
-
-      // Get current branch
-      let currentBranch = '';
-      let status: SubmoduleStatus = 'unknown';
-      try {
-        currentBranch = await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD']);
-        if (currentBranch === 'HEAD') {
-          currentBranch = '';
-          status = 'detached';
-        }
-      } catch {
-        currentBranch = '';
-        status = 'detached';
-      }
-
-      // Check for changes
-      let hasChanges = false;
-      try {
-        const statusOutput = await this.gitCmd.execGit(['status', '--porcelain']);
-        hasChanges = statusOutput.trim().length > 0;
-      } catch {
-        // Ignore
-      }
-
-      // Determine final status
-      if (hasChanges) {
-        status = 'modified';
-      } else if (status !== 'detached') {
-        status = 'clean';
-      }
-
-      // Get ahead/behind counts
-      const { ahead, behind } = currentBranch && currentBranch !== 'HEAD'
-        ? await this.countAheadBehind(currentBranch)
-        : { ahead: 0, behind: 0 };
-
-      return {
-        name,
-        path: '.', // Use '.' to indicate the root/parent repo
-        url: '',
-        branch: currentBranch || 'main',
-        currentCommit: currentCommit.substring(0, 8),
-        currentBranch,
-        status,
-        hasChanges,
-        ahead,
-        behind,
-        isParentRepo: true
-      };
-    } catch {
-      return null;
+    // Whether it is a repository is asked on its own: a slow or failing status (a huge working tree,
+    // a timeout) must not make the parent disappear; its state is then just unknown.
+    const [isRepository, state, remoteUrl] = await Promise.all([
+      this.gitCmd.execGit(['rev-parse', '--git-dir']).then(() => true, () => false),
+      this.readState(workspaceRoot, true).catch(() => null),
+      this.gitCmd.execGit(['remote', 'get-url', 'origin']).catch(() => '')
+    ]);
+    if (!isRepository) { return null; }
+    if (!state) {
+      const name = remoteUrl.match(/\/([^/]+?)(\.git)?$/)?.[1] || path.basename(workspaceRoot) || 'Parent Repository';
+      return { name, path: '.', url: '', branch: 'main', currentCommit: '', currentBranch: '', status: 'unknown',
+        hasChanges: false, ahead: 0, behind: 0, isParentRepo: true };
     }
+    const match = remoteUrl.match(/\/([^/]+?)(\.git)?$/);
+    return {
+      name: match ? match[1] : path.basename(workspaceRoot) || 'Parent Repository',
+      path: '.', // Use '.' to indicate the root/parent repo
+      url: '',
+      branch: state.branch || 'main',
+      currentCommit: state.commit.substring(0, 8),
+      currentBranch: state.branch,
+      status: state.hasChanges ? 'modified' : state.detached ? 'detached' : 'clean',
+      hasChanges: state.hasChanges,
+      ahead: state.ahead,
+      behind: state.behind,
+      isParentRepo: true
+    };
+  }
+
+  /** Name, path, URL and branch of every submodule in .gitmodules, from one Git process. */
+  private async readGitmodules(): Promise<Array<{ name: string; path: string; url: string; branch: string }>> {
+    const output = await this.gitCmd.execGit(['config', '--file', '.gitmodules', '--get-regexp', '^submodule\\.']).catch(() => '');
+    const byName = new Map<string, { name: string; path: string; url: string; branch: string }>();
+    for (const line of output.split('\n')) {
+      const match = line.match(/^submodule\.(.+)\.(path|url|branch)\s+(.*)$/);
+      if (!match) { continue; }
+      const [, name, key, value] = match;
+      const entry = byName.get(name) || { name, path: '', url: '', branch: '' };
+      entry[key as 'path' | 'url' | 'branch'] = value.trim();
+      byName.set(name, entry);
+    }
+    return [...byName.values()].filter(entry => entry.path);
+  }
+
+  /** The commits the parent records for these submodule paths, from one `ls-tree`. */
+  private async readRecordedCommits(paths: string[]): Promise<Map<string, string>> {
+    const recorded = new Map<string, string>();
+    if (!paths.length) { return recorded; }
+    // -z: entries end with NUL and paths are not quoted (one with non-ASCII characters would
+    // otherwise come back as "m\303\263d" and match no .gitmodules path).
+    const output = await this.gitCmd.execGitRaw(['ls-tree', '-z', 'HEAD', '--', ...paths], undefined, 30000).catch(() => '');
+    for (const entry of output.split('\0')) {
+      const match = entry.match(/^\d+ commit ([0-9a-f]+)\t(.+)$/s);
+      if (match) { recorded.set(match[2], match[1]); }
+    }
+    return recorded;
+  }
+
+  private async describeSubmodule(entry: { name: string; path: string; url: string; branch: string }, recordedCommit: string): Promise<SubmoduleInfo> {
+    const fullPath = this.gitCmd.resolveRepositoryPath(entry.path);
+    // An uninitialized submodule is an empty folder: Git run there would describe the parent instead.
+    const initialized = fs.existsSync(path.join(fullPath, '.git'));
+    const state = initialized ? await this.readState(fullPath, false).catch(() => null) : null;
+    const status: SubmoduleStatus = !state || !state.commit ? 'uninitialized' : state.hasChanges ? 'modified' : state.detached ? 'detached' : 'clean';
+    const currentCommit = state && state.commit ? state.commit : '';
+    return {
+      name: entry.name,
+      path: entry.path,
+      url: entry.url,
+      branch: entry.branch || 'main',
+      currentCommit: currentCommit.substring(0, 8),
+      currentBranch: state && state.commit ? state.branch : '',
+      status,
+      hasChanges: Boolean(state && state.commit && state.hasChanges),
+      ahead: state && state.commit ? state.ahead : 0,
+      behind: state && state.commit ? state.behind : 0,
+      recordedCommit: recordedCommit.substring(0, 8),
+      atRecordedCommit: recordedCommit && currentCommit ? recordedCommit === currentCommit : undefined,
+      lastUpdated: new Date()
+    };
   }
 
   /**
-   * Get list of all submodules
+   * Get list of all submodules: .gitmodules and the recorded commits are read once, then each
+   * submodule's state is read in parallel (a few at a time).
    */
   async getSubmodules(): Promise<SubmoduleInfo[]> {
-    const submodules: SubmoduleInfo[] = [];
-
-    try {
-      // Get submodule configuration
-      const config = await this.gitCmd.execGit(['config', '--file', '.gitmodules', '--get-regexp', 'path']);
-      const lines = config.split('\n').filter(line => line.trim());
-
-      for (const line of lines) {
-        const match = line.match(/submodule\.(.+)\.path\s+(.+)/);
-        if (match) {
-          const name = match[1];
-          const submodulePath = match[2];
-
-          try {
-            const info = await this.getSubmoduleInfo(name, submodulePath);
-            submodules.push(info);
-          } catch (error) {
-            // Submodule may not be initialized
-            submodules.push({
-              name,
-              path: submodulePath,
-              url: '',
-              branch: '',
-              currentCommit: '',
-              currentBranch: '',
-              status: 'uninitialized',
-              hasChanges: false,
-              ahead: 0,
-              behind: 0
-            });
-          }
-        }
+    const entries = await this.readGitmodules();
+    const recorded = await this.readRecordedCommits(entries.map(entry => entry.path));
+    const results: SubmoduleInfo[] = new Array(entries.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < entries.length) {
+        const index = next++;
+        results[index] = await this.describeSubmodule(entries[index], recorded.get(entries[index].path) || '');
       }
-    } catch {
-      // No .gitmodules file or no submodules
-    }
-
-    return submodules;
+    };
+    await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
+    return results;
   }
 
   /**
    * Get detailed information about a specific submodule
    */
   async getSubmoduleInfo(name: string, submodulePath: string): Promise<SubmoduleInfo> {
-    const fullPath = this.gitCmd.resolveRepositoryPath(submodulePath);
-
-    // Get URL
-    let url = '';
-    try {
-      url = await this.gitCmd.execGit(['config', '--file', '.gitmodules', `submodule.${name}.url`]);
-    } catch {
-      // URL not found
-    }
-
-    // Get configured branch
-    let branch = '';
-    try {
-      branch = await this.gitCmd.execGit(['config', '--file', '.gitmodules', `submodule.${name}.branch`]);
-    } catch {
-      branch = 'main'; // Default branch
-    }
-
-    // Check if submodule is initialized
-    let currentCommit = '';
-    let currentBranch = '';
-    let status: SubmoduleStatus = 'unknown';
-    let hasChanges = false;
-    let ahead = 0;
-    let behind = 0;
-
-    try {
-      // Get current commit
-      currentCommit = await this.gitCmd.execGit(['rev-parse', 'HEAD'], fullPath);
-
-      // Get current branch
-      try {
-        currentBranch = await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD'], fullPath);
-        if (currentBranch === 'HEAD') {
-          // Detached HEAD - show empty branch so UI can display "(detached)"
-          currentBranch = '';
-          status = 'detached';
-        }
-      } catch {
-        currentBranch = '';
-        status = 'detached';
-      }
-
-      // Check for changes inside the submodule (uncommitted files)
-      const statusOutput = await this.gitCmd.execGit(['status', '--porcelain'], fullPath);
-      // Trim whitespace and check if there are actual changes
-      hasChanges = statusOutput.trim().length > 0;
-
-      // Determine final status
-      // - 'modified': has uncommitted changes inside the submodule
-      // - 'detached': checked out to a specific commit (not on a branch), but clean
-      // - 'clean': on a branch with no uncommitted changes
-      if (hasChanges) {
-        status = 'modified';
-      } else if (status !== 'detached') {
-        status = 'clean';
-      }
-      // If detached and no changes, keep status as 'detached'
-
-      // Get ahead/behind counts
-      if (currentBranch && currentBranch !== 'HEAD') {
-        ({ ahead, behind } = await this.countAheadBehind(currentBranch, fullPath));
-      }
-    } catch {
-      status = 'uninitialized';
-    }
-
-    const recordedCommit = await this.getRecordedCommit(submodulePath);
-
-    return {
-      name,
-      path: submodulePath,
-      url,
-      branch,
-      currentCommit: currentCommit.substring(0, 8),
-      currentBranch,
-      status,
-      hasChanges,
-      ahead,
-      behind,
-      recordedCommit: recordedCommit.substring(0, 8),
-      atRecordedCommit: recordedCommit && currentCommit ? recordedCommit === currentCommit : undefined,
-      lastUpdated: new Date()
-    };
+    const entry = (await this.readGitmodules()).find(item => item.name === name) || { name, path: submodulePath, url: '', branch: '' };
+    const recorded = await this.readRecordedCommits([submodulePath]);
+    return this.describeSubmodule({ ...entry, path: submodulePath }, recorded.get(submodulePath) || '');
   }
 
   /**
