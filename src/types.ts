@@ -152,7 +152,8 @@ export interface PolicyRuleResult {
 /** A reviewer's decision on one finding: fix it, or dismiss it with a reason. */
 export type DismissReason = 'false_positive' | 'accepted_risk' | 'not_applicable';
 export interface FindingTriage {
-  decision: 'fix' | 'dismiss';
+  /** `fixed`: an applied auto-fix addressed it, or the reviewer marked it fixed by hand. */
+  decision: 'fix' | 'dismiss' | 'fixed';
   reason?: DismissReason;
 }
 /** Triage by finding id. */

@@ -9,7 +9,7 @@ import * as path from 'path';
 import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } from './types';
 import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
-import { FixError, FixModel, FixProposal, ReviewFixService } from './services/reviewFixService';
+import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { resolveReleaseRange } from './services/releaseRange';
 import { ReviewHistoryStore, summarize } from './reviewHistory';
 
@@ -53,6 +53,12 @@ const START = 'Start review';
 const ALWAYS = 'Always allow for this repository';
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
 const MAX_OPEN_REVIEWS = 10;
+const FIX_STEP_MESSAGES: Record<FixStep, string> = {
+  checking: 'Checking the cited files in your working tree…',
+  sending: 'Sending the findings and files to Copilot…',
+  receiving: 'Receiving the proposed edits…',
+  validating: 'Checking the proposed edits against the files…'
+};
 
 /**
  * A finished review the dashboard has open. `workspaceRoot` is the folder it ran in: the dashboard
@@ -73,7 +79,8 @@ export class ReviewController {
   private active?: { requestId: number; repositoryPath: string };
   private readonly reviews = new Map<number, StoredReview>();
   /** At most one auto-fix: being proposed (`running`) or waiting for Apply/Discard (`proposal`). */
-  private fix?: { requestId: number; workspaceRoot: string; findingIds: string[]; running?: { cancel(): void; dispose(): void }; proposal?: FixProposal };
+  private fix?: { requestId: number; workspaceRoot: string; findingIds: string[]; running?: { cancel(): void; dispose(): void };
+    proposal?: FixProposal; applied?: string[] };
 
   constructor(private readonly host: ReviewControllerHost) {}
 
@@ -304,14 +311,14 @@ export class ReviewController {
         if (answer !== START && answer !== ALWAYS) { await fail('Auto-fix cancelled.', true); return; }
         if (answer === ALWAYS) { await this.host.rememberConsent(root); }
       }
-      await reply('reviewFixProgress', { message: 'Asking Copilot for a fix…' });
       const proposal = await service.propose({ repositoryPath: stored.result.request.repositoryPath, result: stored.result, findingIds,
         model: this.host.createFixModel(optionalString(payload.modelId)), token: cancellation.token,
-        isDirtyInEditor: absolute => this.host.isDirtyInEditor(absolute) });
+        isDirtyInEditor: absolute => this.host.isDirtyInEditor(absolute),
+        onProgress: detail => { void reply('reviewFixProgress', { message: FIX_STEP_MESSAGES[detail.step], detail }); } });
       if (this.fix !== fix) { return; }
       fix.running = undefined;
       fix.proposal = proposal;
-      await reply('reviewFixProposed', { files: proposal.files.map(file => ({ path: file.path, patch: file.patch })),
+      await reply('reviewFixProposed', { files: proposal.files.map(file => ({ path: file.path, patch: file.patch, findingIds: file.findingIds })),
         notes: proposal.notes, rejected: proposal.rejected, findingIds: proposal.findingIds, modelId: proposal.modelId });
     } catch (error) {
       if (cancellation.token.isCancellationRequested) { return; }
@@ -321,13 +328,31 @@ export class ReviewController {
     }
   }
 
+  /** Applies the whole proposal, or only `paths` of it (Apply selected); the rest stays proposed. */
   private async applyFix(payload: Record<string, unknown>): Promise<void> {
     const fix = this.fix;
     if (!fix?.proposal || fix.requestId !== payload.requestId) { return; }
+    const onlyPaths = Array.isArray(payload.paths) ? payload.paths.filter((item): item is string => typeof item === 'string') : undefined;
     try {
-      const paths = await new ReviewFixService(this.git(fix.workspaceRoot)).apply(fix.proposal, absolute => this.host.isDirtyInEditor(absolute));
-      this.fix = undefined;
-      await this.host.post({ type: 'reviewFixApplied', payload: { requestId: fix.requestId, paths } });
+      const proposal = fix.proposal;
+      const paths = await new ReviewFixService(this.git(fix.workspaceRoot)).apply(proposal, absolute => this.host.isDirtyInEditor(absolute), onlyPaths);
+      const remaining = proposal.files.filter(file => !paths.includes(file.path));
+      fix.applied = [...(fix.applied || []), ...paths];
+      // A finding is fixed once every proposed file with edits for it has been applied.
+      const fixedIds = [...new Set(proposal.files.filter(file => paths.includes(file.path)).flatMap(file => file.findingIds))]
+        .filter(id => !remaining.some(file => file.findingIds.includes(id)));
+      if (remaining.length) { fix.proposal = { ...proposal, files: remaining }; } else { this.fix = undefined; }
+      await this.host.post({ type: 'reviewFixApplied', payload: { requestId: fix.requestId, paths, fixedFindingIds: fixedIds,
+        remaining: remaining.map(file => ({ path: file.path, patch: file.patch, findingIds: file.findingIds })) } });
+      const stored = this.reviews.get(fix.requestId);
+      if (stored && fixedIds.length) {
+        const next = { ...stored.triage };
+        fixedIds.forEach(id => { next[id] = { decision: 'fixed' }; });
+        stored.triage = normalizeTriage(stored.result, next);
+        if (stored.historyId) { await this.host.history.setTriage(stored.historyId, stored.triage).catch(() => undefined); }
+        await this.host.post({ type: 'reviewTriageUpdated', payload: { requestId: fix.requestId, triage: stored.triage,
+          readiness: assessReadiness(stored.result, stored.triage) } });
+      }
       this.host.notify(`Applied the fix to ${paths.length} file${paths.length === 1 ? '' : 's'}. Nothing was committed.`);
       this.host.workingTreeChanged();
     } catch (error) {

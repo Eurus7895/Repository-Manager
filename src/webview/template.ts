@@ -311,7 +311,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
             <div class="review-entry review-release-group" role="group" aria-label="The release, with Copilot">
               <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
-              <button type="button" data-action="summarizeRelease" title="Summarize the changes since the latest release tag on the current branch"><span class="review-entry-word">Summarize </span>changes</button>
+              <button type="button" data-action="loadReleaseRange" title="Load the changes since the latest release tag on the current branch; summarize or review them below"><span class="review-entry-word">Load </span>range</button>
               <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file on the current branch"><span class="review-entry-word">Review </span>branch</button>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
@@ -334,7 +334,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
             <div class="change-summary" id="changeSummary" hidden>
-              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="loadSummaryModels" id="loadSummaryModelsButton">Load models</button><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="loadSummaryModels" id="loadSummaryModelsButton">Load models</button><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><button type="button" class="btn" data-action="reviewSelection" data-scope="changes" id="reviewSelectionChangesButton" title="Security and compliance review of these changes">Review changes</button><button type="button" class="btn" data-action="reviewSelection" data-scope="branch" id="reviewSelectionBranchButton" title="Security and compliance review of every file at the target commit">Review branch</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
             <div class="detail-tabs" id="detailTabs" role="tablist" aria-label="Detail view" hidden>

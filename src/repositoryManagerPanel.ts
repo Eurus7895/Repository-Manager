@@ -125,8 +125,8 @@ export class RepositoryManagerPanel {
       },
       createFixModel: modelId => {
         const provider = new SecurityReviewProvider();
-        return { request: (instructions, input, token) =>
-          provider.requestJson(instructions, input, modelId, token as vscode.CancellationToken) };
+        return { request: (instructions, input, token, onText) =>
+          provider.requestJson(instructions, input, modelId, token as vscode.CancellationToken, undefined, onText) };
       },
       isDirtyInEditor: absolutePath => vscode.workspace.textDocuments.some(document =>
         document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === absolutePath),

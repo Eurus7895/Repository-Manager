@@ -22,7 +22,20 @@ const FIX_PROMPT = `You fix security and compliance findings from a code review.
 
 /** Asks the model once and returns its parsed JSON. */
 export interface FixModel {
-  request(instructions: string, input: unknown, token: CancellationLike): Promise<{ modelId?: string; response: Record<string, unknown> }>;
+  /** `onText` is told how many characters of the reply have arrived so far. */
+  request(instructions: string, input: unknown, token: CancellationLike, onText?: (characters: number) => void):
+    Promise<{ modelId?: string; response: Record<string, unknown> }>;
+}
+
+/** Where a proposal is: the steps the dashboard shows, in order. */
+export type FixStep = 'checking' | 'sending' | 'receiving' | 'validating';
+export interface FixProgress {
+  step: FixStep;
+  findings?: number;
+  files?: number;
+  /** Size of the request, and of the reply received so far, in characters. */
+  sentCharacters?: number;
+  receivedCharacters?: number;
 }
 
 export interface FixFile {
@@ -30,6 +43,8 @@ export interface FixFile {
   before: string;
   after: string;
   patch: string;
+  /** The findings this file's edits address. */
+  findingIds: string[];
 }
 
 export interface FixProposal {
@@ -139,9 +154,11 @@ export class ReviewFixService {
 
   async propose(params: {
     repositoryPath: string; result: ReviewResult; findingIds: string[]; model: FixModel; token: CancellationLike;
-    isDirtyInEditor: (absolutePath: string) => boolean;
+    isDirtyInEditor: (absolutePath: string) => boolean; onProgress?: (progress: FixProgress) => void;
   }): Promise<FixProposal> {
     const { repositoryPath, model, token } = params;
+    const report = params.onProgress || (() => undefined);
+    report({ step: 'checking' });
     const { headSha, findings, paths, contents } = await this.prepare(params);
 
     const input = {
@@ -151,14 +168,20 @@ export class ReviewFixService {
           ({ path: evidence.path, startLine: evidence.startLine, endLine: evidence.endLine })) })),
       files: paths.map(filePath => ({ path: filePath, content: contents.get(filePath) }))
     };
-    const { modelId, response } = await model.request(FIX_PROMPT, input, token);
+    const sent = { findings: findings.length, files: paths.length, sentCharacters: FIX_PROMPT.length + JSON.stringify(input).length };
+    report({ step: 'sending', ...sent });
+    const { modelId, response } = await model.request(FIX_PROMPT, input, token,
+      receivedCharacters => report({ step: 'receiving', ...sent, receivedCharacters }));
     if (token.isCancellationRequested) { throw new Error('Cancelled'); }
+    report({ step: 'validating', ...sent });
     const edits = Array.isArray(response.edits) ? response.edits.slice(0, MAX_EDITS) : [];
     const notes = (Array.isArray(response.notes) ? response.notes : [])
       .filter((note): note is string => typeof note === 'string' && note.trim().length > 0).map(note => note.slice(0, 500)).slice(0, 10);
     const rejected: string[] = [];
     if (Array.isArray(response.edits) && response.edits.length > MAX_EDITS) { rejected.push(`Only the first ${MAX_EDITS} edits were considered.`); }
     const after = new Map(contents);
+    const selected = new Set(findings.map(finding => finding.id));
+    const addressed = new Map<string, Set<string>>(paths.map(filePath => [filePath, new Set<string>()]));
     for (const raw of edits) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { rejected.push('An edit was ignored: it is not an object.'); continue; }
       const edit = raw as Record<string, unknown>;
@@ -173,12 +196,20 @@ export class ReviewFixService {
         rejected.push(`An edit to ${filePath} was ignored: the text to replace was ${count ? 'found more than once' : 'not found'}.`); continue;
       }
       after.set(filePath, current.replace(edit.find, () => edit.replace as string));
+      // An edit names the finding it fixes, but only a finding that cites this file can be fixed by it:
+      // otherwise an unrelated edit could mark that finding Fixed. Without a valid name, the edit counts
+      // for the findings citing the file.
+      const citing = findings.filter(finding => ReviewFixService.citedPaths(params.result, [finding]).includes(filePath)).map(finding => finding.id);
+      const ids = typeof edit.findingId === 'string' && selected.has(edit.findingId) && citing.includes(edit.findingId) ? [edit.findingId] : citing;
+      ids.forEach(id => addressed.get(filePath)!.add(id));
     }
     const files: FixFile[] = [];
     for (const filePath of paths) {
       const before = contents.get(filePath)!;
       const next = after.get(filePath)!;
-      if (next !== before) { files.push({ path: filePath, before, after: next, patch: await this.patch(filePath, before, next) }); }
+      if (next !== before) {
+        files.push({ path: filePath, before, after: next, patch: await this.patch(filePath, before, next), findingIds: [...addressed.get(filePath)!] });
+      }
     }
     if (!files.length) {
       throw new FixError(`Copilot proposed no change that could be applied.${[...rejected, ...notes].length ? ` ${[...rejected, ...notes].join(' ')}` : ''}`);
@@ -191,7 +222,11 @@ export class ReviewFixService {
    * every file is first written beside its target, then the copies replace the targets; if any
    * step fails, the files already replaced get their previous content back.
    */
-  async apply(proposal: FixProposal, isDirtyInEditor: (absolutePath: string) => boolean): Promise<string[]> {
+  async apply(proposal: FixProposal, isDirtyInEditor: (absolutePath: string) => boolean, onlyPaths?: string[]): Promise<string[]> {
+    // Apply selected: only the chosen files of the proposal; together they are still all or nothing.
+    const chosen = onlyPaths ? proposal.files.filter(file => onlyPaths.includes(file.path)) : proposal.files;
+    if (!chosen.length) { throw new FixError('Select at least one file to apply.'); }
+    proposal = { ...proposal, files: chosen };
     const root = this.git.resolveRepositoryPath(proposal.repositoryPath);
     const { contents } = await this.checkWorkingTree(root, proposal.headSha, proposal.files.map(file => file.path), isDirtyInEditor);
     for (const file of proposal.files) {
