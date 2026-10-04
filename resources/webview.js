@@ -473,12 +473,11 @@
     deleteDashboardBranch: (el) => {
       const branch = el.dataset.branch;
       if (!branch || !activeDashboardRepository) return;
-      const deleteRemote = el.dataset.hasRemote === 'true'
-        && confirm(`Also delete 'origin/${branch}'?\n\nChoose Cancel to delete the local branch only.`);
+      // The extension asks whether to delete the local branch only or origin's as well.
       postMessage('deleteBranch', {
         submodule: activeDashboardRepository,
         branch,
-        deleteRemote
+        hasRemote: el.dataset.hasRemote === 'true'
       });
     },
 

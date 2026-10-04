@@ -953,21 +953,26 @@ export async function handleUpdateToRecorded(
  */
 export async function handleDeleteBranch(
   ctx: MessageHandlerContext,
-  payload: { submodule: string; branch: string; deleteRemote: boolean }
+  payload: { submodule: string; branch: string; hasRemote?: boolean }
 ): Promise<void> {
-  // Confirm deletion with a modal dialog
-  const remoteLabel = payload.deleteRemote ? ' (local + remote)' : '';
-  const confirm = await vscode.window.showWarningMessage(
-    `Delete branch '${payload.branch}' in ${payload.submodule}${remoteLabel}?`,
-    { modal: true },
-    'Delete'
+  // One VS Code dialog asks both questions. The webview's own confirm() is not used: a sandboxed
+  // webview may ignore browser dialogs (it then returns false), and the branch list need not sit
+  // in the dashboard.
+  const LOCAL = 'Delete Local Branch';
+  const BOTH = `Delete Local and origin/${payload.branch}`;
+  const choice = await vscode.window.showWarningMessage(
+    `Delete branch '${payload.branch}' in ${payload.submodule}?`,
+    { modal: true, detail: payload.hasRemote
+      ? `origin/${payload.branch} also exists. Deleting it there affects everyone who uses the remote.`
+      : 'The branch is deleted even if it has commits that are not merged anywhere.' },
+    ...(payload.hasRemote ? [LOCAL, BOTH] : [LOCAL])
   );
 
-  if (confirm !== 'Delete') {
+  if (choice !== LOCAL && choice !== BOTH) {
     return;
   }
 
-  const result = await ctx.gitOps.deleteBranch(payload.submodule, payload.branch, payload.deleteRemote);
+  const result = await ctx.gitOps.deleteBranch(payload.submodule, payload.branch, choice === BOTH);
   showResult(result.success, result.message);
 
   // Refresh the inline branch list plus the active dashboard refs and history.
@@ -1041,6 +1046,6 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'getCommits': (ctx, payload) => handleGetCommits(ctx, payload as { submodule: string }),
   'getRecordedCommit': (ctx, payload) => handleGetRecordedCommit(ctx, payload as { submodule: string }),
   'updateToRecorded': (ctx, payload) => handleUpdateToRecorded(ctx, payload as { submodule: string }),
-  'deleteBranch': (ctx, payload) => handleDeleteBranch(ctx, payload as { submodule: string; branch: string; deleteRemote: boolean }),
+  'deleteBranch': (ctx, payload) => handleDeleteBranch(ctx, payload as { submodule: string; branch: string; hasRemote?: boolean }),
   'setRebaseStatus': (ctx, payload) => handleSetRebaseStatus(ctx, payload as { submodule: string; isRebasing: boolean })
 };
