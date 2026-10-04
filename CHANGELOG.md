@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The toolbar no longer has its own Review branch, which reviewed every file at the selected commit under the same name as the one at the top.
 - Tooltips say that reviews read committed files only.
 
+### Fixed
+
+- Deleting a branch that also exists on origin asks in one VS Code dialog whether to delete the local branch only or origin's as well. The question used to be a browser dialog inside the dashboard, which VS Code may not show, so the remote branch could not be deleted from there.
+
 ## [1.9.0] - 2026-10-04
 
 ### Changed
