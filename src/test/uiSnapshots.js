@@ -46,6 +46,14 @@ const themeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-font-
 --vscode-testing-iconPassed:#73c991;--vscode-editorWarning-foreground:#cca700;--vscode-errorForeground:#f85149;--vscode-editorInfo-foreground:#3794ff;--vscode-list-activeSelectionBackground:#04395e;--vscode-list-activeSelectionForeground:#fff;
 --vscode-list-hoverBackground:#2a2d2e;--vscode-focusBorder:#0078d4;--vscode-dropdown-background:#313131;--vscode-dropdown-foreground:#ccc;--vscode-dropdown-border:#3c3c3c;--vscode-menu-background:#1f1f1f;--vscode-menu-foreground:#ccc;--vscode-menu-border:#454545}`;
 
+// VS Code "Light Modern": the dashboard must follow a light theme too.
+const lightThemeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-font-size:13px;--vscode-editor-font-family:monospace;--vscode-editor-font-size:12px;
+--vscode-editor-background:#ffffff;--vscode-editor-foreground:#3b3b3b;--vscode-foreground:#3b3b3b;--vscode-sideBar-background:#f8f8f8;--vscode-input-background:#ffffff;--vscode-input-foreground:#3b3b3b;--vscode-input-border:#cecece;
+--vscode-descriptionForeground:#3b3b3b;--vscode-disabledForeground:#6e6e6e;--vscode-button-background:#005fb8;--vscode-button-hoverBackground:#0258a8;--vscode-button-foreground:#ffffff;--vscode-panel-border:#e5e5e5;--vscode-panel-background:#f8f8f8;
+--vscode-editorWidget-background:#f8f8f8;--vscode-testing-iconPassed:#388a34;--vscode-editorWarning-foreground:#bf8803;--vscode-errorForeground:#f85149;--vscode-textLink-foreground:#005fb8;
+--vscode-charts-green:#388a34;--vscode-charts-yellow:#bf8803;--vscode-charts-red:#e51400;--vscode-charts-blue:#1a85ff;--vscode-charts-purple:#652d90;--vscode-charts-orange:#d18616;--vscode-list-activeSelectionBackground:#e8e8e8;--vscode-list-activeSelectionForeground:#000;
+--vscode-list-hoverBackground:#f2f2f2;--vscode-toolbar-hoverBackground:rgba(184,184,184,.31);--vscode-focusBorder:#005fb8;--vscode-dropdown-background:#ffffff;--vscode-dropdown-foreground:#3b3b3b;--vscode-dropdown-border:#cecece;--vscode-menu-background:#ffffff;--vscode-menu-foreground:#3b3b3b;--vscode-menu-border:#cecece}`;
+
 function git(cwd, ...args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
@@ -204,7 +212,8 @@ function startServer(workspace, otherFolder) {
   };
   const server = http.createServer(async (req, res) => {
     try {
-      if (req.url === '/') {
+      if (req.url === '/' || req.url === '/?theme=light') {
+        const light = req.url.endsWith('light');
         ops = new GitOperations(workspace); // every page starts in the main workspace folder
         currentRoot = workspace;
         const html = getHtmlForWebview(await listRepositories(), {
@@ -213,7 +222,8 @@ function startServer(workspace, otherFolder) {
           styleUri: resource('/resources/webview.css')
         }, [{ name: 'workspace', path: workspace, isCurrent: true }, { name: 'other', path: otherFolder, isCurrent: false }])
           .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
-          .replace('<head>', `<head><style>${themeCss}</style><script>
+          .replace('<body>', light ? '<body class="vscode-light">' : '<body>')
+          .replace('<head>', `<head><style>${light ? lightThemeCss : themeCss}</style><script>
             window.acquireVsCodeApi = () => ({
               getState() { return null; }, setState() {},
               postMessage(message) { window.__postToHost(message); }
@@ -242,11 +252,11 @@ async function main() {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
   fs.mkdirSync(outputDir, { recursive: true });
-  const openPage = async (width, height) => {
+  const openPage = async (width, height, theme) => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', error => pageErrors.push(error.message));
     await connect(page);
-    await page.goto(url);
+    await page.goto(theme === 'light' ? `${url}?theme=light` : url);
     await page.locator('.history-row').first().waitFor();
     return page;
   };
@@ -748,6 +758,37 @@ async function main() {
     });
     assert.deepEqual(appended, { rows: 200, sameFirst: true, lastSubject: true, graphCovers: true, nodes: 200 });
     await paging.close();
+
+    // A light theme: the dashboard takes the theme's colours, and its text stays readable.
+    const light = await openPage(1440, 900, 'light');
+    await light.locator('.commit-summary-copy strong').waitFor();
+    const contrast = await light.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const ratio = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + .05) / (y + .05); };
+      // The colour shown behind an element: translucent backgrounds blended down to the first opaque one.
+      const background = element => {
+        const layers = [];
+        for (let node = element; node; node = node.parentElement) {
+          const parts = (getComputedStyle(node).backgroundColor.match(/\d+(\.\d+)?/g) || []).map(Number);
+          const alpha = parts.length > 3 ? parts[3] : 1;
+          if (alpha > 0) layers.push([parts.slice(0, 3), alpha]);
+          if (alpha >= 1) break;
+        }
+        return layers.reverse().reduce((under, [color, alpha]) => color.map((c, i) => c * alpha + under[i] * (1 - alpha)), [255, 255, 255]);
+      };
+      const check = selector => { const element = document.querySelector(selector); return element ? +ratio(rgb(getComputedStyle(element).color), background(element)).toFixed(2) : null; };
+      return { body: rgb(getComputedStyle(document.body).backgroundColor), subject: check('.history-subject'), author: check('.history-author'),
+        repository: check('.sidebar-repository-item strong'), detail: check('.commit-summary-copy strong'),
+        tag: check('.history-ref.ref-tag'), branch: check('.history-ref.ref-local-branch') };
+    });
+    assert.deepEqual(contrast.body, [255, 255, 255], 'the dashboard ignores the light theme background');
+    for (const [name, value] of Object.entries(contrast)) {
+      if (name !== 'body') assert.ok(value >= 4.5, `${name} text has contrast ${value} in a light theme`);
+    }
+    await snap(light, '14-light-theme');
+    await light.close();
 
     for (const [width, name] of [[820, '04-narrow'], [680, '04b-narrower']]) {
       const narrow = await openPage(width, 700);
