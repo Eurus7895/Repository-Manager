@@ -118,6 +118,45 @@ export class GitCommandService {
   }
 
   /**
+   * Runs Git and hands its output to `onRecord` one `separator`-terminated record at a time, without
+   * buffering it all. `onRecord` returns true to stop: Git is then killed, so a search can end as soon
+   * as it has enough matches instead of reading a whole history.
+   */
+  scanGitRecords(args: string[], cwd: string, separator: string, onRecord: (record: string) => boolean, timeoutMs = 30000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('git', args, { cwd, windowsHide: true });
+      let pending = '';
+      let stderr = '';
+      let done = false;
+      const finish = (error?: Error) => {
+        if (done) { return; }
+        done = true;
+        clearTimeout(timer);
+        if (error) { reject(error); } else { resolve(); }
+      };
+      const timer = setTimeout(() => { child.kill(); finish(new Error(`Git command timed out after ${timeoutMs}ms`)); }, timeoutMs);
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        if (done) { return; }
+        pending += chunk;
+        let index = pending.indexOf(separator);
+        while (index >= 0) {
+          const record = pending.slice(0, index);
+          pending = pending.slice(index + separator.length);
+          if (onRecord(record)) { child.kill(); finish(); return; }
+          index = pending.indexOf(separator);
+        }
+      });
+      child.stderr.on('data', data => { stderr += data.toString(); });
+      child.on('error', error => finish(error));
+      child.on('close', code => {
+        if (code === 0 && pending.trim()) { onRecord(pending); }
+        finish(code === 0 ? undefined : new Error(stderr.trim() || `Git command failed with code ${code}`));
+      });
+    });
+  }
+
+  /**
    * Execute git command with streaming output
    */
   execGitStream(args: string[], cwd?: string): Promise<string> {

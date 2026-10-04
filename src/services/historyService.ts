@@ -67,6 +67,12 @@ export function parseHistoryOutput(output: string): HistoryCommit[] {
     });
 }
 
+/** What a history search looks in: hashes, author, subject and ref names, ignoring case. */
+function matchesSearch(commit: HistoryCommit, search: string): boolean {
+  return [commit.hash, commit.shortHash, commit.authorName, commit.authorEmail, commit.subject, ...commit.refs.map(ref => ref.name)]
+    .join('\n').toLowerCase().includes(search);
+}
+
 function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
   const normalized = Number.isFinite(value) ? Math.trunc(value as number) : fallback;
   return Math.min(max, Math.max(min, normalized));
@@ -80,15 +86,11 @@ export class HistoryService {
     const limit = clamp(query.limit, 100, 1, 200);
     const offset = clamp(query.offset, 0, 0, 100000);
     const search = query.search?.trim().toLowerCase() || '';
-    const requestedCount = search ? Math.min(2000, Math.max(500, offset + limit + 1)) : limit + 1;
-    const args = [
-      'log',
-      `--max-count=${requestedCount}`,
-      '--topo-order',
-      '--date=iso-strict',
-      '--decorate=full',
-      `--format=${HISTORY_FORMAT}`
-    ];
+    const args = search
+      // A search reads the whole history, in Git's own order so the first matches arrive at once;
+      // it stops as soon as it has this page and one more match.
+      ? ['log', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`]
+      : ['log', `--max-count=${limit + 1}`, '--topo-order', '--date=iso-strict', '--decorate=full', `--format=${HISTORY_FORMAT}`];
 
     if (!search && offset > 0) {
       args.push(`--skip=${offset}`);
@@ -102,21 +104,18 @@ export class HistoryService {
       args.push('HEAD');
     }
 
-    const output = await this.gitCmd.execGitRaw(args, repositoryRoot, 15000);
-    let commits = parseHistoryOutput(output);
-
+    let commits: HistoryCommit[];
     if (search) {
-      commits = commits.filter(commit => {
-        const searchable = [
-          commit.hash,
-          commit.shortHash,
-          commit.authorName,
-          commit.authorEmail,
-          commit.subject,
-          ...commit.refs.map(ref => ref.name)
-        ].join('\n').toLowerCase();
-        return searchable.includes(search);
-      }).slice(offset);
+      const matches: HistoryCommit[] = [];
+      const wanted = offset + limit + 1;
+      await this.gitCmd.scanGitRecords(args, repositoryRoot, RECORD_SEPARATOR, record => {
+        const [commit] = parseHistoryOutput(record);
+        if (commit && matchesSearch(commit, search)) { matches.push(commit); }
+        return matches.length >= wanted;
+      }, 30000);
+      commits = matches.slice(offset);
+    } else {
+      commits = parseHistoryOutput(await this.gitCmd.execGitRaw(args, repositoryRoot, 15000));
     }
 
     const hasMore = commits.length > limit;
