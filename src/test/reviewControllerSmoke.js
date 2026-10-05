@@ -184,6 +184,30 @@ async function main() {
     releaseFirst();
     await cancelled;
 
+    // Cancel from the dashboard after some components finished: the engine returns them, and the
+    // stopped review is shown and saved like a finished one.
+    runnerScript = (run) => new Promise(resolve => {
+      const timer = setInterval(() => {
+        if (!run.token.isCancellationRequested) return;
+        clearInterval(timer);
+        resolve({ request: run.request, findings: [], policyResults: [], policyStatus: 'not_configured', limitations: [],
+          coverage: { surveyed: 3, analyzed: 1, skipped: [], failed: [], complete: false }, partial: { unitsDone: 1, unitsTotal: 3 } });
+      }, 5);
+    });
+    const beforeStop = runs.length;
+    const savedBefore = (await list()).length;
+    const stoppedRun = start(6);
+    await untilRuns(runs, beforeStop + 1);
+    await controller.handle({ type: 'cancelReview', payload: {} });
+    assert.equal(of('reviewProgress').at(-1).payload.message, 'Stopping after the current step…');
+    await stoppedRun;
+    const stoppedReply = of('reviewCompleted').at(-1).payload;
+    assert.deepEqual([stoppedReply.requestId, stoppedReply.result.partial], [6, { unitsDone: 1, unitsTotal: 3 }]);
+    assert.ok(stoppedReply.layout, 'the layout for findings in place was not sent');
+    const savedAfter = await list();
+    assert.equal(savedAfter.length, savedBefore + 1);
+    assert.deepEqual(savedAfter[0].stopped, { unitsDone: 1, unitsTotal: 3 });
+
     // Cancel from the dashboard tells the dashboard, even though the run's own reply is dropped.
     runnerScript = (run) => new Promise((resolve, reject) => {
       const timer = setInterval(() => { if (run.token.isCancellationRequested) { clearInterval(timer); reject(new Error('Cancelled')); } }, 5);
@@ -262,11 +286,12 @@ async function main() {
 
     // Every completed review was saved, newest first; deleting one relists the rest.
     const all = await list();
-    assert.equal(all.length, 7);
+    // Seven finished reviews plus the stopped one.
+    assert.equal(all.length, 8);
     assert.equal(all[0].targetLabel, 'fresh');
     await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
     const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
-    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 6]);
+    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 7]);
     assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.

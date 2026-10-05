@@ -32,6 +32,46 @@ export interface ReviewReadiness {
   /** Findings the reviewer marked to fix, and findings with no decision yet. */
   toFix: number;
   untriaged: number;
+  coverage: CoverageSummary;
+}
+
+/** What happened to the reviewed files, counted once for the report and the dashboard. */
+export interface CoverageSummary {
+  files: number;
+  fully: number;
+  /** Files the model saw only part of; `partlyData` of them are data or generated files. */
+  partly: number;
+  partlyData: number;
+  notReviewed: number;
+  failedChecks: number;
+  /** The review stopped before every component was analyzed. */
+  stopped?: { unitsDone: number; unitsTotal: number };
+}
+
+// Lockfiles, images and diagrams, minified bundles and test inputs: worth less of the model's
+// attention than source, so a partial read of them is reported apart.
+const DATA_FILE = [
+  /\.(lock|svg|drawio|png|jpe?g|gif|ico|pdf|map)$/i,
+  /\.min\.(js|css)$/i,
+  /(^|\/)(package-lock\.json|pnpm-lock\.yaml|go\.sum)$/i,
+  /(^|\/)(tests?|__tests__|spec)\/(.*\/)?(input|inputs|fixtures?|data|testdata|snapshots?)\//i
+];
+export const isDataFile = (path: string) => DATA_FILE.some(pattern => pattern.test(path));
+
+export function summarizeCoverage(result: ReviewResult): CoverageSummary {
+  const { surveyed, analyzed, skipped, failed } = result.coverage;
+  // Older saved reviews have no `partial` flag; their partial reads say "Partly reviewed".
+  const partial = [...new Set(skipped.filter(item => item.partial || /^Partly reviewed/.test(item.reason)).map(item => item.path))];
+  return { files: surveyed, fully: Math.max(0, analyzed - partial.length), partly: partial.length,
+    partlyData: partial.filter(isDataFile).length, notReviewed: Math.max(0, surveyed - analyzed), failedChecks: failed.length,
+    ...(result.partial ? { stopped: result.partial } : {}) };
+}
+
+export function coverageLine(summary: CoverageSummary): string {
+  const plural = (count: number, word: string) => `${count.toLocaleString('en-US')} ${word}${count === 1 ? '' : 's'}`;
+  return [`${plural(summary.files, 'file')}: ${summary.fully.toLocaleString('en-US')} fully reviewed`,
+    `${summary.partly.toLocaleString('en-US')} partly${summary.partlyData ? ` (${summary.partlyData} data or generated)` : ''}`,
+    `${summary.notReviewed.toLocaleString('en-US')} not reviewed`, plural(summary.failedChecks, 'failed check')].join(' · ');
 }
 
 // The keys are the stored DismissReason values, shared with the dashboard.
@@ -132,10 +172,13 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
     gaps.push({ kind: 'policy', title: 'Compliance policy is not configured',
       detail: 'Add .repository-manager/review-policy.json at the reviewed revision to check team rules.' });
   }
+  const coverage = summarizeCoverage(result);
+  if (result.partial) {
+    gaps.push({ kind: 'coverage', title: `The review stopped after ${result.partial.unitsDone} of ${result.partial.unitsTotal} components`,
+      detail: 'The rest was not reviewed. Run the same review again to continue: finished components are reused.' });
+  }
   if (!result.coverage.complete) {
-    const { surveyed, analyzed, skipped, failed } = result.coverage;
-    gaps.push({ kind: 'coverage', title: 'Review coverage is incomplete',
-      detail: `${analyzed} of ${surveyed} files analyzed; ${skipped.length} skipped, ${failed.length} failed checks.` });
+    gaps.push({ kind: 'coverage', title: 'Review coverage is incomplete', detail: `${coverageLine(coverage)}.` });
   }
   blocking.sort(bySeverity);
   attention.sort(bySeverity);
@@ -143,7 +186,7 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   fixed.sort(bySeverity);
   // A gap still keeps a review from looking clean: what was not checked is not a pass.
   const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length || gaps.length ? 'needs_attention' : 'no_blocking_findings';
-  return { status, blocking, attention, gaps, dismissed, fixed, toFix, untriaged };
+  return { status, blocking, attention, gaps, dismissed, fixed, toFix, untriaged, coverage };
 }
 
 export function readinessLabel(status: ReadinessStatus): string {
@@ -235,15 +278,18 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     }
     lines.push('');
   }
-  lines.push('## Coverage', '',
-    `Surveyed ${coverage.surveyed}, analyzed ${coverage.analyzed}, skipped ${coverage.skipped.length}, failed checks ${coverage.failed.length}. ` +
-      `Complete: ${coverage.complete ? 'yes' : 'no'}.`, '');
-  const gaps = [...coverage.skipped.map(item => ({ ...item, kind: 'skipped' })), ...coverage.failed.map(item => ({ ...item, kind: 'failed' }))];
+  lines.push('## Coverage', '', `${coverageLine(readiness.coverage)}. Complete: ${coverage.complete ? 'yes' : 'no'}.`, '');
+  const gaps = [...coverage.skipped.map(item => ({ ...item, kind: item.partial || /^Partly reviewed/.test(item.reason) ? 'partly reviewed' : 'skipped' })),
+    ...coverage.failed.map(item => ({ ...item, kind: 'failed' }))];
   if (gaps.length) {
-    lines.push('<details><summary>Skipped and failed</summary>', '');
+    lines.push('<details><summary>Partly reviewed, skipped and failed</summary>', '');
     for (const gap of gaps.slice(0, 100)) { lines.push(`- ${gap.kind}: ${code(gap.path)} — ${text(gap.reason)}`); }
     if (gaps.length > 100) { lines.push(`- … and ${gaps.length - 100} more`); }
     lines.push('', '</details>', '');
+  }
+  if ((result.toVerify || []).length) {
+    lines.push('## To verify', '', 'What the model could not see from the reviewed files; check these by hand.', '',
+      ...(result.toVerify || []).map(item => `- ${text(item)}`), '');
   }
   if (result.limitations.length) {
     lines.push('## Limitations', '', ...result.limitations.map(item => `- ${text(item)}`), '');

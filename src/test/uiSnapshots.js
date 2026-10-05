@@ -528,21 +528,52 @@ async function main() {
     await page.click('#expandReviewButton');
     await page.locator('.history-region').waitFor();
 
-    // Triage: Needs fix keeps a finding in place; Dismiss moves it out of readiness, with a reason.
+    // Findings start as one line each (severity, title, where); the details open on demand.
+    const finding = id => `.review-finding[data-finding-id="${id}"]`;
+    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a finding starts expanded');
+    assert.match(await page.textContent(`${finding('high-verified')} .review-finding-title`), /Changed line passes input to eval/);
+    assert.match(await page.textContent(`${finding('high-verified')} .review-finding-where`), /^src\/app\.txt:3$/);
+    await page.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
+    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), true);
+    assert.equal(await page.getAttribute(`${finding('high-verified')} [data-action="toggleFinding"]`, 'aria-expanded'), 'true');
+    await page.click('[data-action="expandAllFindings"]');
+    assert.equal(await page.textContent('[data-action="expandAllFindings"]'), 'Collapse all');
+    assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), true);
+    // Finding text stands out from the panel: real contrast, not dimmed grey on grey.
+    const findingContrast = await page.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const card = document.querySelector('.review-finding');
+      const ratio = selector => { const [x, y] = [luminance(rgb(getComputedStyle(card.querySelector(selector)).color)), luminance(rgb(getComputedStyle(card).backgroundColor))].sort((m, n) => n - m); return +((x + .05) / (y + .05)).toFixed(2); };
+      return { title: ratio('.review-finding-title'), text: ratio('.review-finding-explanation'), label: ratio('dt') };
+    });
+    for (const [name, value] of Object.entries(findingContrast)) assert.ok(value >= 4.5, `finding ${name} has contrast ${value}`);
+
+    // Triage: a finding stays where it was found. Dismissed or fixed, it folds to one line with
+    // its state and an Undo, instead of moving to the end of the list.
     assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
     assert.equal(await page.isDisabled('[data-action="proposeReviewFix"]'), true, 'Fix is enabled with nothing marked');
-    const triage = (id, decision) => page.click(`.review-finding[data-finding-id="${id}"] [data-action="triageFinding"][data-decision="${decision}"]`);
+    const triage = (id, decision) => page.click(`${finding(id)} .review-triage [data-action="triageFinding"][data-decision="${decision}"]`);
     await triage('high-verified', 'fix');
     await page.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await triage('critical-hypothesis', 'dismiss');
-    await page.locator('.review-dismissed .review-finding[data-finding-id="critical-hypothesis"]').waitFor();
+    await page.locator(`.review-attention ${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
+    assert.equal(await page.locator('.review-dismissed').count(), 0, 'dismissed findings still move to their own section');
+    assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), false, 'a dismissed finding did not fold');
+    assert.match(await page.textContent(`${finding('critical-hypothesis')} .review-triage-chip`), /^Dismissed · False positive$/);
     assert.match(await page.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
+    // The reason is chosen in the opened finding.
+    await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
     await page.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
-    await page.waitForFunction(() => document.querySelector('.review-dismiss-reason').value === 'accepted_risk');
-    // Pressing the active choice again clears it.
+    await page.waitForFunction(() => /Accepted risk/.test(document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-triage-chip').textContent));
+    // Undo brings it back as not triaged, in the same place.
+    await page.click(`${finding('critical-hypothesis')} .review-undo`);
+    await page.waitForFunction(() => !document.querySelector('.review-finding.triage-dismiss'));
+    assert.equal(await page.locator(`.review-attention ${finding('critical-hypothesis')}`).count(), 1);
     await triage('critical-hypothesis', 'dismiss');
-    await page.waitForFunction(() => !document.querySelector('.review-dismissed'));
-    await triage('critical-hypothesis', 'dismiss');
+    await page.locator(`${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
+    await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
     await page.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
     await page.waitForFunction(() => document.querySelector('.review-dismiss-reason') && document.querySelector('.review-dismiss-reason').value === 'accepted_risk');
     await page.click('[data-action="exportReview"][data-format="copy"]');
@@ -586,11 +617,14 @@ async function main() {
     await snap(page, '10b-review-fix-preview');
     await page.click('[data-action="applyReviewFix"][data-selection="all"]');
     await page.locator('.review-fix-applied').waitFor();
-    // The fixed finding leaves "to fix" and the blocking list for its own Fixed section.
-    await page.locator('.review-fixed .review-finding[data-finding-id="high-verified"]').waitFor();
+    // The fixed finding leaves "to fix", stays in Blocking, and folds with its Fixed state.
+    await page.locator(`.review-blocking ${finding('high-verified')}.triage-fixed`).waitFor();
     assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*1 fixed.*1 dismissed/);
-    assert.equal(await page.getAttribute('.review-finding[data-finding-id="high-verified"] [data-decision="fixed"]', 'aria-pressed'), 'true');
+    assert.equal(await page.textContent(`${finding('high-verified')} .review-triage-chip`), 'Fixed');
+    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a fixed finding did not fold');
     await snap(page, '10c-review-fixed');
+    await page.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
+    assert.equal(await page.getAttribute(`${finding('high-verified')} .review-triage [data-decision="fixed"]`, 'aria-pressed'), 'true');
     assert.match(fs.readFileSync(appFile, 'utf8'), /line 3 fixed/);
     assert.equal(reviewProbe.workingTreeChanged, 1);
     assert.equal(git(parent, 'diff', '--cached', '--name-only').trim(), '', 'auto-fix staged the file');
@@ -603,7 +637,9 @@ async function main() {
     assert.equal(reviewProbe.fixRequests, 1, 'asked the model despite local changes');
     git(parent, 'checkout', '--', 'src/app.txt');
     // Evidence opens the cited line in the dashboard diff.
-    await page.locator('.review-body .review-blocking').locator('[data-action="reviewEvidence"]').first().click();
+    const firstBlocking = page.locator('.review-body .review-blocking .review-finding').first();
+    if (!(await firstBlocking.locator('.review-finding-body').isVisible())) await firstBlocking.locator('[data-action="toggleFinding"]').click();
+    await firstBlocking.locator('[data-action="reviewEvidence"]').first().click();
     await page.locator('#dashboardDiff .diff-line-highlight').waitFor();
     assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true');
     assert.equal(await page.locator('#dashboardDiff .diff-line-highlight .diff-ln').nth(1).textContent(), '3');
@@ -700,8 +736,10 @@ async function main() {
     await reopened.click('[data-action="exportReview"][data-format="copy"]');
     for (let i = 0; i < 100 && !reviewProbe.copied; i++) await reopened.waitForTimeout(20);
     assert.match(reviewProbe.copied || '', /dismissed: accepted risk/);
-    // Triage of a reopened review is saved again.
-    await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="triageFinding"][data-decision="fix"]');
+    // Triage of a reopened review is saved again; a reopened review starts with every finding folded.
+    assert.equal(await reopened.isVisible('.review-finding[data-finding-id="high-verified"] .review-finding-body'), false);
+    await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="toggleFinding"]');
+    await reopened.click('.review-finding[data-finding-id="high-verified"] .review-triage [data-action="triageFinding"][data-decision="fix"]');
     await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[5].textContent));
     // Deleting removes it from the list; the open copy stays on screen.

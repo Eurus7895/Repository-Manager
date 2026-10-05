@@ -101,7 +101,7 @@ async function main() {
     seen = [];
     script = () => done;
     result = await review();
-    assert.deepEqual(result.coverage.skipped, [{ path: 'src/big.py', reason: 'Partly reviewed: the model saw 400 of 1,000 lines' }]);
+    assert.deepEqual(result.coverage.skipped, [{ path: 'src/big.py', partial: true, reason: 'Partly reviewed: the model saw 400 of 1,000 lines' }]);
     const sent = JSON.parse(seen[0][1]).files.find(file => file.path === 'src/big.py');
     assert.deepEqual([sent.endLine, sent.totalLines, sent.truncated], [400, 1000, true]);
     seen = [];

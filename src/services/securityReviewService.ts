@@ -2,13 +2,14 @@ import * as vscode from 'vscode';
 import { PolicyRuleResult, ReviewFinding, ReviewProgressCallback, ReviewProgressDetail, ReviewRequest, ReviewResult } from '../types';
 import { GitCommandService } from './gitCommandService';
 import { validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
-import { appliesToPath, ReviewSurveyService } from './reviewSurveyService';
-import { consolidateLimitations } from './reviewLimitations';
-import { SecurityReviewProvider } from './securityReviewProvider';
+import { appliesToPath, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from './reviewSurveyService';
+import { consolidateLimitations, TRUNCATION_NOTE } from './reviewLimitations';
+import { PROMPT_VERSION, ReviewChatModel, SecurityReviewProvider } from './securityReviewProvider';
+import { ReviewUnitCacheLike, ReviewUnitOutcome, reviewUnitKey } from '../reviewUnitCache';
 
 export class SecurityReviewService {
   private survey: ReviewSurveyService;
-  constructor(git: GitCommandService, private provider = new SecurityReviewProvider()) {
+  constructor(git: GitCommandService, private provider = new SecurityReviewProvider(), private cache?: ReviewUnitCacheLike) {
     this.survey = new ReviewSurveyService(git);
   }
 
@@ -39,98 +40,51 @@ export class SecurityReviewService {
     const modelId = `${model.id}:${model.version}`;
     progress(`Planned ${plan.units.length} component(s), ${state.filesTotal} file(s)`, { ...state,
       components: plan.units.map(unit => ({ component: unit.component, files: unit.paths.length })) });
+    // Components already reviewed at these commits with this model and these prompts are reused.
+    const keyFor = (unit: ReviewWorkUnit) => reviewUnitKey({ modelId, promptVersion: PROMPT_VERSION, instructions: '',
+      targetSha: plan.request.targetSha, baseSha: plan.request.baseSha, scope: plan.request.scope,
+      categories: plan.request.categories, component: unit.component, paths: unit.paths, rules: unit.rules });
+    let unitsDone = 0;
+    let stopped = false;
     for (const [index, unit] of plan.units.entries()) {
-      if (token.isCancellationRequested) { throw new Error('Cancelled'); }
+      if (token.isCancellationRequested) { stopped = true; break; }
       Object.assign(state, { phase: 'analyzing', unit: index + 1, component: unit.component });
-      report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
-      try {
-        const raw = await this.provider.analyze(plan, unit, model, token, report);
-        const candidates: ReviewFinding[] = [];
-        for (const item of raw.findings.slice(0, 20)) {
-          const finding = await validateReviewFinding(item, plan, unit);
-          if (finding) {
-            if (finding.category === 'compliance') {
-              finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
-            }
-            candidates.push(finding);
-          }
-          else { coverage.failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' }); }
-        }
-        if (raw.findings.length > 20) {
-          coverage.failed.push({ path: unit.component, reason: 'AI finding limit exceeded' });
-        }
-        let verdicts = new Map<string, 'supported' | 'uncertain' | 'rejected'>();
-        state.candidates += candidates.length;
-        if (candidates.length) {
-          state.phase = 'verifying';
-          try {
-            verdicts = await this.provider.verify(plan, candidates, model, token, report);
-            // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
-            const missing = candidates.filter(candidate => !verdicts.has(candidate.id)).length;
-            if (missing) {
-              coverage.failed.push({ path: unit.component, reason: `No verification verdict for ${missing} of ${candidates.length} finding(s)` });
-            }
-          } catch (error) {
-            if (token.isCancellationRequested) { throw error; }
-            coverage.failed.push({ path: unit.component, reason: `Finding verification failed: ${String(error)}` });
+      const key = keyFor(unit);
+      let outcome = this.cache?.get(key);
+      if (outcome) {
+        report(`Reusing the saved result for component ${index + 1}/${plan.units.length}: ${unit.component}`);
+      } else {
+        report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
+        const failed: { path: string; reason: string }[] = [];
+        try {
+          outcome = await this.reviewUnit(plan, unit, model, token, report, state, failed);
+        } catch (error) {
+          if (token.isCancellationRequested) { stopped = true; break; }
+          for (const path of unit.paths) {
+            failed.push({ path, reason: error instanceof Error ? error.message : 'Review failed' });
           }
         }
-        for (const candidate of candidates) {
-          const verdict = verdicts.get(candidate.id);
-          if (verdict === 'rejected') { continue; }
-          // A rule the policy marks manual or static cannot be verified by an AI check.
-          const rule = candidate.category === 'compliance' ? unit.rules.find(item => item.id === candidate.ruleId) : undefined;
-          candidate.status = verdict === 'supported' && (!rule || rule.verification === 'ai') ? 'verified' : 'hypothesis';
-          if (!findings.has(candidate.id) || candidate.status === 'verified') {
-            findings.set(candidate.id, candidate);
-          }
-        }
-        const seenRules = new Set<string>();
-        if (raw.policyResults.length > 200) {
-          coverage.failed.push({ path: unit.component, reason: 'AI policy result limit exceeded' });
-        }
-        for (const item of raw.policyResults.slice(0, 200)) {
-          const result = await validatePolicyResult(item, plan, unit);
-          if (!result || seenRules.has(result.ruleId)) {
-            coverage.failed.push({ path: unit.component, reason: 'Invalid or duplicate policy result' });
-            continue;
-          }
-          seenRules.add(result.ruleId);
-          if (result.status === 'violation' && !candidates.some(candidate =>
-            candidate.category === 'compliance' && candidate.ruleId === result.ruleId &&
-            verdicts.get(candidate.id) === 'supported')) {
-            result.status = 'insufficient_evidence';
-            result.reason = 'Violation has no corroborated compliance finding.';
-          }
-          const current = results.get(result.ruleId) || [];
-          current.push(result);
-          results.set(result.ruleId, current);
-        }
-        for (const rule of unit.rules) {
-          if (!seenRules.has(rule.id)) {
-            const current = results.get(rule.id) || [];
-            current.push({ ruleId: rule.id, status: 'insufficient_evidence',
-              reason: 'AI did not return a result for this scope.', evidence: [] });
-            results.set(rule.id, current);
-            coverage.failed.push({ path: unit.component, reason: `No policy result for ${rule.id}` });
-          }
-        }
-        for (const file of raw.partialPaths) {
-          coverage.skipped.push({ path: file.path, reason: file.characters
-            ? `Partly reviewed: the model saw the first ${file.characters.toLocaleString('en-US')} characters of line 1 (of ${file.total.toLocaleString('en-US')})`
-            : `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` });
-        }
-        modelLimitations.push(...(Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
-          typeof item === 'string' && item.length <= 500) : []).slice(0, 10));
-        coverage.analyzed += unit.paths.length;
-      } catch (error) {
-        if (token.isCancellationRequested) { throw error; }
-        for (const path of unit.paths) {
-          coverage.failed.push({ path, reason: error instanceof Error ? error.message : 'Review failed' });
-        }
+        coverage.failed.push(...failed);
+        // Only a clean result is kept: anything that failed is asked again next time.
+        if (outcome && !failed.length) { await this.cache?.set(key, outcome).catch(() => undefined); }
       }
+      if (outcome) {
+        state.candidates += outcome.candidates;
+        for (const finding of outcome.findings) {
+          if (!findings.has(finding.id) || finding.status === 'verified') { findings.set(finding.id, finding); }
+        }
+        for (const result of outcome.policyResults) {
+          results.set(result.ruleId, [...(results.get(result.ruleId) || []), result]);
+        }
+        coverage.skipped.push(...outcome.skipped);
+        modelLimitations.push(...outcome.limitations);
+        coverage.analyzed += outcome.analyzed;
+      }
+      unitsDone = index + 1;
       state.filesDone += unit.paths.length;
     }
+    // Cancelled before anything was reviewed: nothing to show or keep.
+    if (stopped && unitsDone === 0) { throw new Error('Cancelled'); }
     Object.assign(state, { phase: 'finishing', component: undefined });
     report('Collecting results…');
     const policyResults: PolicyRuleResult[] = [];
@@ -164,12 +118,95 @@ export class SecurityReviewService {
                 evidence: entries.flatMap(item => item.evidence).slice(0, 8) });
       }
     }
-    coverage.complete = coverage.complete && !coverage.skipped.length && !coverage.failed.length &&
+    coverage.complete = !stopped && coverage.complete && !coverage.skipped.length && !coverage.failed.length &&
       coverage.analyzed === coverage.surveyed;
-    limitations.push(...consolidateLimitations(modelLimitations, { policyConfigured: policy.status === 'configured' }));
+    const consolidated = consolidateLimitations(modelLimitations, { policyConfigured: policy.status === 'configured' });
+    if (consolidated.truncated) { limitations.push(TRUNCATION_NOTE); }
+    if (stopped) {
+      limitations.push(`The review stopped after ${unitsDone} of ${plan.units.length} components; the rest was not reviewed. Run it again to continue: finished components are reused.`);
+    }
     if (!coverage.complete) { limitations.push('Review coverage is incomplete; missing checks are not a pass.'); }
     limitations.push('Verified findings have source and diff citations and a second AI check; this does not prove absence of other vulnerabilities.');
     return { request: plan.request, findings: [...findings.values()], policyResults, coverage,
-      policyStatus: policy.status, modelId, limitations: [...new Set(limitations)].slice(0, 40) };
+      policyStatus: policy.status, modelId, limitations: [...new Set(limitations)].slice(0, 40),
+      toVerify: consolidated.toVerify.slice(0, 20),
+      ...(stopped ? { partial: { unitsDone, unitsTotal: plan.units.length } } : {}) };
+  }
+
+  /** Analyzes and verifies one component. Problems that leave it incomplete go into `failed`. */
+  private async reviewUnit(plan: ReviewPlan, unit: ReviewWorkUnit, model: ReviewChatModel, token: vscode.CancellationToken,
+    report: (message: string) => void, state: ReviewProgressDetail, failed: { path: string; reason: string }[]): Promise<ReviewUnitOutcome> {
+    const raw = await this.provider.analyze(plan, unit, model, token, report);
+    const candidates: ReviewFinding[] = [];
+    for (const item of raw.findings.slice(0, 20)) {
+      const finding = await validateReviewFinding(item, plan, unit);
+      if (finding) {
+        if (finding.category === 'compliance') {
+          finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
+        }
+        candidates.push(finding);
+      }
+      else { failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' }); }
+    }
+    if (raw.findings.length > 20) {
+      failed.push({ path: unit.component, reason: 'AI finding limit exceeded' });
+    }
+    let verdicts = new Map<string, 'supported' | 'uncertain' | 'rejected'>();
+    if (candidates.length) {
+      state.phase = 'verifying';
+      try {
+        verdicts = await this.provider.verify(plan, candidates, model, token, report);
+        // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
+        const missing = candidates.filter(candidate => !verdicts.has(candidate.id)).length;
+        if (missing) {
+          failed.push({ path: unit.component, reason: `No verification verdict for ${missing} of ${candidates.length} finding(s)` });
+        }
+      } catch (error) {
+        if (token.isCancellationRequested) { throw error; }
+        failed.push({ path: unit.component, reason: `Finding verification failed: ${String(error)}` });
+      }
+    }
+    const kept: ReviewFinding[] = [];
+    for (const candidate of candidates) {
+      const verdict = verdicts.get(candidate.id);
+      if (verdict === 'rejected') { continue; }
+      // A rule the policy marks manual or static cannot be verified by an AI check.
+      const rule = candidate.category === 'compliance' ? unit.rules.find(item => item.id === candidate.ruleId) : undefined;
+      candidate.status = verdict === 'supported' && (!rule || rule.verification === 'ai') ? 'verified' : 'hypothesis';
+      kept.push(candidate);
+    }
+    const policyResults: PolicyRuleResult[] = [];
+    const seenRules = new Set<string>();
+    if (raw.policyResults.length > 200) {
+      failed.push({ path: unit.component, reason: 'AI policy result limit exceeded' });
+    }
+    for (const item of raw.policyResults.slice(0, 200)) {
+      const result = await validatePolicyResult(item, plan, unit);
+      if (!result || seenRules.has(result.ruleId)) {
+        failed.push({ path: unit.component, reason: 'Invalid or duplicate policy result' });
+        continue;
+      }
+      seenRules.add(result.ruleId);
+      if (result.status === 'violation' && !candidates.some(candidate =>
+        candidate.category === 'compliance' && candidate.ruleId === result.ruleId &&
+        verdicts.get(candidate.id) === 'supported')) {
+        result.status = 'insufficient_evidence';
+        result.reason = 'Violation has no corroborated compliance finding.';
+      }
+      policyResults.push(result);
+    }
+    for (const rule of unit.rules) {
+      if (!seenRules.has(rule.id)) {
+        policyResults.push({ ruleId: rule.id, status: 'insufficient_evidence',
+          reason: 'AI did not return a result for this scope.', evidence: [] });
+        failed.push({ path: unit.component, reason: `No policy result for ${rule.id}` });
+      }
+    }
+    const skipped = raw.partialPaths.map(file => ({ path: file.path, partial: true, reason: file.characters
+      ? `Partly reviewed: the model saw the first ${file.characters.toLocaleString('en-US')} characters of line 1 (of ${file.total.toLocaleString('en-US')})`
+      : `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` }));
+    const limitations = (Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
+      typeof item === 'string' && item.length <= 500) : []).slice(0, 10);
+    return { findings: kept, candidates: candidates.length, policyResults, skipped, limitations, analyzed: unit.paths.length };
   }
 }

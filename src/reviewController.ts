@@ -115,11 +115,20 @@ export class ReviewController {
     this.running = undefined;
   }
 
-  /** Cancel requested in the dashboard: unlike a superseded review, the dashboard must hear back. */
+  /**
+   * Cancel requested in the dashboard. Unlike a superseded review, this one still reports back:
+   * the engine stops after the current step and returns what it finished (shown and saved as a
+   * stopped review), or the review fails as cancelled when nothing was finished yet.
+   */
   private async cancelFromDashboard(): Promise<void> {
     const active = this.active;
-    this.cancel();
-    if (active) {
+    this.cancelFixQuietly();
+    if (this.running) {
+      this.running.cancel();
+      if (active) { await this.host.post({ type: 'reviewProgress', payload: { ...active, message: 'Stopping after the current step…' } }); }
+    } else if (active) {
+      // Still waiting for consent or planning: nothing is running to stop.
+      this.cancel();
       await this.host.post({ type: 'reviewFailed', payload: { ...active, cancelled: true, message: 'Review cancelled.' } });
     }
   }
@@ -230,7 +239,7 @@ export class ReviewController {
       const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage: {} })
         .then(entry => entry.id, () => undefined);
       this.remember(requestId, { result, context, triage: {}, workspaceRoot, historyId });
-      await reply('reviewCompleted', { result, readiness: assessReadiness(result), context: storedContext, historyId });
+      await reply('reviewCompleted', { result, readiness: assessReadiness(result), layout: assessReadiness(result), context: storedContext, historyId });
     } catch (error) {
       const cancelled = cancellation.token.isCancellationRequested;
       await reply('reviewFailed', { cancelled, message: cancelled
@@ -270,16 +279,40 @@ export class ReviewController {
     else { next[findingId] = { decision: payload.decision, reason: payload.reason } as ReviewTriage[string]; }
     stored.triage = normalizeTriage(stored.result, next);
     if (stored.historyId) { await this.host.history.setTriage(stored.historyId, stored.triage).catch(() => undefined); }
-    // A proposal fixes exactly the findings marked when it was requested: changing which findings
-    // need fixing makes it stale, whether it is still being proposed or waiting for Apply.
-    const fix = this.fix;
-    if (fix && fix.requestId === requestId && (fix.findingIds.includes(findingId) || stored.triage[findingId]?.decision === 'fix')) {
-      this.cancelFixQuietly();
-      await this.host.post({ type: 'reviewFixFailed', payload: { requestId,
-        message: 'The findings marked "Needs fix" changed, so the proposed fix was discarded. Propose it again.' } });
-    }
+    await this.updateFixForTriage(requestId as number, stored.triage);
     await this.host.post({ type: 'reviewTriageUpdated', payload: { requestId, triage: stored.triage,
-      readiness: assessReadiness(stored.result, stored.triage) } });
+      readiness: assessReadiness(stored.result, stored.triage), layout: assessReadiness(stored.result) } });
+  }
+
+  /**
+   * A proposal fixes the findings marked "Needs fix" when it was requested. When one of them is no
+   * longer marked, its files leave the proposal (the rest still apply); when another finding is
+   * marked, or nothing would be left, the proposal closes. Either way the dashboard says why.
+   */
+  private async updateFixForTriage(requestId: number, triage: ReviewTriage): Promise<void> {
+    const fix = this.fix;
+    if (!fix || fix.requestId !== requestId) { return; }
+    const wanted = new Set(Object.entries(triage).filter(([, item]) => item.decision === 'fix').map(([id]) => id));
+    const dropped = fix.findingIds.filter(id => !wanted.has(id));
+    const added = [...wanted].filter(id => !fix.findingIds.includes(id));
+    if (!dropped.length && !added.length) { return; }
+    if (fix.proposal && !added.length) {
+      const files = fix.proposal.files.filter(file => file.findingIds.some(id => wanted.has(id)));
+      if (files.length) {
+        const removed = fix.proposal.files.length - files.length;
+        fix.findingIds = fix.findingIds.filter(id => wanted.has(id));
+        fix.proposal = { ...fix.proposal, files, findingIds: fix.findingIds };
+        await this.host.post({ type: 'reviewFixUpdated', payload: { requestId,
+          files: files.map(file => ({ path: file.path, patch: file.patch, findingIds: file.findingIds })),
+          message: removed ? `Removed ${removed} file${removed === 1 ? '' : 's'} that only fixed findings no longer marked "Needs fix".` : '' } });
+        return;
+      }
+    }
+    const wasProposed = Boolean(fix.proposal);
+    this.cancelFixQuietly();
+    await this.host.post({ type: 'reviewFixDiscarded', payload: { requestId, message: added.length
+      ? `Another finding is marked "Needs fix", so the ${wasProposed ? 'proposed fix was closed' : 'fix being proposed was stopped'}. Propose it again to include it.`
+      : `The ${wasProposed ? 'proposed fix was closed' : 'fix being proposed was stopped'}: none of its findings is marked "Needs fix" any more.` } });
   }
 
   private cancelFixQuietly(): void {
@@ -360,8 +393,9 @@ export class ReviewController {
       const remaining = proposal.files.filter(file => !paths.includes(file.path));
       fix.applied = [...(fix.applied || []), ...paths];
       // A finding is fixed once every proposed file with edits for it has been applied.
+      // Only findings still in the proposal: a file can also touch a finding dismissed since.
       const fixedIds = [...new Set(proposal.files.filter(file => paths.includes(file.path)).flatMap(file => file.findingIds))]
-        .filter(id => !remaining.some(file => file.findingIds.includes(id)));
+        .filter(id => fix.findingIds.includes(id) && !remaining.some(file => file.findingIds.includes(id)));
       if (remaining.length) { fix.proposal = { ...proposal, files: remaining }; } else { this.fix = undefined; }
       await this.host.post({ type: 'reviewFixApplied', payload: { requestId: fix.requestId, paths, fixedFindingIds: fixedIds,
         remaining: remaining.map(file => ({ path: file.path, patch: file.patch, findingIds: file.findingIds })) } });
@@ -372,7 +406,7 @@ export class ReviewController {
         stored.triage = normalizeTriage(stored.result, next);
         if (stored.historyId) { await this.host.history.setTriage(stored.historyId, stored.triage).catch(() => undefined); }
         await this.host.post({ type: 'reviewTriageUpdated', payload: { requestId: fix.requestId, triage: stored.triage,
-          readiness: assessReadiness(stored.result, stored.triage) } });
+          readiness: assessReadiness(stored.result, stored.triage), layout: assessReadiness(stored.result) } });
       }
       this.host.notify(`Applied the fix to ${paths.length} file${paths.length === 1 ? '' : 's'}. Nothing was committed.`);
       this.host.workingTreeChanged();
@@ -421,7 +455,7 @@ export class ReviewController {
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
-      readiness: assessReadiness(entry.result, entry.triage), context: entry.context, triage: entry.triage, historyId: id } });
+      readiness: assessReadiness(entry.result, entry.triage), layout: assessReadiness(entry.result), context: entry.context, triage: entry.triage, historyId: id } });
   }
 
   private async deleteStored(payload: Record<string, unknown>): Promise<void> {

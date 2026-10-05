@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
+import { createHash } from 'crypto';
 import { ReviewFinding } from '../types';
 import { ReviewPlan, ReviewWorkUnit } from './reviewSurveyService';
 
-interface ReviewChatModel {
+export interface ReviewChatModel {
   id: string; name: string; version: string; maxInputTokens: number;
   countTokens(value: string): Thenable<number>;
   sendRequest(messages: unknown[], options: Record<string, never>, token: vscode.CancellationToken): Thenable<{ text: AsyncIterable<string> }>;
@@ -97,6 +98,14 @@ export function parseModelJson(text: string): Record<string, unknown> | undefine
 
 const REPAIR_PROMPT = 'Your previous reply was not a valid JSON object. Reply again with ONLY the JSON object described in the instructions: no prose, no code fence.';
 const FINAL_PROMPT = 'The tool budget is used up. Do not request more tools: return your final JSON now from what you have read, and name what you could not check in limitations.';
+
+/**
+ * Changes whenever the instructions or what the model is first shown change, so a saved component
+ * result is reused only for the same prompts (see ReviewUnitCache).
+ */
+export const PROMPT_VERSION = createHash('sha256')
+  .update(JSON.stringify([ANALYZE_PROMPT, VERIFY_PROMPT, REPAIR_PROMPT, FINAL_PROMPT, INITIAL_FILE_LINES, INITIAL_FILE_CHARS, INITIAL_UNIT_CHARS]))
+  .digest('hex').slice(0, 16);
 
 export class SecurityReviewProvider {
   constructor(private api: ReviewModelAPI = vscode as typeof vscode & ReviewModelAPI) {}

@@ -2621,15 +2621,41 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-gaps-section .review-item { border-left-color: var(--border-strong); background: transparent; }
 .review-gaps-note { margin-bottom: 6px; color: var(--text-muted); font-size: 11px; }
 .review-advisory { margin-top: 18px; color: var(--text-muted); font-size: 11px; }
-.review-finding, .review-item { padding: 8px 10px; border-left: 3px solid var(--text-muted); border-radius: 4px; background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, .05)); }
+.review-finding, .review-item { padding: 6px 10px; border: 1px solid var(--border); border-left: 3px solid var(--text-muted); border-radius: 4px; background: var(--bg-raised); color: var(--text-primary); }
 .review-item { display: grid; gap: 2px; }
 .review-item span { color: var(--text-secondary); }
 .review-finding.severity-critical, .review-finding.severity-high { border-left-color: var(--error); }
 .review-finding.severity-medium { border-left-color: var(--warning); }
 .review-finding p { margin: 4px 0; }
-.review-finding dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; color: var(--text-secondary); }
-.review-finding dt { color: var(--text-muted); }
-.review-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.review-finding dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 6px 0; color: var(--text-primary); }
+.review-finding dt { color: var(--text-secondary); font-weight: 600; }
+.review-finding code, .review-to-verify code { padding: 0 3px; border-radius: 3px; color: var(--text-strong); background: var(--bg-sunken); font-size: .95em; }
+.review-finding-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* One line per finding until it is opened. */
+.review-finding-toggle { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; border: 0; color: inherit; background: none; font: inherit; text-align: left; cursor: pointer; }
+.review-finding-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.review-finding-chevron::before { content: "▸"; display: inline-block; width: 10px; color: var(--text-muted); }
+.review-finding.open .review-finding-chevron::before { content: "▾"; }
+.review-finding-title { overflow: hidden; color: var(--text-strong); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.review-finding.open .review-finding-title { white-space: normal; }
+.review-finding-where { flex: none; max-width: 40%; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-finding-body { display: none; margin: 4px 0 2px 18px; }
+.review-finding.open .review-finding-body { display: block; }
+.review-finding-meta { color: var(--text-secondary); font-size: 11px; }
+.review-finding-explanation { color: var(--text-primary); line-height: 1.45; }
+.review-triage-chip { flex: none; padding: 0 6px; border-radius: 3px; font-size: 10px; line-height: 16px; color: var(--text-strong); background: var(--bg-sunken); }
+.triage-chip-dismiss { color: var(--text-secondary); }
+.triage-chip-fixed { color: var(--tone-ok); }
+.triage-chip-fix { color: var(--tone-warn); }
+.review-undo, .review-expand-all, .review-fix-close { flex: none; padding: 0 6px; border: 1px solid var(--border); border-radius: 3px; color: var(--text-secondary); background: none; font: inherit; font-size: 11px; cursor: pointer; }
+.review-undo:hover, .review-expand-all:hover, .review-fix-close:hover { color: var(--text-strong); background: var(--bg-hover); }
+.review-count { padding: 0 6px; border-radius: 8px; color: var(--text-secondary); background: var(--bg-sunken); font-size: 10px; font-weight: 600; }
+.review-stopped { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0; padding: 8px 12px; border: 1px solid var(--warning); border-radius: 6px; color: var(--text-primary); }
+.review-to-verify { margin: 12px 0; }
+.review-to-verify > summary { cursor: pointer; font-weight: 600; }
+.review-to-verify li { margin: 4px 0; color: var(--text-primary); }
+.review-fix { position: relative; }
+.review-fix-close { position: absolute; top: 8px; right: 8px; font-size: 13px; }
 .review-severity { font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: .06em; }
 .review-confidence { color: var(--text-muted); font-size: 11px; }
 .review-badge { padding: 0 6px; border-radius: 3px; font-size: 10px; line-height: 16px; }
@@ -2693,8 +2719,9 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-triage button[data-decision="fix"][aria-pressed="true"] { border-color: var(--warning); color: var(--tone-warn); background: rgba(229, 165, 71, .14); }
 .review-triage button[data-decision="dismiss"][aria-pressed="true"] { border-color: var(--text-muted); color: var(--text-primary); background: var(--bg-tertiary); }
 .review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
-.review-finding.triage-dismiss { opacity: .7; }
-.review-finding.triage-fixed { border-left-color: var(--accent); opacity: .75; }
+.review-finding.triage-dismiss:not(.open) .review-finding-title { color: var(--text-secondary); font-weight: 400; text-decoration: line-through; text-decoration-color: var(--text-muted); }
+.review-finding.triage-fixed { border-left-color: var(--tone-ok); }
+.review-finding.triage-fixed:not(.open) .review-finding-title { color: var(--text-secondary); font-weight: 400; }
 .review-fixed h4 { color: var(--tone-ok); }
 .review-finding.triage-fix { box-shadow: inset 3px 0 0 var(--warning); }
 .review-triage-summary { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 10px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 12px; }

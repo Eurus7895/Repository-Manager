@@ -212,9 +212,10 @@ async function main() {
     assert.deepEqual(proposed.files.map(file => file.path), ['app.js']);
     assert.deepEqual(proposed.findingIds, ['f1']);
     assert.equal(read('app.js').includes('eval(input)'), true);
-    // Changing the triage of a finding in the proposal discards it: Apply then does nothing.
+    // A finding no longer marked "Needs fix" takes its files out; with none left, the proposal closes
+    // and says why (a note the dashboard can close), and Apply then does nothing.
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: null } });
-    assert.match(of('reviewFixFailed').at(-1).payload.message, /changed, so the proposed fix was discarded/);
+    assert.match(of('reviewFixDiscarded').at(-1).payload.message, /none of its findings is marked "Needs fix"/);
     await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
     assert.equal(of('reviewFixApplied').length, 0, 'applied a fix for a finding no longer marked Needs fix');
     assert.equal(read('app.js').includes('eval(input)'), true);
@@ -223,7 +224,7 @@ async function main() {
     await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
     assert.equal(of('reviewFixProposed').length, 2);
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'other', decision: 'fix' } });
-    assert.match(of('reviewFixFailed').at(-1).payload.message, /discarded/);
+    assert.match(of('reviewFixDiscarded').at(-1).payload.message, /Another finding is marked "Needs fix"/);
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'other', decision: null } });
     await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
     await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
@@ -267,6 +268,21 @@ async function main() {
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: null } });
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fixed' } });
     assert.deepEqual(of('reviewTriageUpdated').at(-1).payload.triage.f1, { decision: 'fixed' });
+    // Dismissing one of two findings in a proposal takes only its file out; the rest still applies,
+    // and the dismissed finding stays dismissed.
+    git('checkout', '--', 'app.js', 'util.js');
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f1', decision: 'fix' } });
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f2', decision: 'fix' } });
+    await controller.handle({ type: 'proposeReviewFix', payload: { requestId: 1 } });
+    assert.equal(of('reviewFixProposed').at(-1).payload.files.length, 2);
+    await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'f2', decision: 'dismiss', reason: 'false_positive' } });
+    const pruned = of('reviewFixUpdated').at(-1).payload;
+    assert.deepEqual(pruned.files.map(file => file.path), ['app.js']);
+    assert.match(pruned.message, /Removed 1 file that only fixed findings no longer marked "Needs fix"/);
+    await controller.handle({ type: 'applyReviewFix', payload: { requestId: 1 } });
+    assert.deepEqual(of('reviewFixApplied').at(-1).payload.paths, ['app.js']);
+    assert.equal(read('util.js').includes('exports.x = 1;'), true, 'the dismissed finding\'s file was written');
+    assert.deepEqual(of('reviewTriageUpdated').at(-1).payload.triage, { f1: { decision: 'fixed' }, f2: { decision: 'dismiss', reason: 'false_positive' } });
     fs.rmSync(otherFolder, { recursive: true, force: true });
     console.log('Review fix smoke passed');
   } finally {

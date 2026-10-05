@@ -53,6 +53,8 @@ export interface ReviewHistorySummary {
   toFix: number;
   findings: number;
   modelId?: string;
+  /** Set when the review stopped before every component was analyzed. */
+  stopped?: { unitsDone: number; unitsTotal: number };
 }
 
 function isEntry(value: unknown): value is ReviewHistoryEntry {
@@ -81,7 +83,8 @@ export function summarize(entry: ReviewHistoryEntry): ReviewHistorySummary {
     id: entry.id, generatedAt: entry.context.generatedAt, kind: entry.context.kind, scope: entry.result.request.scope,
     baseLabel: entry.context.baseLabel, targetLabel: entry.context.targetLabel, baseSha: entry.result.request.baseSha, targetSha: entry.result.request.targetSha,
     status: readiness.status, blocking: readiness.blocking.length, attention: readiness.attention.length,
-    dismissed: readiness.dismissed.length, fixed: readiness.fixed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId
+    dismissed: readiness.dismissed.length, fixed: readiness.fixed.length, toFix: readiness.toFix, findings: entry.result.findings.length, modelId: entry.result.modelId,
+    ...(entry.result.partial ? { stopped: entry.result.partial } : {})
   };
 }
 

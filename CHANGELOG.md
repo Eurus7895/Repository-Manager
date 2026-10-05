@@ -5,6 +5,24 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - Unreleased
+
+### Added
+
+- **Reviews continue where they stopped.** Each finished component is saved, so running the same review again asks Copilot only for the rest, after a Cancel, a closed VS Code or a model error. Cancel keeps what finished: the stopped review is shown and saved with how far it got, and **Continue review** picks it up. Saved results are reused only with the same model and review instructions, and kept for 30 days.
+- **To verify**: what the model could not see from the reviewed files (callers, CI settings, external services), as a short list to check by hand.
+
+### Changed
+
+- Findings are one line each (severity, title, file and line) and open to their details; **Expand all** opens every one. Their text and labels have stronger contrast, and `code` in them is shown as code.
+- A dismissed or fixed finding stays where it was, folded with its state and an **Undo**, instead of moving to the end of the list.
+- Coverage says what happened to the files: fully reviewed, partly reviewed (lockfiles, images, diagrams and test inputs counted apart), not reviewed, failed checks. Partly read files are no longer called skipped.
+- Limitations no longer repeat which files were in scope, that they contain no sinks, or that a file was not read. Each note stays whole instead of being cut into sentences, and file names keep their case.
+
+### Fixed
+
+- Dismissing a finding that a proposed fix covered left an error box that could not be closed. Its files now leave the proposal and the rest can still be applied; when nothing is left, the proposal closes with a note you can close.
+
 ## [1.9.1] - 2026-10-05
 
 ### Changed
