@@ -35,6 +35,9 @@
   // The Review tab can take the whole dashboard (history hidden); remembered across reloads.
   let reviewExpanded = Boolean(previousState.reviewExpanded);
   let openFindings = new Set(); // findings of the open review shown expanded (all start collapsed)
+  // Reviews also check clean code when this is on (the "Clean code" box); remembered across reloads.
+  let reviewQuality = Boolean(previousState.reviewQuality);
+  let reviewSkills = [];
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
   let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
@@ -228,6 +231,7 @@
       dashboardHistoryState,
       historyPanelHeight,
       reviewExpanded,
+      reviewQuality,
       filesPanelWidth,
       historyColumnWidths
     });
@@ -766,8 +770,16 @@
       if (!result || !result.partial) return;
       const { request } = result;
       const context = reviewState.context || {};
+      // The same categories as the stopped run, so its saved components match.
       startReview({ scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
-        targetLabel: context.targetLabel, baseLabel: context.baseLabel });
+        targetLabel: context.targetLabel, baseLabel: context.baseLabel, includeQuality: (request.categories || []).includes('quality') });
+    },
+    importReviewSkill: () => postMessage('importReviewSkill', {}),
+    toggleReviewSkill: (el) => {
+      if (el.dataset.skillId) postMessage('setReviewSkillEnabled', { id: el.dataset.skillId, enabled: el.dataset.enabled === 'true' });
+    },
+    removeReviewSkill: (el) => {
+      if (el.dataset.skillId) postMessage('removeReviewSkill', { id: el.dataset.skillId });
     },
     // A note or a failure about the fix stays until it is closed; it holds nothing to apply.
     closeFixNote: () => {
@@ -2127,6 +2139,11 @@
           renderDashboardError(message.payload);
           break;
 
+        case 'reviewSkillsLoaded':
+          reviewSkills = Array.isArray(message.payload && message.payload.skills) ? message.payload.skills : [];
+          renderReviewSkills(message.payload && message.payload.message);
+          break;
+
         case 'publishSidebar':
           publishSidebar();
           break;
@@ -2741,7 +2758,27 @@
     postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
       baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
       baseLabel: scope === 'changes' && options.base ? options.baseLabel || shortRevision(options.base) : undefined,
-      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined });
+      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined,
+      includeQuality: options.includeQuality === undefined ? reviewQuality : options.includeQuality });
+  }
+
+  function renderReviewSkills(message) {
+    const list = document.getElementById('reviewSkillsList');
+    const count = document.getElementById('reviewSkillsCount');
+    const status = document.getElementById('reviewSkillsStatus');
+    if (!list) return;
+    if (count) count.textContent = `${reviewSkills.filter(skill => skill.enabled).length}/${reviewSkills.length}`;
+    if (status) status.textContent = message || '';
+    list.innerHTML = reviewSkills.map(skill => {
+      const id = escapeHtml(skill.id);
+      const globs = skill.appliesTo.length > 4 ? `${skill.appliesTo.slice(0, 4).join(', ')} +${skill.appliesTo.length - 4}` : skill.appliesTo.join(', ');
+      return `<li class="review-skill${skill.enabled ? '' : ' off'}">
+        <button type="button" class="review-skill-switch" data-action="toggleReviewSkill" data-skill-id="${id}" data-enabled="${!skill.enabled}" aria-pressed="${skill.enabled}" title="${skill.enabled ? 'Turn off' : 'Turn on'}">${skill.enabled ? 'On' : 'Off'}</button>
+        <span class="review-skill-copy"><strong>${escapeHtml(skill.name)}</strong> <span class="review-skill-kind">${skill.category === 'quality' ? 'clean code' : 'security'}${skill.source === 'imported' ? ' · imported' : ''}</span>
+          <small title="${escapeHtml(skill.appliesTo.join(', '))}">${escapeHtml(globs)}</small>${skill.references ? `<small>${escapeHtml(skill.references)}</small>` : ''}</span>
+        ${skill.source === 'imported' ? `<button type="button" class="review-history-delete" data-action="removeReviewSkill" data-skill-id="${id}" aria-label="Remove ${escapeHtml(skill.name)}" title="Remove this imported skill">×</button>` : ''}
+      </li>`;
+    }).join('');
   }
 
   // A review runs in the background: the rest of the dashboard stays usable (other repositories,
@@ -3012,7 +3049,7 @@
         <span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span>${chip}${undo}
       </div>
       <div class="review-finding-body">
-        <p class="review-finding-meta">${escapeHtml(finding.category)}${rule} · confidence ${escapeHtml(finding.confidence)}</p>
+        <p class="review-finding-meta">${escapeHtml(finding.category === 'quality' ? 'clean code' : finding.category)}${rule} · confidence ${escapeHtml(finding.confidence)}${finding.skill ? ` · skill <span class="review-skill-tag">${escapeHtml(finding.skill)}</span>` : ''}</p>
         <p class="review-finding-explanation">${richText(finding.explanation)}</p>
         <dl><dt>Impact</dt><dd>${richText(finding.impact)}</dd><dt>Suggested action</dt><dd>${richText(finding.suggestedAction)}</dd></dl>
         <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
@@ -3021,13 +3058,19 @@
     </li>`;
   }
 
+  const isQualityItem = item => {
+    const finding = item.findingId && reviewState.result && (reviewState.result.findings || []).find(entry => entry.id === item.findingId);
+    return Boolean(finding && finding.category === 'quality');
+  };
+
   // Findings stay in the section they were found in (layout: the readiness without triage);
   // policy items follow the current readiness, since a fixed finding can resolve its rule.
   function sectionItems(key) {
     const readiness = reviewState.readiness || {};
     const layout = reviewState.layout;
     if (!layout) {
-      const triaged = key === 'attention' ? (readiness.fixed || []).concat(readiness.dismissed || []) : [];
+      const triaged = key === 'attention' || key === 'quality'
+        ? (readiness.fixed || []).concat(readiness.dismissed || []).filter(item => isQualityItem(item) === (key === 'quality')) : [];
       return (readiness[key] || []).concat(triaged);
     }
     return (layout[key] || []).filter(item => item.findingId).concat((readiness[key] || []).filter(item => !item.findingId));
@@ -3158,11 +3201,12 @@
     const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
     const findingAndGapCounts = [readiness.attention.length
       ? plural(readiness.attention.length, readiness.status === 'blocked' ? 'other finding' : 'finding') : '',
-      (readiness.gaps || []).length ? plural(readiness.gaps.length, 'review gap') : ''].filter(Boolean);
+      (readiness.gaps || []).length ? plural(readiness.gaps.length, 'review gap') : '',
+      (readiness.quality || []).length ? plural(readiness.quality.length, 'code quality note') : ''].filter(Boolean);
     const banner = {
       blocked: `Blocked: ${[`${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`, ...findingAndGapCounts].join(' · ')}`,
       needs_attention: `Needs attention: ${findingAndGapCounts.join(' · ')}`,
-      no_blocking_findings: 'No blocking findings in what was reviewed'
+      no_blocking_findings: `No blocking findings in what was reviewed${(readiness.quality || []).length ? ` · ${plural(readiness.quality.length, 'code quality note')}` : ''}`
     }[readiness.status];
     const coverage = result.coverage;
     const isPartlyReviewed = item => item.partial || /^Partly reviewed/.test(item.reason || '');
@@ -3189,15 +3233,23 @@
       : '';
     const blockingItems = sectionItems('blocking');
     const attentionItems = sectionItems('attention');
+    const reviewedQuality = (result.request.categories || []).includes('quality');
+    const qualitySection = reviewedQuality
+      ? `<section class="review-quality"><h4>Code quality <span class="review-count">${(readiness.quality || []).length}</span></h4><p class="review-gaps-note">Maintainability notes from the clean code review. They never block.</p>${renderReviewItems(sectionItems('quality'), findings)}</section>` : '';
+    const skillsUsed = (result.skillsApplied || []).length
+      ? `<details class="review-skills-applied"><summary>Review skills used <span class="review-count">${[...new Set(result.skillsApplied.flatMap(item => item.skills))].length}</span></summary><ul>${result.skillsApplied.map(item =>
+        `<li><code>${escapeHtml(item.component)}</code> ${item.skills.map(id => `<span class="review-skill-tag">${escapeHtml(id)}</span>`).join(' ')}${(item.omitted || []).length ? ` <small>left out (too long): ${escapeHtml(item.omitted.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>` : '';
     body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${stopped}
       ${triageBar}
       ${renderFixPanel()}
       <section class="review-blocking"><h4>Blocking <span class="review-count">${readiness.blocking.length}</span></h4>${renderReviewItems(blockingItems, findings)}</section>
       <section class="review-attention"><h4>Needs attention <span class="review-count">${readiness.attention.length}</span></h4>${renderReviewItems(attentionItems, findings)}</section>
+      ${qualitySection}
       ${(readiness.gaps || []).length ? `<section class="review-gaps-section"><h4>Review gaps</h4><p class="review-gaps-note">What this review could not establish. Not findings, but not passes either.</p>${renderReviewItems(readiness.gaps, findings)}</section>` : ''}
       ${policy}
       ${toVerify}
+      ${skillsUsed}
       <section><h4>Coverage</h4><p>${escapeHtml(coverageText)} · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Partly reviewed, skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
       ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
@@ -3315,4 +3367,10 @@
     activateDashboardRepository(activeDashboardRepository);
   }
   renderRepositorySwitcher();
+  const qualityToggle = document.getElementById('reviewQualityToggle');
+  if (qualityToggle) {
+    qualityToggle.checked = reviewQuality;
+    qualityToggle.addEventListener('change', () => { reviewQuality = qualityToggle.checked; saveState(); });
+  }
+  postMessage('listReviewSkills', {});
 })();

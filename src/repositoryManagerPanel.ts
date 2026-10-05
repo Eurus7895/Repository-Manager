@@ -17,6 +17,7 @@ import { ReviewController, ReviewRunner } from './reviewController';
 import { ReviewConsentStore } from './reviewConsent';
 import { ReviewHistoryStore } from './reviewHistory';
 import { ReviewUnitCache } from './reviewUnitCache';
+import { ReviewSkillStore } from './reviewSkillStore';
 import { resolveReleaseRange } from './services/releaseRange';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 
@@ -37,6 +38,8 @@ const READ_ONLY_MESSAGES = new Set([
 
 export class RepositoryManagerPanel {
   public static currentPanel: RepositoryManagerPanel | undefined;
+  /** The extension's global state, for what follows the user across workspaces (review skills). */
+  public static globalState: vscode.Memento | undefined;
   private readonly _panel: vscode.WebviewPanel;
   private readonly _extensionUri: vscode.Uri;
   private _gitOps: GitOperations;
@@ -100,6 +103,7 @@ export class RepositoryManagerPanel {
     const consent = new ReviewConsentStore(workspaceState);
     // Finished components of earlier reviews: a stopped review continues instead of starting over.
     const unitCache = new ReviewUnitCache(workspaceState);
+    const skills = new ReviewSkillStore(path.join(extensionUri.fsPath, 'resources', 'review-skills'), RepositoryManagerPanel.globalState);
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
       post: async message => { await this._panel.webview.postMessage(message); },
@@ -107,7 +111,7 @@ export class RepositoryManagerPanel {
       alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
       isConsentRemembered: root => consent.has(root),
       rememberConsent: root => consent.allow(root),
-      createRunner: root => new SecurityReviewService(new GitCommandService(root), undefined, unitCache) as unknown as ReviewRunner,
+      createRunner: root => new SecurityReviewService(new GitCommandService(root), undefined, unitCache, () => skills.snapshot()) as unknown as ReviewRunner,
       createCancellation: () => new vscode.CancellationTokenSource(),
       copyText: text => Promise.resolve(vscode.env.clipboard.writeText(text)),
       saveText: async (fileName, text) => {
@@ -138,7 +142,15 @@ export class RepositoryManagerPanel {
       isDirtyInEditor: absolutePath => vscode.workspace.textDocuments.some(document =>
         document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === absolutePath),
       workingTreeChanged: () => { this.refresh(); },
-      history: new ReviewHistoryStore(workspaceState)
+      history: new ReviewHistoryStore(workspaceState),
+      skills,
+      pickSkillFile: async () => {
+        // The filter key is the label VS Code shows in the dialog.
+        // eslint-disable-next-line @typescript-eslint/naming-convention
+        const picked = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Import skill', filters: { Markdown: ['md'] } });
+        if (!picked || !picked[0]) { return undefined; }
+        return Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf8');
+      }
     });
     this._disposables.push(vscode.workspace.registerTextDocumentContentProvider(REVIEW_EVIDENCE_SCHEME, {
       provideTextDocumentContent: uri => this._evidenceDocuments.get(uri.toString()) || ''

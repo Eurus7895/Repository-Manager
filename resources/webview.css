@@ -2569,9 +2569,10 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .detail-tabs [role="tab"]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .detail-tab-badge:not(:empty) { margin-left: 4px; padding: 0 5px; border-radius: 8px; color: var(--tone-error); background: rgba(240, 113, 120, .16); font-size: 10px; }
 
-.review-panel { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; }
+.review-panel { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); min-height: 0; }
 .review-panel > .review-history { grid-row: 2; }
-.review-panel > .review-body { grid-row: 3; }
+.review-panel > .review-skills { grid-row: 3; }
+.review-panel > .review-body { grid-row: 4; }
 .review-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 20px; border-bottom: 1px solid var(--border); }
 .review-title { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
 .review-title span { color: var(--text-secondary); font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; }
@@ -2786,3 +2787,23 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .sidebar-view .repo-copy strong,
 .sidebar-view .repo-copy code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-closed { display: grid; gap: 10px; padding: 12px 4px; }
+
+/* Review skills and the clean code review */
+.review-quality-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--text-secondary); background: var(--bg-tertiary); cursor: pointer; }
+.review-quality-toggle input { margin: 0; }
+.review-quality { margin: 12px 0; }
+.review-skills { padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.review-skills > summary { color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+.review-skills-list { max-height: 220px; overflow: auto; list-style: none; scrollbar-width: thin; }
+.review-skills-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--text-secondary); font-size: 11px; }
+.review-skills-applied { margin: 12px 0; }
+.review-skills-applied > summary { cursor: pointer; font-weight: 600; }
+.review-skills-applied li { margin: 4px 0; }
+.review-skill { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; }
+.review-skill.off .review-skill-copy { opacity: .6; }
+.review-skill-copy { flex: 1; min-width: 0; }
+.review-skill-copy small { display: block; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.review-skill-switch { min-width: 38px; padding: 1px 6px; border: 1px solid var(--border-strong, currentColor); border-radius: 9px; color: var(--text-secondary); background: transparent; font-size: 10px; cursor: pointer; }
+.review-skill-switch[aria-pressed="true"] { color: var(--text-strong); background: var(--bg-sunken); font-weight: 600; }
+.review-skill-tag { padding: 0 5px; border-radius: 3px; color: var(--text-secondary); background: var(--bg-sunken); font-size: 10px; }
+.review-skill-kind { color: var(--text-muted); font-size: 11px; }

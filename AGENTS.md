@@ -96,7 +96,7 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 
 ## This Repository
 
-- VS Code extension: TypeScript host in `src/`, webviews in `resources/` (dashboard: `webview.js`, `historyGraph.js`; Side Bar: `sidebar.js`; both use `webview.css`), HTML in `src/webview/template.ts`. The dashboard owns the repository list and mirrors it to the Side Bar (`src/repositoryManagerLauncher.ts`).
+- VS Code extension: TypeScript host in `src/`, bundled review skills in `resources/review-skills/`, webviews in `resources/` (dashboard: `webview.js`, `historyGraph.js`; Side Bar: `sidebar.js`; both use `webview.css`), HTML in `src/webview/template.ts`. The dashboard owns the repository list and mirrors it to the Side Bar (`src/repositoryManagerLauncher.ts`).
 - Validate with `npm run lint`, `npm test` (compiles, lints, then runs the suites listed in `package.json`'s `test` script; add a new `src/test/*Smoke.js` there or it never runs), and `npm run test:ui` (Playwright screenshots of the real webviews into `ui-snapshots/`; set `PLAYWRIGHT_CHROMIUM_PATH` if Chromium is not where Playwright looks).
 - Webviews are sandboxed: do not use `alert`, `confirm` or `prompt`; ask from the host (`vscode.window.show*Message`).
 - Copilot (`vscode.lm`) calls are not available outside VS Code: tests use scripted runners and models. Live model paths remain unverified until run in VS Code; say so.

@@ -61,7 +61,7 @@ export class ReviewSurveyService {
 
   async plan(request: ReviewRequest): Promise<ReviewPlan> {
     if (!['branch', 'changes'].includes(request.scope) || !request.categories.length ||
-        request.categories.some(category => !['security', 'compliance'].includes(category))) {
+        request.categories.some(category => !['security', 'compliance', 'quality'].includes(category))) {
       throw new Error('Invalid review scope or categories');
     }
     const snapshot = await this.snapshots.open(request.repositoryPath, request.targetSha);

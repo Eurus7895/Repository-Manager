@@ -316,6 +316,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="review-entry review-current-group" role="group" aria-label="Review the current branch with Copilot">
               <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds: the committed changes since it left the default branch (main or master), as a pull request shows them"><span class="review-entry-word">Review </span>branch</button>
               <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every committed file at the tip of the current branch; uncommitted changes are not included"><span class="review-entry-word">Review </span>all</button>
+              <label class="review-quality-toggle" title="Every review (commit, branch, all) also checks maintainability: complexity, duplication, naming, error handling, dead code, tests. These notes never block a review."><input type="checkbox" id="reviewQualityToggle"> Clean code</label>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
@@ -359,6 +360,12 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
                 <summary>Past reviews <span class="review-history-count" id="reviewHistoryCount"></span></summary>
                 <p class="review-history-note">Saved in this workspace on this machine, never in the repository.</p>
                 <ul class="review-history-list" id="reviewHistoryList"></ul>
+              </details>
+              <details class="review-skills" id="reviewSkills">
+                <summary>Review skills <span class="review-history-count" id="reviewSkillsCount"></span></summary>
+                <p class="review-history-note">Checklists given to Copilot with the files they match. Turn one off, or import your own Markdown file with the same header.</p>
+                <ul class="review-skills-list" id="reviewSkillsList"></ul>
+                <div class="review-skills-actions"><button type="button" class="btn" data-action="importReviewSkill">Import skill…</button><span id="reviewSkillsStatus" role="status"></span></div>
               </details>
               <div class="review-body" id="reviewBody"></div>
             </div>

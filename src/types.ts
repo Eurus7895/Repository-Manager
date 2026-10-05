@@ -107,7 +107,7 @@ export interface ReviewRequest {
   targetSha: string;
   baseSha?: string;
   scope: 'changes' | 'branch';
-  categories: ('security' | 'compliance')[];
+  categories: ('security' | 'compliance' | 'quality')[];
   policyHash?: string;
 }
 
@@ -121,8 +121,11 @@ export interface ReviewEvidence {
 
 export interface ReviewFinding {
   id: string;
-  category: 'security' | 'compliance';
+  /** `quality`: maintainability (clean code); never blocks readiness. */
+  category: 'security' | 'compliance' | 'quality';
   ruleId?: string;
+  /** The review skill the finding came from, when the model named one. */
+  skill?: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
   confidence: 'high' | 'medium' | 'low';
   explanation: string;
@@ -190,6 +193,8 @@ export interface ReviewResult {
   toVerify?: string[];
   /** Set when the review stopped before every component was analyzed; the rest was not reviewed. */
   partial?: { unitsDone: number; unitsTotal: number };
+  /** The review skills each component was reviewed with; `omitted` ones matched but did not fit. */
+  skillsApplied?: { component: string; skills: string[]; omitted?: string[] }[];
 }
 
 export interface PullRequestInfo {

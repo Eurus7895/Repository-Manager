@@ -29,6 +29,8 @@ export interface ReviewReadiness {
   dismissed: ReadinessItem[];
   /** Findings fixed (by an applied auto-fix or by hand); like dismissed ones, out of readiness but on record. */
   fixed: ReadinessItem[];
+  /** Clean-code findings not yet dismissed or fixed: worth a look, never blocking. */
+  quality: ReadinessItem[];
   /** Findings the reviewer marked to fix, and findings with no decision yet. */
   toFix: number;
   untriaged: number;
@@ -142,6 +144,7 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   const gaps: ReadinessItem[] = [];
   const dismissed: ReadinessItem[] = [];
   const fixed: ReadinessItem[] = [];
+  const quality: ReadinessItem[] = [];
   let toFix = 0;
   let untriaged = 0;
   for (const finding of result.findings) {
@@ -151,6 +154,8 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
     if (decision?.decision === 'dismiss') { dismissed.push(item); continue; }
     if (decision?.decision === 'fixed') { fixed.push(item); continue; }
     if (decision?.decision === 'fix') { toFix++; } else { untriaged++; }
+    // Maintainability notes sit apart: a naming issue must not make a review look blocked.
+    if (finding.category === 'quality') { quality.push(item); continue; }
     if (finding.status === 'verified' && BLOCKING_SEVERITIES.has(finding.severity)) { blocking.push(item); }
     else { attention.push(item); }
   }
@@ -186,7 +191,8 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   fixed.sort(bySeverity);
   // A gap still keeps a review from looking clean: what was not checked is not a pass.
   const status: ReadinessStatus = blocking.length ? 'blocked' : attention.length || gaps.length ? 'needs_attention' : 'no_blocking_findings';
-  return { status, blocking, attention, gaps, dismissed, fixed, toFix, untriaged, coverage };
+  quality.sort(bySeverity);
+  return { status, blocking, attention, gaps, dismissed, fixed, quality, toFix, untriaged, coverage };
 }
 
 export function readinessLabel(status: ReadinessStatus): string {
@@ -268,6 +274,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   };
   section('Blocking', readiness.blocking);
   section('Needs attention', readiness.attention);
+  if (request.categories.includes('quality')) { section('Code quality', readiness.quality); }
   if (readiness.gaps.length) { section('Review gaps', readiness.gaps); }
   if (readiness.fixed.length) { section('Fixed', readiness.fixed); }
   if (readiness.dismissed.length) { section('Dismissed by reviewer', readiness.dismissed); }
@@ -286,6 +293,14 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     for (const gap of gaps.slice(0, 100)) { lines.push(`- ${gap.kind}: ${code(gap.path)} — ${text(gap.reason)}`); }
     if (gaps.length > 100) { lines.push(`- … and ${gaps.length - 100} more`); }
     lines.push('', '</details>', '');
+  }
+  if ((result.skillsApplied || []).length) {
+    lines.push('## Review skills', '', 'The checklists each component was reviewed with, chosen by its files.', '');
+    for (const item of result.skillsApplied || []) {
+      lines.push(`- ${code(item.component)}: ${item.skills.length ? item.skills.map(code).join(', ') : 'none'}` +
+        `${item.omitted && item.omitted.length ? ` (left out, too long: ${item.omitted.map(code).join(', ')})` : ''}`);
+    }
+    lines.push('');
   }
   if ((result.toVerify || []).length) {
     lines.push('## To verify', '', 'What the model could not see from the reviewed files; check these by hand.', '',
