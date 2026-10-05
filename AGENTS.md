@@ -23,8 +23,8 @@ Write repository documentation in English; converse in the user's language.
 2. Identify the requested outcome and any decisions already approved in the
    conversation. Do not restart discovery for settled decisions.
 3. Discover the specification, design, and plan relevant to the current task.
-   Start with user-provided references and the repository's documentation
-   index, then search by feature, component, or affected code.
+   Start with user-provided references and `docs/` (there is no index; read
+   the file names), then search by feature, component, or affected code.
    Check scope, approval status, and superseding decisions before applying a
    document. Do not select it solely because it has the newest date.
    If no applicable document exists, state that and plan at the task's scale.
@@ -47,20 +47,15 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 
 - Let the user own problem framing, initial design, trade-offs, and technical decisions. Critique their reasoning after they have expressed it.
 - Ask targeted questions only for unresolved decisions that affect the work. Reuse answers already given; do not turn each small step into a questionnaire.
-- Before a meaningful implementation, elicit failure predictions if they have not already been stated, then add overlooked risks.
+- Before a meaningful implementation, elicit failure predictions if they have not already been stated, then add overlooked risks. If the user has none, state the risks with how you will handle them and proceed.
 - Implement authorized work, including routine code, tests, and documentation.
 - Report validation evidence; leave final product acceptance to the user.
 - After a meaningful experiment, compare predictions with observed outcomes and record the lesson without forcing reflection after every small edit.
 
 ## Apply Feature-Centered Rings (FCR)
 
-- Establish whether the task is Build or Study using the request and context. These are independent goals; do not require both to succeed simultaneously.
-- Identify the central feature and its minimum value before expanding scope.
-- Work on the nearest component blocking that feature. Set a sufficient stopping point before exploring its dependencies.
-- Open another ring only for an actual blocker. Explain which blocker a prerequisite or improvement removes.
-- When work is too difficult, split it, reduce scope, change the approach, or strengthen an earlier component as appropriate to the selected goal.
-- Build: verify the complete feature after integration.
-- Study: check explanation, independent reasoning, and transfer to a changed problem. Finishing an artifact alone does not establish understanding.
+- Identify the central feature and its minimum value; work on the nearest component blocking it, and widen scope only for an actual blocker (say which one it removes).
+- When work is too difficult, split it, reduce scope, or change the approach. Building: verify the complete feature after integration. Studying: check the user's explanation and transfer to a changed problem, not just a finished artifact.
 
 ## Plan and Implement
 
@@ -69,7 +64,7 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 - Preserve unrelated local changes. Avoid destructive replacements without explicit authorization; prefer isolated, reviewable changes.
 - Reuse verified capabilities before adding new abstractions or dependencies.
 - Keep responsibilities and interfaces clear. If delegating authorized work, provide the goal, inputs, output contract, allowed scope, and acceptance checks; review returned artifacts rather than trusting completion summaries.
-- Keep requirements, assumptions, decisions, and observed results distinct in persistent notes. Do not rely on conversation memory as the only record.
+- Keep requirements, assumptions, decisions, and observed results distinct in the PR description (and `docs/` for lasting design). Do not rely on conversation memory as the only record.
 
 ## Validate and Report
 
@@ -83,24 +78,26 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 
 ## Branches and Commits — Read Before Every Git Command
 
-- Use `Eurus <56497078+Eurus7895@users.noreply.github.com>` (the GitHub account's no-reply address) for both author and committer.
-- Never persist `user.name` or `user.email` with `git config`.
-- Use command-scoped identity flags for commits, rebases, cherry-picks, and amends: `git -c user.name='Eurus' -c user.email='56497078+Eurus7895@users.noreply.github.com' commit ...`
+- Commit as the human author you are working for, never as an AI or tool identity: their name and GitHub no-reply address (`<id>+<login>@users.noreply.github.com`) for both author and committer. Take it from the user, or from their own earlier commits' author field (`git log origin/main --format='%an <%ae>'`), never from the committer field, which older commits got wrong; ask if it is unclear.
+- Never persist `user.name` or `user.email` with `git config`. The environment's global config may hold another identity (cloud sessions have `Claude`), and Git uses it silently for the committer.
+- Give the identity to every command that writes a commit, on that command: commit, merge, cherry-pick, revert, amend, and each `rebase` and `rebase --continue`: `git -c user.name='<name>' -c user.email='<no-reply address>' rebase --continue`. Shell state does not carry over between tool calls.
+- Before every push, `git log origin/main..HEAD --format=%cn | sort -u` must print only the author's name; if not, recommit before pushing.
 - Never add AI/tool attribution, co-author/session trailers, generated-by footers, or AI session links to commits, PRs, comments, or documents.
 - Never push to `claude/*`; never put `codex` or `claude` in branch names or PR titles.
 - Name work branches `<type>/<area>-<outcome>` in lowercase kebab-case, with `<type>` one of `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. The name must be meaningful on its own: `<area>-<outcome>` says what the branch changes (for example `feat/review-triage-autofix`, `fix/graph-dangling-lanes`), never a vague word (`fix/stuff`, `feat/update`), a bare ticket number, or a date. No session suffixes or tool prefixes. (Conventional Commits applies to commit messages, not branch names.)
-- Start work from the latest `origin/main` (this repository has no `dev` branch): fetch, then create the branch from it. If `main` advances, fetch and rebase before pushing; never push a stale base.
-- Release by tagging `main` (for example `1.7.0`) and publishing a GitHub release; the Build VSIX workflow packages that tag and attaches the VSIX. Do not cut a branch for a normal release.
+- Start work from the latest `origin/main` (this repository has no `dev` branch): fetch, then create the branch from it. If `main` advances, fetch and rebase before pushing; never push a stale base. Rebasing your own unmerged branch and pushing it with `--force-with-lease` is expected; never rewrite `main` or someone else's branch.
+- Release by tagging `main` (for example `1.7.0`) and publishing a GitHub release; the Build VSIX workflow runs on the published release, not on a tag push, and attaches the VSIX. Do not cut a branch for a normal release. If you cannot create the tag or release (cloud sessions get 403), hand the user the tag, the target SHA and the release notes, and stop.
 - If a published version needs a fix while `main` holds unreleased work, do not tag `main`; stop and ask the user how to ship the fix.
-- Never amend a published commit; create a new commit instead.
+- Never amend or rewrite a commit that is on `main` or in a merged PR; create a new commit instead.
 - Follow Conventional Commits 1.0.0: lowercase type/scope, imperative subject, at most 72 characters, no trailing period; wrap body at 72 columns and explain why.
 - Breaking changes require both `!` and a `BREAKING CHANGE:` footer.
-- Update `CHANGELOG.md` (Keep a Changelog, under the upcoming version) before every PR; keep entries user-facing and summary-only.
+- Update `CHANGELOG.md` (Keep a Changelog, under the upcoming version) before every PR; keep entries user-facing and summary-only. Parallel PRs conflict there: keep both entries under one version heading, and bump the version once.
 - Set the version with `npm version <x.y.z> --no-git-tag-version`; the release tag is the version of record.
 
 ## This Repository
 
-- VS Code extension: TypeScript host in `src/`, webview in `resources/` (`webview.js`, `webview.css`, `historyGraph.js`), HTML in `src/webview/template.ts`.
-- Validate with `npm run lint`, `npm test` (compiles, then runs every suite), and `npm run test:ui` (Playwright screenshots of the real webview into `ui-snapshots/`; needs Chromium).
+- VS Code extension: TypeScript host in `src/`, webviews in `resources/` (dashboard: `webview.js`, `historyGraph.js`; Side Bar: `sidebar.js`; both use `webview.css`), HTML in `src/webview/template.ts`. The dashboard owns the repository list and mirrors it to the Side Bar (`src/repositoryManagerLauncher.ts`).
+- Validate with `npm run lint`, `npm test` (compiles, lints, then runs the suites listed in `package.json`'s `test` script; add a new `src/test/*Smoke.js` there or it never runs), and `npm run test:ui` (Playwright screenshots of the real webviews into `ui-snapshots/`; set `PLAYWRIGHT_CHROMIUM_PATH` if Chromium is not where Playwright looks).
+- Webviews are sandboxed: do not use `alert`, `confirm` or `prompt`; ask from the host (`vscode.window.show*Message`).
 - Copilot (`vscode.lm`) calls are not available outside VS Code: tests use scripted runners and models. Live model paths remain unverified until run in VS Code; say so.
 - There is no `docs/roadmap.md` or commit guard script here. Verify `origin/main` and any referenced file exist before relying on them; report gaps instead of inventing them.

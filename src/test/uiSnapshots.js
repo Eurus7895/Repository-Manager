@@ -35,7 +35,7 @@ const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
 const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
 const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
-const { getHtmlForWebview } = require(path.join(root, 'out/webview/template'));
+const { getHtmlForWebview, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
 
@@ -176,7 +176,11 @@ function startServer(workspace, otherFolder) {
     await page.exposeFunction('__postToHost', async message => {
       hostBusy++;
       try {
-      if (reviews.handles(message.type)) {
+      if (message.type === 'sidebarSnapshot') {
+        // Same as RepositoryManagerPanel: the copy goes to the Side Bar view.
+        page.sidebarHtml = message.payload.html;
+        if (page.sidebar) await page.sidebar.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined);
+      } else if (reviews.handles(message.type)) {
         await reviews.handle(message);
       } else if (message.type === 'switchWorkspaceFolder') {
         // Same as RepositoryManagerPanel._switchWorkspaceFolder.
@@ -231,6 +235,17 @@ function startServer(workspace, otherFolder) {
         res.setHeader('content-type', 'text/html');
         return res.end(html);
       }
+      if (req.url === '/sidebar' || req.url === '/sidebar?theme=light') {
+        const light = req.url.endsWith('light');
+        const html = getSidebarHtml({ scriptUri: resource('/resources/sidebar.js'), styleUri: resource('/resources/webview.css') })
+          .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
+          .replace('<body class="sidebar-view">', light ? '<body class="sidebar-view vscode-light">' : '<body class="sidebar-view">')
+          .replace('<head>', `<head><style>${light ? lightThemeCss : themeCss}</style><script>
+            window.acquireVsCodeApi = () => ({ getState() { return null; }, setState() {},
+              postMessage(message) { window.__postToHost(message); } });</script>`);
+        res.setHeader('content-type', 'text/html');
+        return res.end(html);
+      }
       if (req.url.startsWith('/resources/')) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         return res.end(fs.readFileSync(path.join(root, 'resources', path.basename(req.url))));
@@ -252,12 +267,34 @@ async function main() {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
   const pageErrors = [];
   fs.mkdirSync(outputDir, { recursive: true });
+  // Each dashboard comes with its Side Bar view, connected the way RepositoryManagerLauncher
+  // connects them: the dashboard's copies go to the Side Bar, the Side Bar's clicks to the dashboard.
+  const openSidebar = async (page, theme) => {
+    const sidebar = await browser.newPage({ viewport: { width: 300, height: 860 } });
+    sidebar.on('pageerror', error => pageErrors.push(`sidebar: ${error.message}`));
+    const toDashboard = message => page.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined);
+    await sidebar.exposeFunction('__postToHost', async message => {
+      if (message.type === 'sidebarReady') {
+        if (page.sidebarHtml !== undefined) await sidebar.evaluate(html => window.postMessage({ type: 'sidebarSnapshot', payload: { html } }, '*'), page.sidebarHtml);
+        await toDashboard({ type: 'publishSidebar' });
+      } else if (message.type === 'sidebarAction') {
+        await toDashboard({ type: 'sidebarAction', payload: message.payload });
+      }
+    });
+    await sidebar.goto(theme === 'light' ? `${url}sidebar?theme=light` : `${url}sidebar`);
+    page.sidebar = sidebar;
+    await sidebar.locator('.sidebar-repository-item').first().waitFor();
+    const close = page.close.bind(page);
+    page.close = async () => { page.sidebar = undefined; await sidebar.close(); await close(); };
+    return sidebar;
+  };
   const openPage = async (width, height, theme) => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', error => pageErrors.push(error.message));
     await connect(page);
     await page.goto(theme === 'light' ? `${url}?theme=light` : url);
     await page.locator('.history-row').first().waitFor();
+    await openSidebar(page, theme);
     return page;
   };
   // Screenshots wait until nothing is loading and no toolbar button is busy or flashing a result,
@@ -278,38 +315,46 @@ async function main() {
   try {
     const page = await openPage(1440, 900);
 
+    // The dashboard tab has no repository column: the list is in the Side Bar view.
+    const side = page.sidebar;
+    assert.equal(await page.locator('.dashboard-sidebar').isVisible(), false, 'the dashboard still shows its own sidebar');
     // Repository switcher lists every repository and flags drift from the parent branch.
-    const repositories = page.locator('.sidebar-repository-item');
+    const repositories = side.locator('.sidebar-repository-item');
     assert.equal(await repositories.count(), 3);
-    assert.equal(await page.locator('#repositoryAlignment').textContent(), '1/2 aligned');
-    const libB = page.locator('.sidebar-repository-item[data-path="lib-b"]');
+    assert.equal(await side.locator('#repositoryAlignment').textContent(), '1/2 aligned');
+    const libB = side.locator('.sidebar-repository-item[data-path="lib-b"]');
     assert.match(await libB.textContent(), /drift/);
     assert.match(await libB.textContent(), /≠ recorded/);
-    assert.equal(await page.locator('.sidebar-repository-item[data-path="lib-a"] .repo-badge-drift').count(), 0);
+    assert.equal(await side.locator('.sidebar-repository-item[data-path="lib-a"] .repo-badge-drift').count(), 0);
     // Only repositories off their recorded commit offer the reset action.
-    assert.equal(await page.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
-    assert.equal(await page.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
+    assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
+    assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
     await snap(page, '01-dashboard');
+    await snap(side, '01a-sidebar');
     await libB.hover();
-    await snap(page, '01b-reset-to-recorded');
+    await snap(side, '01b-reset-to-recorded');
 
     // Branches are a folder tree: feature/dashboard sits under "feature", shown as "dashboard".
-    const folders = await page.locator('#dashboardBranches .sidebar-branch-folder').evaluateAll(items =>
+    const folders = await side.locator('#dashboardBranches .sidebar-branch-folder').evaluateAll(items =>
       items.map(item => [item.dataset.folder, item.getAttribute('aria-expanded')]));
     assert.deepEqual(folders, [['claude', 'true'], ['feature', 'true']]);
-    const current = page.locator('#dashboardBranches .sidebar-ref-item.current');
+    const current = side.locator('#dashboardBranches .sidebar-ref-item.current');
     assert.equal(await current.getAttribute('data-branch'), 'feature/dashboard');
     assert.match(await current.textContent(), /^⑂dashboardHEAD$/);
-    assert.equal(await page.locator('#dashboardBranches .sidebar-ref-row.branch-depth-1').count(), 2);
+    assert.equal(await side.locator('#dashboardBranches .sidebar-ref-row.branch-depth-1').count(), 2);
     const claudeLeaf = '#dashboardBranches .sidebar-ref-item[data-branch="claude/review-dashboard-layout-at-narrow-widths"]';
-    await page.click('[data-action="toggleBranchFolder"][data-folder="claude"]');
-    await page.locator(claudeLeaf).waitFor({ state: 'detached' });
-    assert.equal(await page.getAttribute('[data-folder="claude"]', 'aria-expanded'), 'false');
+    // A click in the Side Bar runs in the dashboard, which sends the Side Bar its new copy.
+    await side.click('[data-action="toggleBranchFolder"][data-folder="claude"]');
+    await side.locator(claudeLeaf).waitFor({ state: 'detached' });
+    assert.equal(await side.getAttribute('[data-folder="claude"]', 'aria-expanded'), 'false');
+    // Keyboard focus stays on the item across the refresh.
+    assert.equal(await side.evaluate(() => document.activeElement && document.activeElement.dataset.folder), 'claude');
     // The folder holding the checked-out branch cannot be collapsed out of sight.
-    await page.click('[data-action="toggleBranchFolder"][data-folder="feature"]');
-    assert.equal(await page.getAttribute('[data-folder="feature"]', 'aria-expanded'), 'true');
-    await page.click('[data-action="toggleBranchFolder"][data-folder="claude"]');
-    await page.locator(claudeLeaf).waitFor();
+    await side.click('[data-action="toggleBranchFolder"][data-folder="feature"]');
+    await side.waitForTimeout(200);
+    assert.equal(await side.getAttribute('[data-folder="feature"]', 'aria-expanded'), 'true');
+    await side.click('[data-action="toggleBranchFolder"][data-folder="claude"]');
+    await side.locator(claudeLeaf).waitFor();
 
     // Diff shows file line numbers and hides git's file headers.
     await page.locator('.history-row', { hasText: 'update app in two places' }).click();
@@ -422,7 +467,7 @@ async function main() {
     await page.waitForTimeout(150);
     await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
     // Only a second review waits; everything else stays usable while this one runs.
-    const libBItem = page.locator('.sidebar-repository-item[data-path="lib-b"]');
+    const libBItem = page.sidebar.locator('.sidebar-repository-item[data-path="lib-b"]');
     assert.equal(await page.getAttribute('.review-current-group [data-scope="branch"]', 'aria-disabled'), 'true');
     assert.equal(await libBItem.getAttribute('aria-disabled'), null);
     assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
@@ -440,7 +485,7 @@ async function main() {
     // Work elsewhere while it runs: another repository, its commits, the Changes tab.
     await libBItem.click();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
-    assert.equal(await libBItem.getAttribute('aria-current'), 'true');
+    await page.sidebar.locator('.sidebar-repository-item[data-path="lib-b"][aria-current="true"]').waitFor();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).click();
     assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true', 'clicking a commit did not show its changes');
     assert.equal(await page.textContent('#reviewTabBadge'), '25%', 'the Review tab does not show progress');
@@ -449,7 +494,7 @@ async function main() {
     assert.match(await page.textContent('#reviewMeta'), /^Diff: 1\.0\.0 → feature\/dashboard · workspace$/);
     await page.click('#detailTabChanges');
     // Back to the reviewed repository; the review was never interrupted.
-    await page.click('.sidebar-repository-item[data-path="."]');
+    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
     await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
     releaseRunner();
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
@@ -668,7 +713,7 @@ async function main() {
     await libB.click();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
     assert.equal(await page.locator('.history-row', { hasText: 'update app in two places' }).count(), 0);
-    assert.equal(await libB.getAttribute('aria-current'), 'true');
+    await side.locator('.sidebar-repository-item[data-path="lib-b"][aria-current="true"]').waitFor();
     await snap(page, '03-linked-repository');
 
     // Messages are dispatched synchronously so the switcher is read before any real refresh lands.
@@ -699,7 +744,7 @@ async function main() {
     await page.selectOption('#workspaceFolderSelect', other);
     await page.locator('.history-row', { hasText: 'other folder notes' }).waitFor({ timeout: 5000 });
     assert.equal(await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).count(), 0);
-    assert.equal(await page.locator('.sidebar-repository-item').count(), 1);
+    await side.waitForFunction(() => document.querySelectorAll('.sidebar-repository-item').length === 1);
     await snap(page, '03b-other-workspace-folder');
     // Saved reviews belong to their repository: this folder lists none.
     assert.equal(await page.isHidden('#reviewHistory'), true);
@@ -807,7 +852,7 @@ async function main() {
       };
       const check = selector => { const element = document.querySelector(selector); return element ? +ratio(rgb(getComputedStyle(element).color), background(element)).toFixed(2) : null; };
       return { body: rgb(getComputedStyle(document.body).backgroundColor), subject: check('.history-subject'), author: check('.history-author'),
-        repository: check('.sidebar-repository-item strong'), detail: check('.commit-summary-copy strong'),
+        detail: check('.commit-summary-copy strong'),
         tag: check('.history-ref.ref-tag'), branch: check('.history-ref.ref-local-branch') };
     });
     assert.deepEqual(contrast.body, [255, 255, 255], 'the dashboard ignores the light theme background');
@@ -815,6 +860,18 @@ async function main() {
       if (name !== 'body') assert.ok(value >= 4.5, `${name} text has contrast ${value} in a light theme`);
     }
     await snap(light, '14-light-theme');
+    // The Side Bar takes the light theme too, and its text stays readable.
+    const sideContrast = await light.sidebar.evaluate(() => {
+      const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
+        .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+      const element = document.querySelector('.sidebar-repository-item strong');
+      const [x, y] = [luminance(rgb(getComputedStyle(element).color)), luminance(rgb(getComputedStyle(document.body).backgroundColor))].sort((m, n) => n - m);
+      return { body: rgb(getComputedStyle(document.body).backgroundColor), repository: +((x + .05) / (y + .05)).toFixed(2) };
+    });
+    assert.deepEqual(sideContrast.body, [248, 248, 248], 'the Side Bar ignores the light theme background');
+    assert.ok(sideContrast.repository >= 4.5, `Side Bar repository text has contrast ${sideContrast.repository} in a light theme`);
+    await snap(light.sidebar, '14b-light-sidebar');
     // Dialogs take the theme's surface too (the modal kept a fixed dark background).
     await light.click('[data-action="openCreateBranchModal"]');
     await light.locator('#createBranchModal.active').waitFor();
@@ -860,7 +917,7 @@ async function main() {
       observer.observe(history, { attributes: true, childList: true, subtree: false });
       setTimeout(() => { observer.disconnect(); resolve(seen); }, 2500);
     }));
-    await nav.click('.sidebar-repository-item[data-path="lib-b"]');
+    await nav.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
     assert.deepEqual(await dimmed, { stale: true, flashed: false });
     await nav.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor();
     assert.equal(await nav.evaluate(() => document.getElementById('dashboardHistory').classList.contains('history-stale')), false);

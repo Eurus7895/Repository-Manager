@@ -17,6 +17,7 @@ import { ReviewController, ReviewRunner } from './reviewController';
 import { ReviewConsentStore } from './reviewConsent';
 import { ReviewHistoryStore } from './reviewHistory';
 import { resolveReleaseRange } from './services/releaseRange';
+import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -28,7 +29,9 @@ const READ_ONLY_MESSAGES = new Set([
   'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels', 'resolveReleaseRange', 'refreshRepositories',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
   'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
-  'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview'
+  'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview',
+  // The Side Bar's copy of the repository list; no Git.
+  'sidebarSnapshot'
 ]);
 
 export class RepositoryManagerPanel {
@@ -49,13 +52,14 @@ export class RepositoryManagerPanel {
   private _lastAutoFetch = 0;
   private _messagesInFlight = 0;
 
-  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento) {
+  /** `preserveFocus` keeps the keyboard where it is, as when the Side Bar opens the dashboard. */
+  public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento, preserveFocus = false) {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
 
     if (RepositoryManagerPanel.currentPanel) {
-      RepositoryManagerPanel.currentPanel._panel.reveal(column);
+      RepositoryManagerPanel.currentPanel._panel.reveal(column, preserveFocus);
       RepositoryManagerPanel.currentPanel.refresh();
       RepositoryManagerPanel.currentPanel._autoFetchIfDue();
       return;
@@ -64,7 +68,7 @@ export class RepositoryManagerPanel {
     const panel = vscode.window.createWebviewPanel(
       'repositoryManager',
       'Repository Manager',
-      column || vscode.ViewColumn.One,
+      { viewColumn: column || vscode.ViewColumn.One, preserveFocus },
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -245,6 +249,11 @@ export class RepositoryManagerPanel {
     });
   }
 
+  /** A message for the dashboard webview (the Side Bar forwards its clicks this way). */
+  public post(message: { type: string; payload?: unknown }): Thenable<boolean> {
+    return this._panel.webview.postMessage(message);
+  }
+
   public async refresh(fullRefresh: boolean = false) {
     await this._update(fullRefresh);
   }
@@ -330,6 +339,11 @@ export class RepositoryManagerPanel {
         await this._reviews.handle(message);
         return;
       }
+      if (message.type === 'sidebarSnapshot') {
+        const html = (message.payload as { html?: unknown } | undefined)?.html;
+        if (typeof html === 'string') { RepositoryManagerLauncher.current?.update(html); }
+        return;
+      }
       if (message.type === 'cancelChangeSummary') {
         this._cancelSummary();
         return;
@@ -413,6 +427,7 @@ export class RepositoryManagerPanel {
       clearInterval(this._autoFetchTimer);
     }
     RepositoryManagerPanel.currentPanel = undefined;
+    RepositoryManagerLauncher.current?.dashboardClosed();
     this._panel.dispose();
 
     while (this._disposables.length) {

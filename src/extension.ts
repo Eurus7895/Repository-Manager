@@ -11,6 +11,7 @@ import { registerBasicCommands, CommandContext } from './commands/submoduleComma
 import { registerCreateBranchCommand } from './commands/createBranchCommand';
 import { registerReviewCommands } from './commands/reviewCommands';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
+import { RepositoryManagerPanel } from './repositoryManagerPanel';
 
 let repositoryTreeProvider: RepositoryTreeProvider;
 let gitOps: GitOperations;
@@ -30,8 +31,8 @@ export function activate(context: vscode.ExtensionContext) {
   gitOps = new GitOperations(workspaceRoot);
   prManager = new PRManager(workspaceRoot);
 
-  // Keep the provider as a command refresh dependency. The dashboard is the
-  // only UI surface, so duplicate Activity Bar views are not registered.
+  // Keep the provider as a command refresh dependency. The Activity Bar shows the
+  // dashboard's own repository list (RepositoryManagerLauncher), not this tree.
   repositoryTreeProvider = new RepositoryTreeProvider(workspaceRoot);
 
   // Create command context
@@ -50,7 +51,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       RepositoryManagerLauncher.viewType,
-      new RepositoryManagerLauncher()
+      new RepositoryManagerLauncher(context.extensionUri, {
+        isOpen: () => Boolean(RepositoryManagerPanel.currentPanel),
+        open: async () => RepositoryManagerPanel.createOrShow(context.extensionUri, workspaceRoot, context.workspaceState, true),
+        post: message => RepositoryManagerPanel.currentPanel?.post(message)
+      })
     )
   );
 

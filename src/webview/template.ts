@@ -383,6 +383,34 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
 /**
  * Generate the full HTML for the webview
  */
+/** Resources for the Side Bar view: the dashboard's stylesheet and the Side Bar script. */
+export interface SidebarResourceUris {
+  scriptUri: vscode.Uri;
+  styleUri: vscode.Uri;
+}
+
+/**
+ * The Side Bar view. It starts empty and shows the list the dashboard sends it: the dashboard
+ * keeps rendering its sidebar (hidden in the editor tab) and mirrors it here.
+ */
+export function getSidebarHtml(resourceUris: SidebarResourceUris): string {
+  const nonce = getNonce();
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${resourceUris.styleUri.scheme}:; script-src 'nonce-${nonce}';">
+  <title>Repositories</title>
+  <link rel="stylesheet" href="${resourceUris.styleUri}">
+</head>
+<body class="sidebar-view">
+  <aside class="dashboard-sidebar" id="sidebarRoot" aria-label="Repositories and branches"><span class="sidebar-placeholder">Opening the dashboard…</span></aside>
+  <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
+</body>
+</html>`;
+}
+
 export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: WebviewResourceUris, workspaceFolders: WorkspaceFolderInfo[] = []): string {
   const nonce = getNonce();
 
