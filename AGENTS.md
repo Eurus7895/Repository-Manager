@@ -78,10 +78,10 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 
 ## Branches and Commits — Read Before Every Git Command
 
-- Use `Eurus <56497078+Eurus7895@users.noreply.github.com>` (the GitHub account's no-reply address) for both author and committer.
+- Commit as the human author you are working for, never as an AI or tool identity: their name and GitHub no-reply address (`<id>+<login>@users.noreply.github.com`) for both author and committer. Take it from the user, or from their own earlier commits (`git log origin/main --format='%an <%ae>'`); ask if it is unclear.
 - Never persist `user.name` or `user.email` with `git config`. The environment's global config may hold another identity (cloud sessions have `Claude`), and Git uses it silently for the committer.
-- Give the identity to every command that writes a commit, on that command: commit, merge, cherry-pick, revert, amend, and each `rebase` and `rebase --continue`: `git -c user.name='Eurus' -c user.email='56497078+Eurus7895@users.noreply.github.com' rebase --continue`. Shell state does not carry over between tool calls.
-- Before every push, `git log origin/main..HEAD --format=%cn | sort -u` must print only `Eurus`; if not, recommit before pushing.
+- Give the identity to every command that writes a commit, on that command: commit, merge, cherry-pick, revert, amend, and each `rebase` and `rebase --continue`: `git -c user.name='<name>' -c user.email='<no-reply address>' rebase --continue`. Shell state does not carry over between tool calls.
+- Before every push, `git log origin/main..HEAD --format=%cn | sort -u` must print only the author's name; if not, recommit before pushing.
 - Never add AI/tool attribution, co-author/session trailers, generated-by footers, or AI session links to commits, PRs, comments, or documents.
 - Never push to `claude/*`; never put `codex` or `claude` in branch names or PR titles.
 - Name work branches `<type>/<area>-<outcome>` in lowercase kebab-case, with `<type>` one of `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. The name must be meaningful on its own: `<area>-<outcome>` says what the branch changes (for example `feat/review-triage-autofix`, `fix/graph-dangling-lanes`), never a vague word (`fix/stuff`, `feat/update`), a bare ticket number, or a date. No session suffixes or tool prefixes. (Conventional Commits applies to commit messages, not branch names.)
