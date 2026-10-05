@@ -135,7 +135,8 @@ export interface ReviewFinding {
 export interface ReviewCoverage {
   surveyed: number;
   analyzed: number;
-  skipped: { path: string; reason: string }[];
+  /** `partial`: the model saw part of the file (the rest of it was not reviewed). */
+  skipped: { path: string; reason: string; partial?: boolean }[];
   failed: { path: string; reason: string }[];
   complete: boolean;
 }
@@ -183,7 +184,12 @@ export interface ReviewResult {
   coverage: ReviewCoverage;
   policyStatus: 'configured' | 'not_configured';
   modelId?: string;
+  /** What the tool itself could not establish (policy, coverage, the advisory caveat). */
   limitations: string[];
+  /** What the model could not see and someone should check, e.g. callers or CI settings outside the scope. */
+  toVerify?: string[];
+  /** Set when the review stopped before every component was analyzed; the rest was not reviewed. */
+  partial?: { unitsDone: number; unitsTotal: number };
 }
 
 export interface PullRequestInfo {

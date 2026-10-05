@@ -100,8 +100,8 @@ async function main() {
     const result = await service.review(request, token, (message, detail) => updates.push({ message, detail }));
     // Limitations: the real gap once, however many components repeat it; scope notes dropped.
     assert.ok(analyzePrompts.length >= 1 && analyzePrompts.every(prompt => /do not restate which files were in scope/.test(prompt)));
-    assert.equal(result.limitations.filter(item => item === 'Whether input reaches eval depends on callers that were not supplied.').length, 1);
-    assert.ok(!result.limitations.some(item => /limited to the requested files/.test(item)), 'scope notes were kept');
+    assert.equal(result.toVerify.filter(item => item === 'Whether input reaches eval depends on callers that were not supplied.').length, 1);
+    assert.ok(!result.toVerify.concat(result.limitations).some(item => /limited to the requested files/.test(item)), 'scope notes were kept');
     // Progress: planning first, then the plan with every component, steps in order, then finishing.
     const details = updates.map(update => update.detail).filter(Boolean);
     assert.equal(details[0].phase, 'planning');

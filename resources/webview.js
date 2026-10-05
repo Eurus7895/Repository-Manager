@@ -34,6 +34,7 @@
   let summaryModelsState = 'idle'; // the Model menu's list: idle (not loaded), loading, loaded
   // The Review tab can take the whole dashboard (history hidden); remembered across reloads.
   let reviewExpanded = Boolean(previousState.reviewExpanded);
+  let openFindings = new Set(); // findings of the open review shown expanded (all start collapsed)
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
   let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
@@ -759,6 +760,36 @@
       postMessage('applyReviewFix', { requestId: reviewState.requestId, paths });
     },
     discardReviewFix: () => { if (reviewState) postMessage('discardReviewFix', { requestId: reviewState.requestId }); },
+    // Runs the stopped review again at the same commits: finished components are reused.
+    continueReview: () => {
+      const result = reviewState && reviewState.result;
+      if (!result || !result.partial) return;
+      const { request } = result;
+      const context = reviewState.context || {};
+      startReview({ scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
+        targetLabel: context.targetLabel, baseLabel: context.baseLabel });
+    },
+    // A note or a failure about the fix stays until it is closed; it holds nothing to apply.
+    closeFixNote: () => {
+      if (!reviewState || !reviewState.fix || reviewState.fix.files) return;
+      reviewState.fix = null;
+      renderReviewPanel();
+    },
+    // Findings are collapsed to one line; the open ones stay open across refreshes.
+    toggleFinding: (el) => {
+      const id = el.dataset.findingId;
+      if (!id) return;
+      if (openFindings.has(id)) openFindings.delete(id); else openFindings.add(id);
+      const item = el.closest('.review-finding');
+      if (item) item.classList.toggle('open', openFindings.has(id));
+      el.setAttribute('aria-expanded', String(openFindings.has(id)));
+    },
+    expandAllFindings: (el) => {
+      if (!reviewState || !reviewState.result) return;
+      const open = el.dataset.expand === 'true';
+      openFindings = open ? new Set((reviewState.result.findings || []).map(finding => finding.id)) : new Set();
+      renderReviewPanel();
+    },
     cancelReviewFix: () => postMessage('cancelReviewFix', {}),
 
     triageFinding: (el) => {
@@ -1931,7 +1962,8 @@
             if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
           } else if (message.type === 'reviewCompleted') {
             Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
-              triage: payload.triage || {}, historyId: payload.historyId || null });
+              layout: payload.layout || null, triage: payload.triage || {}, historyId: payload.historyId || null });
+            openFindings = new Set();
             if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
             requestReviewHistory();
           } else {
@@ -1945,6 +1977,7 @@
         case 'reviewFixProposed':
         case 'reviewFixFailed':
         case 'reviewFixApplied':
+        case 'reviewFixUpdated':
         case 'reviewFixDiscarded': {
           const payload = message.payload || {};
           if (!reviewState || payload.requestId !== reviewState.requestId) break;
@@ -1962,7 +1995,11 @@
               ? Object.assign({}, previous, { files: payload.remaining, message: '', applied: (previous.applied || []).concat(payload.paths || []),
                 selected: new Set(payload.remaining.map(file => file.path).filter(item => previous.selected && previous.selected.has(item))) })
               : { status: 'applied', paths: (previous.applied || []).concat(payload.paths || []) }),
-            reviewFixDiscarded: () => null
+            // Findings no longer marked "Needs fix" took their files out of the proposal; the rest stays.
+            reviewFixUpdated: () => Object.assign({}, previous, { files: payload.files || [], note: payload.message || '',
+              selected: new Set((payload.files || []).map(file => file.path).filter(item => !previous.selected || previous.selected.has(item))) }),
+            // Closed by a triage change: say why, until the note is closed.
+            reviewFixDiscarded: () => (payload.message ? { status: 'note', message: payload.message } : null)
           }[message.type]();
           renderReviewPanel();
           break;
@@ -1971,7 +2008,12 @@
         case 'reviewTriageUpdated': {
           const payload = message.payload || {};
           if (!reviewState || payload.requestId !== reviewState.requestId || reviewState.status !== 'completed') break;
-          Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness });
+          // A finding just dismissed or fixed folds away where it is; Undo brings it back.
+          const before = reviewState.triage || {};
+          Object.entries(payload.triage || {}).forEach(([id, item]) => {
+            if (['dismiss', 'fixed'].includes(item.decision) && (!before[id] || before[id].decision !== item.decision)) openFindings.delete(id);
+          });
+          Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness, layout: payload.layout || reviewState.layout });
           renderReviewPanel();
           if (reviewState.historyId) requestReviewHistory();
           break;
@@ -2891,8 +2933,10 @@
     if (fix.status === 'applied') {
       return `<section class="review-fix review-fix-applied" role="status"><h4>Auto-fix applied</h4><p>Changed ${fix.paths.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')} in your working tree. Nothing was staged or committed: check the changes, run your tests, then commit.</p></section>`;
     }
+    const close = '<button type="button" class="review-fix-close" data-action="closeFixNote" aria-label="Close" title="Close">×</button>';
+    if (fix.status === 'note') return `<section class="review-fix review-fix-note-panel" role="status"><h4>Auto-fix</h4>${close}<p>${escapeHtml(fix.message)}</p></section>`;
     const error = fix.message ? `<div class="dashboard-error" role="alert">${escapeHtml(fix.message)}</div>` : '';
-    if (!fix.files) return `<section class="review-fix"><h4>Auto-fix</h4>${error}</section>`;
+    if (!fix.files) return `<section class="review-fix"><h4>Auto-fix</h4>${close}${error}</section>`;
     const list = (items, className) => items && items.length ? `<ul class="${className}">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
     const selected = fix.selected || new Set();
     const count = fix.files.filter(file => selected.has(file.path)).length;
@@ -2904,7 +2948,7 @@
       return titles.length ? `<span class="review-fix-fixes">fixes ${escapeHtml(titles.join(', '))}</span>` : '';
     };
     return `<section class="review-fix"><h4>Proposed fix · ${fix.files.length} file${fix.files.length === 1 ? '' : 's'}</h4>
-      ${error}${applied}
+      ${error}${applied}${fix.note ? `<p class="review-fix-applied-note" role="status">${escapeHtml(fix.note)}</p>` : ''}
       <p class="review-fix-note">Nothing is written until you apply it. Applying edits your working tree only; it does not stage or commit. Untick a file to leave it out.</p>
       ${list(fix.notes, 'review-gaps')}${list(fix.rejected, 'review-gaps review-fix-rejected')}
       ${fix.files.map(file => `<details class="review-fix-file" open><summary><input type="checkbox" class="review-fix-select" data-path="${escapeHtml(file.path)}" aria-label="Apply ${escapeHtml(file.path)}"${selected.has(file.path) ? ' checked' : ''}> <code>${escapeHtml(file.path)}</code>${findingText(file)}</summary><pre class="diff-viewer">${renderPatchLines(file.patch)}</pre></details>`).join('')}
@@ -2930,17 +2974,63 @@
     </div>`;
   }
 
+  // Model text with `code` spans shown as code, so names and paths stand out.
+  function richText(text) {
+    return escapeHtml(text || '').replace(/`([^`\n]{1,200})`/g, '<code>$1</code>');
+  }
+
+  // The first sentence, for the one-line view of a collapsed finding.
+  function firstSentence(text) {
+    const value = String(text || '').trim();
+    const match = /^(.{20,180}?[.!?])(\s|$)/.exec(value);
+    return match ? match[1] : value.length > 180 ? `${value.slice(0, 177)}…` : value;
+  }
+
+  const TRIAGE_LABELS = { fix: 'Needs fix', dismiss: 'Dismissed', fixed: 'Fixed' };
+
   function renderReviewFinding(finding, index) {
     const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
     const triage = (reviewState.triage || {})[finding.id];
     const triageClass = triage ? ` triage-${triage.decision}` : '';
-    return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}" data-finding-id="${escapeHtml(finding.id)}">
-      <div class="review-finding-head"><span class="review-severity">${escapeHtml(finding.severity)}</span><span>${escapeHtml(finding.category)}${rule}</span><span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span><span class="review-confidence">confidence ${escapeHtml(finding.confidence)}</span></div>
-      <p>${escapeHtml(finding.explanation)}</p>
-      <dl><dt>Impact</dt><dd>${escapeHtml(finding.impact)}</dd><dt>Suggested action</dt><dd>${escapeHtml(finding.suggestedAction)}</dd></dl>
-      <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
-      ${renderTriageControls(finding)}
+    const open = openFindings.has(finding.id);
+    const id = escapeHtml(finding.id);
+    const where = finding.evidence && finding.evidence[0]
+      ? `<code class="review-finding-where">${escapeHtml(finding.evidence[0].path)}:${finding.evidence[0].startLine}</code>` : '';
+    // A dismissed or fixed finding stays where it was, collapsed, with a way back.
+    const reason = triage && triage.decision === 'dismiss' && triage.reason ? ` · ${DISMISS_REASONS[triage.reason] || triage.reason}` : '';
+    const chip = triage ? `<span class="review-triage-chip triage-chip-${escapeHtml(triage.decision)}">${escapeHtml(TRIAGE_LABELS[triage.decision] || triage.decision)}${escapeHtml(reason)}</span>` : '';
+    const undo = triage && triage.decision !== 'fix'
+      ? `<button type="button" class="review-undo" data-action="triageFinding" data-finding-id="${id}" data-decision="${escapeHtml(triage.decision)}" title="Undo: back to not triaged">Undo</button>` : '';
+    return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}${open ? ' open' : ''}" data-finding-id="${id}">
+      <div class="review-finding-head">
+        <button type="button" class="review-finding-toggle" data-action="toggleFinding" data-finding-id="${id}" aria-expanded="${open}">
+          <span class="review-finding-chevron" aria-hidden="true"></span>
+          <span class="review-severity">${escapeHtml(finding.severity)}</span>
+          <span class="review-finding-title">${richText(firstSentence(finding.explanation))}</span>
+          ${where}
+        </button>
+        <span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span>${chip}${undo}
+      </div>
+      <div class="review-finding-body">
+        <p class="review-finding-meta">${escapeHtml(finding.category)}${rule} · confidence ${escapeHtml(finding.confidence)}</p>
+        <p class="review-finding-explanation">${richText(finding.explanation)}</p>
+        <dl><dt>Impact</dt><dd>${richText(finding.impact)}</dd><dt>Suggested action</dt><dd>${richText(finding.suggestedAction)}</dd></dl>
+        <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
+        ${renderTriageControls(finding)}
+      </div>
     </li>`;
+  }
+
+  // Findings stay in the section they were found in (layout: the readiness without triage);
+  // policy items follow the current readiness, since a fixed finding can resolve its rule.
+  function sectionItems(key) {
+    const readiness = reviewState.readiness || {};
+    const layout = reviewState.layout;
+    if (!layout) {
+      const triaged = key === 'attention' ? (readiness.fixed || []).concat(readiness.dismissed || []) : [];
+      return (readiness[key] || []).concat(triaged);
+    }
+    return (layout[key] || []).filter(item => item.findingId).concat((readiness[key] || []).filter(item => !item.findingId));
   }
 
   function renderReviewItems(items, findings) {
@@ -2986,7 +3076,8 @@
       const range = entry.scope === 'changes'
         ? `Diff: ${entry.baseLabel || 'parent'} → ${entry.targetLabel}` : `Branch: ${entry.targetLabel}`;
       const counts = [`${entry.findings} finding${entry.findings === 1 ? '' : 's'}`,
-        entry.toFix ? `${entry.toFix} to fix` : '', entry.fixed ? `${entry.fixed} fixed` : '', entry.dismissed ? `${entry.dismissed} dismissed` : ''].filter(Boolean).join(' · ');
+        entry.toFix ? `${entry.toFix} to fix` : '', entry.fixed ? `${entry.fixed} fixed` : '', entry.dismissed ? `${entry.dismissed} dismissed` : '',
+        entry.stopped ? `stopped at ${entry.stopped.unitsDone}/${entry.stopped.unitsTotal} components` : ''].filter(Boolean).join(' · ');
       const current = reviewState && reviewState.historyId === entry.id;
       const id = escapeHtml(entry.id);
       return `<li class="review-history-item"${current ? ' aria-current="true"' : ''}>
@@ -3074,25 +3165,41 @@
       no_blocking_findings: 'No blocking findings in what was reviewed'
     }[readiness.status];
     const coverage = result.coverage;
-    const gaps = coverage.skipped.map(item => ['skipped', item]).concat(coverage.failed.map(item => ['failed', item]));
+    const isPartlyReviewed = item => item.partial || /^Partly reviewed/.test(item.reason || '');
+    const gaps = coverage.skipped.map(item => [isPartlyReviewed(item) ? 'partly reviewed' : 'skipped', item])
+      .concat(coverage.failed.map(item => ['failed', item]));
+    const summary = readiness.coverage;
+    const coverageText = summary
+      ? `${summary.files} file${summary.files === 1 ? '' : 's'}: ${summary.fully} fully reviewed · ${summary.partly} partly${summary.partlyData ? ` (${summary.partlyData} data or generated)` : ''} · ${summary.notReviewed} not reviewed · ${summary.failedChecks} failed check${summary.failedChecks === 1 ? '' : 's'}`
+      : `Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks`;
+    // A stopped review shows what it finished; running it again reuses those components.
+    const stopped = result.partial
+      ? `<div class="review-stopped" role="status"><span>Stopped after <strong>${result.partial.unitsDone} of ${result.partial.unitsTotal}</strong> components. The rest was not reviewed.</span><button type="button" class="btn" data-action="continueReview">Continue review</button></div>`
+      : '';
+    const toVerify = (result.toVerify || []).length
+      ? `<details class="review-to-verify"><summary>To verify <span class="review-count">${result.toVerify.length}</span></summary><p class="review-gaps-note">What the model could not see from the reviewed files: callers, CI settings, external services. Check these by hand.</p><ul>${result.toVerify.map(item => `<li>${richText(item)}</li>`).join('')}</ul></details>`
+      : '';
     const policy = (result.policyResults || []).length
       ? `<section><h4>Policy</h4><table class="review-policy"><thead><tr><th>Rule</th><th>Result</th><th>Reason</th></tr></thead><tbody>${result.policyResults.map(item =>
         `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
       : '';
+    const allOpen = findings.length > 0 && findings.every(finding => openFindings.has(finding.id));
     const triageBar = findings.length
-      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span>${renderFixAction(readiness)}</div>`
+      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span><button type="button" class="review-expand-all" data-action="expandAllFindings" data-expand="${!allOpen}">${allOpen ? 'Collapse all' : 'Expand all'}</button>${renderFixAction(readiness)}</div>`
       : '';
+    const blockingItems = sectionItems('blocking');
+    const attentionItems = sectionItems('attention');
     body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
+      ${stopped}
       ${triageBar}
       ${renderFixPanel()}
-      <section class="review-blocking"><h4>Blocking</h4>${renderReviewItems(readiness.blocking, findings)}</section>
-      <section class="review-attention"><h4>Needs attention</h4>${renderReviewItems(readiness.attention, findings)}</section>
+      <section class="review-blocking"><h4>Blocking <span class="review-count">${readiness.blocking.length}</span></h4>${renderReviewItems(blockingItems, findings)}</section>
+      <section class="review-attention"><h4>Needs attention <span class="review-count">${readiness.attention.length}</span></h4>${renderReviewItems(attentionItems, findings)}</section>
       ${(readiness.gaps || []).length ? `<section class="review-gaps-section"><h4>Review gaps</h4><p class="review-gaps-note">What this review could not establish. Not findings, but not passes either.</p>${renderReviewItems(readiness.gaps, findings)}</section>` : ''}
-      ${(readiness.fixed || []).length ? `<section class="review-fixed"><h4>Fixed</h4>${renderReviewItems(readiness.fixed, findings)}</section>` : ''}
-      ${(readiness.dismissed || []).length ? `<section class="review-dismissed"><h4>Dismissed by you</h4>${renderReviewItems(readiness.dismissed, findings)}</section>` : ''}
       ${policy}
-      <section><h4>Coverage</h4><p>Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
-        ? `<details><summary>Skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
+      ${toVerify}
+      <section><h4>Coverage</h4><p>${escapeHtml(coverageText)} · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
+        ? `<details><summary>Partly reviewed, skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
       ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
       <p class="review-advisory">Advisory: verified findings passed mechanical evidence checks and a second AI assessment. No findings does not mean no vulnerabilities.</p>`;
     tickFixClock();

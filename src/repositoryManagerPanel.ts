@@ -16,6 +16,7 @@ import { SecurityReviewProvider } from './services/securityReviewProvider';
 import { ReviewController, ReviewRunner } from './reviewController';
 import { ReviewConsentStore } from './reviewConsent';
 import { ReviewHistoryStore } from './reviewHistory';
+import { ReviewUnitCache } from './reviewUnitCache';
 import { resolveReleaseRange } from './services/releaseRange';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 
@@ -97,6 +98,8 @@ export class RepositoryManagerPanel {
     this._prManager = new PRManager(workspaceRoot);
 
     const consent = new ReviewConsentStore(workspaceState);
+    // Finished components of earlier reviews: a stopped review continues instead of starting over.
+    const unitCache = new ReviewUnitCache(workspaceState);
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
       post: async message => { await this._panel.webview.postMessage(message); },
@@ -104,7 +107,7 @@ export class RepositoryManagerPanel {
       alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
       isConsentRemembered: root => consent.has(root),
       rememberConsent: root => consent.allow(root),
-      createRunner: root => new SecurityReviewService(new GitCommandService(root)) as unknown as ReviewRunner,
+      createRunner: root => new SecurityReviewService(new GitCommandService(root), undefined, unitCache) as unknown as ReviewRunner,
       createCancellation: () => new vscode.CancellationTokenSource(),
       copyText: text => Promise.resolve(vscode.env.clipboard.writeText(text)),
       saveText: async (fileName, text) => {
