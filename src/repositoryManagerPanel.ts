@@ -6,7 +6,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitOperations } from './gitOperations';
 import { PRManager } from './prManager';
-import { getHtmlForWebview, WebviewResourceUris, WorkspaceFolderInfo } from './webview/template';
+import { getHtmlForWebview, getReviewHtml, WebviewResourceUris, WorkspaceFolderInfo } from './webview/template';
+import { ReviewBridge } from './reviewBridge';
 import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessageHandler';
 import { GitCommandService } from './services/gitCommandService';
 import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
@@ -30,6 +31,7 @@ const READ_ONLY_MESSAGES = new Set([
   'getWorkingTreePreview', 'getBranches', 'getCommits', 'getRecordedCommit', 'getBaseBranchesForCreate',
   'getPendingOperation', 'summarizeChanges', 'cancelChangeSummary', 'loadSummaryModels', 'resolveReleaseRange', 'refreshRepositories',
   // Reviews read pinned commits only; they never touch refs a background fetch updates.
+  'requestReview', 'openReviewTab', 'dashboardContext', 'getReviewStatus', 'getReviewQuality', 'reviewReady', 'showReviewEvidence',
   'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview',
   // The Side Bar's copy of the repository list; no Git.
@@ -48,6 +50,10 @@ export class RepositoryManagerPanel {
   private _workspaceRoot: string;
   private readonly _summaryProvider = new CopilotSummaryProvider();
   private readonly _reviews: ReviewController;
+  /** Routes review messages between this dashboard, the Repository Review tab and the controller. */
+  private readonly _reviewBridge: ReviewBridge;
+  private _reviewPanel?: vscode.WebviewPanel;
+  private readonly _skills: ReviewSkillStore;
   private readonly _evidenceDocuments = new Map<string, string>();
   private _summaryToken?: vscode.CancellationTokenSource;
   private _summaryRequest = 0;
@@ -104,9 +110,17 @@ export class RepositoryManagerPanel {
     // Finished components of earlier reviews: a stopped review continues instead of starting over.
     const unitCache = new ReviewUnitCache(workspaceState);
     const skills = new ReviewSkillStore(path.join(extensionUri.fsPath, 'resources', 'review-skills'), RepositoryManagerPanel.globalState);
+    this._skills = skills;
+    // Assigned before the controller, which posts through it.
+    this._reviewBridge = new ReviewBridge({
+      controller: { handles: type => this._reviews.handles(type), handle: message => this._reviews.handle(message) },
+      postDashboard: message => this._panel.webview.postMessage(message),
+      openView: () => this._openReviewPanel(),
+      revealDashboard: () => this._panel.reveal(undefined, false)
+    });
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
-      post: async message => { await this._panel.webview.postMessage(message); },
+      post: message => this._reviewBridge.toReview(message),
       ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
       alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
       isConsentRemembered: root => consent.has(root),
@@ -350,6 +364,11 @@ export class RepositoryManagerPanel {
 
   private async _dispatchMessage(message: { type: string; payload?: unknown }) {
     try {
+      if (this._reviewBridge.fromDashboard(message)) { return; }
+      if (message.type === 'getReviewQuality') {
+        await this._panel.webview.postMessage({ type: 'reviewQualityLoaded', payload: { includeQuality: this._skills.includeQuality() } });
+        return;
+      }
       if (this._reviews.handles(message.type)) {
         await this._reviews.handle(message);
         return;
@@ -435,9 +454,43 @@ export class RepositoryManagerPanel {
     }
   }
 
+  /**
+   * The Repository Review tab, beside the dashboard. Closing it leaves a running review going
+   * (ReviewBridge replays it when the tab opens again); closing the dashboard closes it.
+   */
+  private _openReviewPanel(): void {
+    if (this._reviewPanel) {
+      this._reviewPanel.reveal(undefined, false);
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel('repositoryManager.review', 'Repository Review',
+      { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+      { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'resources')] });
+    this._reviewPanel = panel;
+    panel.webview.html = getReviewHtml({
+      scriptUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'review.js')),
+      styleUri: panel.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'webview.css'))
+    });
+    this._reviewBridge.attach({ post: message => panel.webview.postMessage(message) });
+    panel.webview.onDidReceiveMessage(async (message: { type: string; payload?: unknown }) => {
+      // Like the dashboard's messages: writing (an applied fix) waits for a background fetch.
+      if (this._autoFetchRun && !READ_ONLY_MESSAGES.has(message.type)) { await this._autoFetchRun.catch(() => undefined); }
+      await this._reviewBridge.fromReview(message);
+    }, null, this._disposables);
+    panel.onDidDispose(() => {
+      if (this._reviewPanel === panel) {
+        this._reviewPanel = undefined;
+        this._reviewBridge.detach();
+      }
+    }, null, this._disposables);
+  }
+
   public dispose() {
     this._cancelSummary();
     this._reviews.cancel();
+    const reviewPanel = this._reviewPanel;
+    this._reviewPanel = undefined;
+    reviewPanel?.dispose();
     if (this._autoFetchTimer) {
       clearInterval(this._autoFetchTimer);
     }

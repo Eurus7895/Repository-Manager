@@ -34,9 +34,10 @@ const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessage
 const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
 const { ReviewSkillStore } = require(path.join(root, 'out/reviewSkillStore'));
+const { ReviewBridge } = require(path.join(root, 'out/reviewBridge'));
 const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
 const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
-const { getHtmlForWebview, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
+const { getHtmlForWebview, getReviewHtml, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
 
@@ -151,9 +152,17 @@ function startServer(workspace, otherFolder) {
       get gitOps() { return ops; }, prManager: {}, workspaceRoot: workspace, refresh,
       reloadDashboardHistory: async repositoryPaths => post({ type: 'reloadDashboardHistory', payload: { repositoryPaths } })
     };
+    // Same as RepositoryManagerPanel: reviews run in their own tab, which the bridge opens and feeds.
+    const bridge = new ReviewBridge({
+      controller: { handles: type => reviews.handles(type), handle: message => reviews.handle(message) },
+      postDashboard: post,
+      openView: () => { if (page.openReviewTab) void page.openReviewTab(); },
+      revealDashboard: () => { reviewProbe.dashboardRevealed = (reviewProbe.dashboardRevealed || 0) + 1; }
+    });
+    page.reviewBridge = bridge;
     const reviews = new ReviewController({
       workspaceRoot: () => currentRoot,
-      post,
+      post: message => bridge.toReview(message),
       ask: async (message, detail, actions) => { reviewProbe.questions.push({ message, actions }); return reviewProbe.ask(actions); },
       alwaysConfirm: () => false,
       isConsentRemembered: root => reviewProbe.remembered.has(root),
@@ -187,6 +196,10 @@ function startServer(workspace, otherFolder) {
         // Same as RepositoryManagerPanel: the copy goes to the Side Bar view.
         page.sidebarHtml = message.payload.html;
         if (page.sidebar) await page.sidebar.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined);
+      } else if (bridge.fromDashboard(message)) {
+        // A review message for the review tab.
+      } else if (message.type === 'getReviewQuality') {
+        await post({ type: 'reviewQualityLoaded', payload: { includeQuality: reviewSkills.includeQuality() } });
       } else if (reviews.handles(message.type)) {
         await reviews.handle(message);
       } else if (message.type === 'switchWorkspaceFolder') {
@@ -253,6 +266,17 @@ function startServer(workspace, otherFolder) {
         res.setHeader('content-type', 'text/html');
         return res.end(html);
       }
+      if (req.url === '/review' || req.url === '/review?theme=light') {
+        const light = req.url.endsWith('light');
+        const html = getReviewHtml({ scriptUri: resource('/resources/review.js'), styleUri: resource('/resources/webview.css') })
+          .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
+          .replace('<body class="review-view-body">', light ? '<body class="review-view-body vscode-light">' : '<body class="review-view-body">')
+          .replace('<head>', `<head><style>${light ? lightThemeCss : themeCss}</style><script>
+            window.acquireVsCodeApi = () => ({ getState() { return null; }, setState() {},
+              postMessage(message) { window.__postToHost(message); } });</script>`);
+        res.setHeader('content-type', 'text/html');
+        return res.end(html);
+      }
       if (req.url.startsWith('/resources/')) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         return res.end(fs.readFileSync(path.join(root, 'resources', path.basename(req.url))));
@@ -292,12 +316,40 @@ async function main() {
     page.sidebar = sidebar;
     await sidebar.locator('.sidebar-repository-item').first().waitFor();
     const close = page.close.bind(page);
-    page.close = async () => { page.sidebar = undefined; await sidebar.close(); await close(); };
+    page.close = async () => { page.sidebar = undefined; await sidebar.close(); if (page.review) await page.closeReviewTab(); await close(); };
     return sidebar;
+  };
+  // The Repository Review tab, opened by the bridge the way RepositoryManagerPanel opens it.
+  const attachReviewTab = (page, theme) => {
+    page.openReviewTab = async () => {
+      if (page.review || page.reviewOpening) return;
+      page.reviewOpening = true;
+      const review = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+      review.on('pageerror', error => pageErrors.push(`review: ${error.message}`));
+      await review.exposeFunction('__postToHost', message => page.reviewBridge.fromReview(message));
+      page.reviewBridge.attach({ post: message => review.evaluate(data => window.postMessage(data, '*'), message).catch(() => undefined) });
+      await review.goto(theme === 'light' ? `${url}review?theme=light` : `${url}review`);
+      page.review = review;
+      page.reviewOpening = false;
+    };
+    // Closing the tab: the bridge forgets it; a running review goes on.
+    page.closeReviewTab = async () => {
+      if (!page.review) return;
+      const review = page.review;
+      page.review = undefined;
+      page.reviewBridge.detach();
+      await review.close();
+    };
+    page.reviewTab = async () => {
+      for (let i = 0; i < 250 && !page.review; i++) await page.waitForTimeout(20);
+      assert.ok(page.review, 'the review tab did not open');
+      return page.review;
+    };
   };
   const openPage = async (width, height, theme) => {
     const page = await browser.newPage({ viewport: { width, height } });
     page.on('pageerror', error => pageErrors.push(error.message));
+    attachReviewTab(page, theme);
     await connect(page);
     await page.goto(theme === 'light' ? `${url}?theme=light` : url);
     await page.locator('.history-row').first().waitFor();
@@ -337,12 +389,16 @@ async function main() {
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
     await snap(page, '01-dashboard');
-    // Before any review, the Review tab is there so its skills can be set up first.
-    await page.locator('#detailTabReview').waitFor({ state: 'visible' });
-    await page.click('#detailTabReview');
-    assert.match(await page.textContent('#reviewBody'), /No review yet/);
-    assert.equal(await page.isVisible('#reviewSkills > summary'), true, 'the skills are hidden before the first review');
-    await page.click('#detailTabChanges');
+    // Before any review, the Review button opens the Repository Review tab, so its skills can be set up first.
+    // The dashboard keeps no review panel of its own.
+    assert.equal(await page.locator('#reviewPanel, #detailTabs').count(), 0, 'the dashboard still has a Review tab');
+    await page.click('#openReviewTabButton');
+    const firstTab = await page.reviewTab();
+    await firstTab.waitForFunction(() => /No review yet/.test(document.getElementById('reviewBody').textContent));
+    assert.equal(await firstTab.isVisible('#reviewSkills > summary'), true, 'the skills are hidden before the first review');
+    // It follows the dashboard's repository.
+    assert.match(await firstTab.textContent('#reviewTitle'), /Review · /);
+    await page.closeReviewTab();
     await snap(side, '01a-sidebar');
     await libB.hover();
     await snap(side, '01b-reset-to-recorded');
@@ -425,7 +481,7 @@ async function main() {
 
     // Release › Load range loads the changes since the latest release tag, and only loads them.
     assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Load range']);
-    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review branch', 'Review all']);
+    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review commit', 'Review branch', 'Review all', 'Review ↗']);
     await page.click('.review-release-group [data-action="loadReleaseRange"]');
     await page.waitForFunction(() => /Release: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
     await page.locator('#dashboardChangedFiles [data-action]').first().waitFor();
@@ -433,7 +489,7 @@ async function main() {
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
     assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
-      ['Summarize changes', 'Review commit']);
+      ['Summarize changes']);
     await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
     assert.equal(reviewProbe.summaries.length, 1, 'the release summary did not start');
@@ -444,6 +500,7 @@ async function main() {
     await snap(page, '08b-release-summary');
 
     // W6–W7: review of the release diff (from the comparison), results, evidence jump and export.
+    // Reviews run and are read in the Repository Review tab (rv); the dashboard starts them.
     let releaseRunner;
     const runnerGate = new Promise(resolve => { releaseRunner = resolve; });
     reviewProbe.runner = async (request, token, progress) => {
@@ -461,80 +518,79 @@ async function main() {
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    // Reviews start with one click, without a dialog.
-    assert.equal(await page.locator('.review-current-group button').count(), 2);
+    // Reviews start with one click, without a dialog: Review commit, Review branch, Review all, next to Load range.
+    assert.deepEqual(await page.locator('.review-current-group button').evaluateAll(items => items.map(item => item.dataset.action)),
+      ['reviewSelection', 'reviewRelease', 'reviewRelease', 'openReviewTab']);
     assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
     // The consent question is held open so the header can be checked while it waits.
     let answerConsent;
     reviewProbe.ask = () => new Promise(resolve => { answerConsent = resolve; });
     // The comparison names its ends after the tag and the branch, and so does the review.
     await page.click('#reviewSelectionChangesButton');
-    assert.equal(await page.getAttribute('#detailTabReview', 'aria-selected'), 'true');
-    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
+    const rv = await page.reviewTab();
+    await rv.waitForFunction(() => document.getElementById('reviewMeta').textContent === 'Diff: 1.0.0 → feature/dashboard');
     // The labels come from the page itself now, so wait for the extension's own reply too.
-    await page.waitForFunction(() => document.getElementById('reviewStatus').textContent === 'Waiting for confirmation…');
+    await rv.waitForFunction(() => document.getElementById('reviewStatus').textContent === 'Waiting for confirmation…');
     // The extension posts that status, then asks: wait for the question as well.
     for (let i = 0; i < 100 && !answerConsent; i++) await page.waitForTimeout(20);
     assert.deepEqual(reviewProbe.questions.at(-1).actions, ['Start review', 'Always allow for this repository']);
     // Not snap(): the host is busy on purpose, waiting for the answer.
-    await page.waitForTimeout(150);
-    await page.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
+    await rv.waitForTimeout(150);
+    await rv.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
     // Only a second review waits; everything else stays usable while this one runs.
     const libBItem = page.sidebar.locator('.sidebar-repository-item[data-path="lib-b"]');
-    assert.equal(await page.getAttribute('.review-current-group [data-scope="branch"]', 'aria-disabled'), 'true');
+    await page.waitForFunction(() => document.querySelector('.review-current-group [data-scope="branch"]').getAttribute('aria-disabled') === 'true');
     assert.equal(await libBItem.getAttribute('aria-disabled'), null);
     assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
     answerConsent('Always allow for this repository');
     // Progress: overall bar, where it is, and each component's state.
-    await page.locator('.review-steps .review-step-current').waitFor();
-    assert.equal(await page.getAttribute('.review-progress', 'aria-valuenow'), '25');
-    assert.match(await page.textContent('.review-progress-where'), /Component 2 of 3: lib · Analyzing/);
-    assert.match(await page.textContent('.review-progress-counts'), /1 of 4 files · 2 candidate findings · \d+s elapsed/);
-    assert.deepEqual(await page.locator('.review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
+    await rv.locator('.review-steps .review-step-current').waitFor();
+    assert.equal(await rv.getAttribute('.review-progress', 'aria-valuenow'), '25');
+    assert.match(await rv.textContent('.review-progress-where'), /Component 2 of 3: lib · Analyzing/);
+    assert.match(await rv.textContent('.review-progress-counts'), /1 of 4 files · 2 candidate findings · \d+s elapsed/);
+    assert.deepEqual(await rv.locator('.review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
       ['review-step-done', 'review-step-current', 'review-step-pending']);
-    assert.match(await page.textContent('.review-progress-message'), /Reading related code/);
-    await page.waitForTimeout(150);
-    await page.screenshot({ path: path.join(outputDir, '09b-review-progress.png'), animations: 'disabled', caret: 'hide' });
-    // Work elsewhere while it runs: another repository, its commits, the Changes tab.
+    assert.match(await rv.textContent('.review-progress-message'), /Reading related code/);
+    await rv.waitForTimeout(150);
+    await rv.screenshot({ path: path.join(outputDir, '09b-review-progress.png'), animations: 'disabled', caret: 'hide' });
+    // The dashboard's Review button shows the progress.
+    await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '25%');
+    // Work elsewhere while it runs: another repository and its commits. The running review stays in its tab.
     await libBItem.click();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
     await page.sidebar.locator('.sidebar-repository-item[data-path="lib-b"][aria-current="true"]').waitFor();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).click();
-    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true', 'clicking a commit did not show its changes');
-    assert.equal(await page.textContent('#reviewTabBadge'), '25%', 'the Review tab does not show progress');
-    await page.click('#detailTabReview');
-    await page.locator('.review-steps .review-step-current').waitFor();
-    assert.match(await page.textContent('#reviewMeta'), /^Diff: 1\.0\.0 → feature\/dashboard · workspace$/);
-    await page.click('#detailTabChanges');
+    await rv.waitForFunction(() => /^Diff: 1\.0\.0 → feature\/dashboard · workspace$/.test(document.getElementById('reviewMeta').textContent));
+    await rv.locator('.review-steps .review-step-current').waitFor();
     // Back to the reviewed repository; the review was never interrupted.
     await page.sidebar.click('.sidebar-repository-item[data-path="."]');
     await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
     releaseRunner();
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
-    await page.click('#detailTabReview');
-    await page.locator('.review-readiness.readiness-blocked').waitFor();
+    await rv.locator('.review-readiness.readiness-blocked').waitFor();
     // A blocked banner still counts the other findings and the review gaps.
-    assert.equal(await page.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
+    assert.equal(await rv.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
     // Labels name the tag and branch; the exact commits reviewed follow them.
     const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
     // The model that reviewed is named after the commits, with its exact id in the tooltip.
-    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
-    assert.equal(await page.getAttribute('#reviewMeta', 'title'), 'Reviewed with Scripted model (scripted:1)');
-    assert.equal(await page.getAttribute('.review-current-group [data-scope="branch"]', 'aria-disabled'), null);
-    const blocking = await page.locator('.review-body .review-blocking').textContent();
-    const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
+    assert.equal(await rv.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
+    assert.equal(await rv.getAttribute('#reviewMeta', 'title'), 'Reviewed with Scripted model (scripted:1)');
+    await page.waitForFunction(() => document.querySelector('.review-current-group [data-scope="branch"]').getAttribute('aria-disabled') === null);
+    const blocking = await rv.locator('.review-body .review-blocking').textContent();
+    const attention = await rv.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
     // Review gaps (here: no compliance policy) are their own section, apart from the findings.
-    assert.match(await page.textContent('.review-gaps-section'), /Compliance policy is not configured/);
-    assert.equal(await page.locator('.review-gaps-section .review-finding').count(), 0, 'a finding is listed as a gap');
-    assert.equal(await page.locator('.review-body').getByText('Advisory', { exact: false }).count(), 1, 'the advisory note repeats');
+    assert.match(await rv.textContent('.review-gaps-section'), /Compliance policy is not configured/);
+    assert.equal(await rv.locator('.review-gaps-section .review-finding').count(), 0, 'a finding is listed as a gap');
+    assert.equal(await rv.locator('.review-body').getByText('Advisory', { exact: false }).count(), 1, 'the advisory note repeats');
     assert.match(blocking, /Changed line passes input to eval/);
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);
-    await snap(page, '10-review-results');
+    await snap(rv, '10-review-results');
+    await snap(page, '10g-dashboard-review-button');
     // However long a title is, the file:line and the status chip stay inside the row.
-    const wide = page.viewportSize();
-    await page.setViewportSize({ width: 900, height: wide.height });
-    const clipped = await page.evaluate(() => [...document.querySelectorAll('.review-finding:not(.open) .review-finding-head')].filter(head => {
+    const wide = rv.viewportSize();
+    await rv.setViewportSize({ width: 700, height: wide.height });
+    const clipped = await rv.evaluate(() => [...document.querySelectorAll('.review-finding:not(.open) .review-finding-head')].filter(head => {
       // The row itself can grow past the panel, so measure against the scrolling panel.
       const box = document.getElementById('reviewBody').getBoundingClientRect();
       const title = head.querySelector('.review-finding-title').getBoundingClientRect();
@@ -542,33 +598,22 @@ async function main() {
       // Overlap (the title painted over them) or pushed out of the row both hide them.
       return after.some(item => item.left < title.right - 1 || item.right > box.right + 1);
     }).length);
-    await page.setViewportSize(wide);
+    await rv.setViewportSize(wide);
     assert.equal(clipped, 0, 'a finding row pushes its status out of view');
-    // The Review tab drops the commit header and summary toolbar; Expand also hides the history.
-    assert.equal(await page.isVisible('#dashboardCommitSummary'), false);
-    const reviewHeight = () => page.evaluate(() => document.getElementById('reviewPanel').getBoundingClientRect().height);
-    const compact = await reviewHeight();
-    await page.click('#expandReviewButton');
-    assert.equal(await page.isVisible('.history-region'), false, 'Expand left the history on screen');
-    assert.ok(await reviewHeight() > compact + 200, `the expanded review is only ${await reviewHeight()}px tall`);
-    assert.equal(await page.textContent('#expandReviewButton'), 'Collapse');
-    await snap(page, '10d-review-expanded');
-    await page.click('#expandReviewButton');
-    await page.locator('.history-region').waitFor();
 
     // Findings start as one line each (severity, title, where); the details open on demand.
     const finding = id => `.review-finding[data-finding-id="${id}"]`;
-    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a finding starts expanded');
-    assert.match(await page.textContent(`${finding('high-verified')} .review-finding-title`), /Changed line passes input to eval/);
-    assert.match(await page.textContent(`${finding('high-verified')} .review-finding-where`), /^src\/app\.txt:3$/);
-    await page.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
-    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), true);
-    assert.equal(await page.getAttribute(`${finding('high-verified')} [data-action="toggleFinding"]`, 'aria-expanded'), 'true');
-    await page.click('[data-action="expandAllFindings"]');
-    assert.equal(await page.textContent('[data-action="expandAllFindings"]'), 'Collapse all');
-    assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), true);
+    assert.equal(await rv.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a finding starts expanded');
+    assert.match(await rv.textContent(`${finding('high-verified')} .review-finding-title`), /Changed line passes input to eval/);
+    assert.match(await rv.textContent(`${finding('high-verified')} .review-finding-where`), /^src\/app\.txt:3$/);
+    await rv.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
+    assert.equal(await rv.isVisible(`${finding('high-verified')} .review-finding-body`), true);
+    assert.equal(await rv.getAttribute(`${finding('high-verified')} [data-action="toggleFinding"]`, 'aria-expanded'), 'true');
+    await rv.click('[data-action="expandAllFindings"]');
+    assert.equal(await rv.textContent('[data-action="expandAllFindings"]'), 'Collapse all');
+    assert.equal(await rv.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), true);
     // Finding text stands out from the panel: real contrast, not dimmed grey on grey.
-    const findingContrast = await page.evaluate(() => {
+    const findingContrast = await rv.evaluate(() => {
       const rgb = value => (value.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
       const luminance = ([r, g, b]) => [r, g, b].map(c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; })
         .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
@@ -580,38 +625,37 @@ async function main() {
 
     // Triage: a finding stays where it was found. Dismissed or fixed, it folds to one line with
     // its state and an Undo, instead of moving to the end of the list.
-    assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
-    assert.equal(await page.isDisabled('[data-action="proposeReviewFix"]'), true, 'Fix is enabled with nothing marked');
-    const triage = (id, decision) => page.click(`${finding(id)} .review-triage [data-action="triageFinding"][data-decision="${decision}"]`);
+    assert.match(await rv.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
+    assert.equal(await rv.isDisabled('[data-action="proposeReviewFix"]'), true, 'Fix is enabled with nothing marked');
+    const triage = (id, decision) => rv.click(`${finding(id)} .review-triage [data-action="triageFinding"][data-decision="${decision}"]`);
     await triage('high-verified', 'fix');
-    await page.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
+    await rv.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
     await triage('critical-hypothesis', 'dismiss');
-    await page.locator(`.review-attention ${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
-    assert.equal(await page.locator('.review-dismissed').count(), 0, 'dismissed findings still move to their own section');
-    assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), false, 'a dismissed finding did not fold');
-    assert.match(await page.textContent(`${finding('critical-hypothesis')} .review-triage-chip`), /^Dismissed · False positive$/);
+    await rv.locator(`.review-attention ${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
+    assert.equal(await rv.locator('.review-dismissed').count(), 0, 'dismissed findings still move to their own section');
+    assert.equal(await rv.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), false, 'a dismissed finding did not fold');
+    assert.match(await rv.textContent(`${finding('critical-hypothesis')} .review-triage-chip`), /^Dismissed · False positive$/);
     // With the status, triage chip and Undo beside it, a narrow pane still shows the file and line.
-    const roomy = page.viewportSize();
-    await page.setViewportSize({ width: 760, height: roomy.height });
-    const whereWidth = await page.evaluate(() => document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-finding-where').getBoundingClientRect().width);
-    await page.setViewportSize(roomy);
+    await rv.setViewportSize({ width: 620, height: wide.height });
+    const whereWidth = await rv.evaluate(() => document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-finding-where').getBoundingClientRect().width);
+    await rv.setViewportSize(wide);
     assert.ok(whereWidth > 40, `the file and line shrank to ${whereWidth}px`);
-    assert.match(await page.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
+    assert.match(await rv.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     // The reason is chosen in the opened finding.
-    await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
-    await page.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
-    await page.waitForFunction(() => /Accepted risk/.test(document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-triage-chip').textContent));
+    await rv.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
+    await rv.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
+    await rv.waitForFunction(() => /Accepted risk/.test(document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-triage-chip').textContent));
     // Undo brings it back as not triaged, in the same place.
-    await page.click(`${finding('critical-hypothesis')} .review-undo`);
-    await page.waitForFunction(() => !document.querySelector('.review-finding.triage-dismiss'));
-    assert.equal(await page.locator(`.review-attention ${finding('critical-hypothesis')}`).count(), 1);
+    await rv.click(`${finding('critical-hypothesis')} .review-undo`);
+    await rv.waitForFunction(() => !document.querySelector('.review-finding.triage-dismiss'));
+    assert.equal(await rv.locator(`.review-attention ${finding('critical-hypothesis')}`).count(), 1);
     await triage('critical-hypothesis', 'dismiss');
-    await page.locator(`${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
-    await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
-    await page.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
-    await page.waitForFunction(() => document.querySelector('.review-dismiss-reason') && document.querySelector('.review-dismiss-reason').value === 'accepted_risk');
-    await page.click('[data-action="exportReview"][data-format="copy"]');
-    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await page.waitForTimeout(20);
+    await rv.locator(`${finding('critical-hypothesis')}.triage-dismiss`).waitFor();
+    await rv.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
+    await rv.selectOption('.review-dismiss-reason[data-finding-id="critical-hypothesis"]', 'accepted_risk');
+    await rv.waitForFunction(() => document.querySelector('.review-dismiss-reason') && document.querySelector('.review-dismiss-reason').value === 'accepted_risk');
+    await rv.click('[data-action="exportReview"][data-format="copy"]');
+    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await rv.waitForTimeout(20);
     assert.match(reviewProbe.copied || '', /^# Security and compliance review — Diff: 1\.0\.0 → feature\/dashboard/);
     assert.match(reviewProbe.copied, /Triage: 1 marked to fix, 0 fixed, 1 dismissed, 0 not triaged\./);
     assert.match(reviewProbe.copied, /## Dismissed by reviewer\n\n- \*\*CRITICAL security\*\*.*dismissed: accepted risk/);
@@ -623,59 +667,60 @@ async function main() {
       notes: ['Add a test for the fixed input path.'] };
     let releaseFix;
     reviewProbe.fixGate = new Promise(resolve => { releaseFix = resolve; });
-    await page.click('[data-action="proposeReviewFix"]');
+    await rv.click('[data-action="proposeReviewFix"]');
     // Progress: each step, what was sent, how much of the reply has arrived, elapsed time.
-    await page.waitForFunction(() => /Receive the proposed edits1\.5 KB so far/.test(
+    await rv.waitForFunction(() => /Receive the proposed edits1\.5 KB so far/.test(
       (document.querySelector('.review-fix-steps .review-step-current') || {}).textContent || ''));
-    assert.deepEqual(await page.locator('.review-fix-steps .review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
+    assert.deepEqual(await rv.locator('.review-fix-steps .review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
       ['review-step-done', 'review-step-done', 'review-step-current', 'review-step-pending']);
-    assert.match(await page.textContent('.review-fix-steps .review-step:nth-child(2)'), /1 finding, 1 file · [\d.]+ KB/);
-    assert.match(await page.textContent('.review-fix-running h4'), /Auto-fix · \d+s elapsed/);
-    await page.waitForTimeout(150);
-    await page.screenshot({ path: path.join(outputDir, '10a-review-fix-progress.png'), animations: 'disabled', caret: 'hide' });
+    assert.match(await rv.textContent('.review-fix-steps .review-step:nth-child(2)'), /1 finding, 1 file · [\d.]+ KB/);
+    assert.match(await rv.textContent('.review-fix-running h4'), /Auto-fix · \d+s elapsed/);
+    await rv.waitForTimeout(150);
+    await rv.screenshot({ path: path.join(outputDir, '10a-review-fix-progress.png'), animations: 'disabled', caret: 'hide' });
     reviewProbe.fixGate = null;
     releaseFix();
-    await page.locator('.review-fix-file').waitFor();
+    await rv.locator('.review-fix-file').waitFor();
     assert.equal(reviewProbe.fixRequests, 1);
     assert.equal(fs.readFileSync(appFile, 'utf8'), original, 'the preview wrote the file');
-    assert.match(await page.textContent('.review-fix'), /Proposed fix · 1 file/);
-    assert.match(await page.textContent('.review-fix'), /Add a test for the fixed input path/);
-    assert.equal(await page.locator('.review-fix .diff-addition').first().textContent(), '3+line 3 fixed');
+    assert.match(await rv.textContent('.review-fix'), /Proposed fix · 1 file/);
+    assert.match(await rv.textContent('.review-fix'), /Add a test for the fixed input path/);
+    assert.equal(await rv.locator('.review-fix .diff-addition').first().textContent(), '3+line 3 fixed');
     // Apply all, or Apply selected: unticking every file leaves nothing to apply selectively.
-    assert.equal(await page.isChecked('.review-fix-select[data-path="src/app.txt"]'), true);
-    assert.match(await page.textContent('.review-fix-file summary'), /fixes high security/);
-    assert.equal(await page.isDisabled('[data-action="applyReviewFix"][data-selection="selected"]'), true, 'Apply selected with every file ticked');
-    await page.uncheck('.review-fix-select[data-path="src/app.txt"]');
-    assert.equal(await page.textContent('[data-action="applyReviewFix"][data-selection="selected"]'), 'Apply selected (0)');
-    await page.check('.review-fix-select[data-path="src/app.txt"]');
-    await snap(page, '10b-review-fix-preview');
-    await page.click('[data-action="applyReviewFix"][data-selection="all"]');
-    await page.locator('.review-fix-applied').waitFor();
+    assert.equal(await rv.isChecked('.review-fix-select[data-path="src/app.txt"]'), true);
+    assert.match(await rv.textContent('.review-fix-file summary'), /fixes high security/);
+    assert.equal(await rv.isDisabled('[data-action="applyReviewFix"][data-selection="selected"]'), true, 'Apply selected with every file ticked');
+    await rv.uncheck('.review-fix-select[data-path="src/app.txt"]');
+    assert.equal(await rv.textContent('[data-action="applyReviewFix"][data-selection="selected"]'), 'Apply selected (0)');
+    await rv.check('.review-fix-select[data-path="src/app.txt"]');
+    await snap(rv, '10b-review-fix-preview');
+    await rv.click('[data-action="applyReviewFix"][data-selection="all"]');
+    await rv.locator('.review-fix-applied').waitFor();
     // The fixed finding leaves "to fix", stays in Blocking, and folds with its Fixed state.
-    await page.locator(`.review-blocking ${finding('high-verified')}.triage-fixed`).waitFor();
-    assert.match(await page.textContent('.review-triage-summary'), /0 to fix.*1 fixed.*1 dismissed/);
-    assert.equal(await page.textContent(`${finding('high-verified')} .review-triage-chip`), 'Fixed');
-    assert.equal(await page.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a fixed finding did not fold');
-    await snap(page, '10c-review-fixed');
-    await page.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
-    assert.equal(await page.getAttribute(`${finding('high-verified')} .review-triage [data-decision="fixed"]`, 'aria-pressed'), 'true');
+    await rv.locator(`.review-blocking ${finding('high-verified')}.triage-fixed`).waitFor();
+    assert.match(await rv.textContent('.review-triage-summary'), /0 to fix.*1 fixed.*1 dismissed/);
+    assert.equal(await rv.textContent(`${finding('high-verified')} .review-triage-chip`), 'Fixed');
+    assert.equal(await rv.isVisible(`${finding('high-verified')} .review-finding-body`), false, 'a fixed finding did not fold');
+    await snap(rv, '10c-review-fixed');
+    await rv.click(`${finding('high-verified')} [data-action="toggleFinding"]`);
+    assert.equal(await rv.getAttribute(`${finding('high-verified')} .review-triage [data-decision="fixed"]`, 'aria-pressed'), 'true');
     assert.match(fs.readFileSync(appFile, 'utf8'), /line 3 fixed/);
     assert.equal(reviewProbe.workingTreeChanged, 1);
     assert.equal(git(parent, 'diff', '--cached', '--name-only').trim(), '', 'auto-fix staged the file');
     assert.equal(git(parent, 'diff', '--name-only', '--', 'src').trim(), 'src/app.txt');
     // A second proposal is refused now that the file has local changes.
     await triage('high-verified', 'fix');
-    await page.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
-    await page.click('[data-action="proposeReviewFix"]');
-    await page.waitForFunction(() => /local changes/.test(document.querySelector('.review-fix').textContent));
+    await rv.waitForFunction(() => /1 to fix/.test(document.querySelector('.review-triage-summary').textContent));
+    await rv.click('[data-action="proposeReviewFix"]');
+    await rv.waitForFunction(() => /local changes/.test(document.querySelector('.review-fix').textContent));
     assert.equal(reviewProbe.fixRequests, 1, 'asked the model despite local changes');
     git(parent, 'checkout', '--', 'src/app.txt');
-    // Evidence opens the cited line in the dashboard diff.
-    const firstBlocking = page.locator('.review-body .review-blocking .review-finding').first();
+    // Evidence opens the cited line in the dashboard's diff, and brings the dashboard forward.
+    const firstBlocking = rv.locator('.review-body .review-blocking .review-finding').first();
     if (!(await firstBlocking.locator('.review-finding-body').isVisible())) await firstBlocking.locator('[data-action="toggleFinding"]').click();
+    const revealedBefore = reviewProbe.dashboardRevealed || 0;
     await firstBlocking.locator('[data-action="reviewEvidence"]').first().click();
     await page.locator('#dashboardDiff .diff-line-highlight').waitFor();
-    assert.equal(await page.getAttribute('#detailTabChanges', 'aria-selected'), 'true');
+    assert.equal(reviewProbe.dashboardRevealed, revealedBefore + 1, 'the dashboard was not brought forward');
     assert.equal(await page.locator('#dashboardDiff .diff-line-highlight .diff-ln').nth(1).textContent(), '3');
     await snap(page, '11-review-evidence');
 
@@ -686,7 +731,7 @@ async function main() {
     const record = request => { runs.push(request); return { request, findings: [], policyResults: [], policyStatus: 'not_configured',
       limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }; };
     reviewProbe.runner = async request => record(request);
-    // Base/Target selection: the toolbar below reviews the selected range.
+    // Base/Target selection: Review commit reviews the selected range.
     const nodes = page.locator('.graph-node-control');
     const [baseHash, targetHash] = [await nodes.nth(1).getAttribute('data-commit'), await nodes.nth(0).getAttribute('data-commit')];
     await nodes.nth(1).click();
@@ -694,37 +739,33 @@ async function main() {
     await page.waitForFunction(() => /Compare/.test(document.getElementById('dashboardCommitSummary').textContent));
     await snap(page, '12-compare-review-buttons');
     await page.click('#reviewSelectionChangesButton');
-    await page.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
+    await rv.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
-    assert.equal(await page.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
+    assert.equal(await rv.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
     // Review all: every file at the tip of the current branch, never at the selected commit.
-    await page.click('#detailTabChanges');
-    assert.equal(await page.locator('.change-summary-toolbar [data-scope="branch"]').count(), 0, 'the toolbar still has a branch review');
+    assert.equal(await page.locator('.change-summary-toolbar [data-action="reviewSelection"], .change-summary-toolbar [data-scope]').count(), 0, 'a review button stayed in the changes toolbar');
     await page.click('.review-current-group [data-scope="branch"]');
-    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Branch: '));
+    await rv.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Branch: '));
     for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['branch', undefined]);
     // Review branch: what the current branch adds since it left the default branch.
-    await page.click('#detailTabChanges');
     await page.click('.review-current-group [data-scope="changes"]');
     for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
     assert.equal(runs.at(-1).scope, 'changes');
     assert.ok(runs.at(-1).baseSha, 'the branch review has no base');
-    await page.waitForFunction(() => /^Diff: main \(merge-base\) → /.test(document.getElementById('reviewMeta').textContent));
+    await rv.waitForFunction(() => /^Diff: main \(merge-base\) → /.test(document.getElementById('reviewMeta').textContent));
     assert.deepEqual(runs.at(-1).categories, ['security', 'compliance']);
     // Compare branches: a review of that comparison keeps the branch names, not the resolved hashes.
-    await page.click('#detailTabChanges');
     await page.click('[data-action="openBranchCompareModal"]');
     await page.locator('#branchCompareModal.active').waitFor();
     await page.selectOption('#compareBaseBranch', 'main');
     await page.selectOption('#compareTargetBranch', 'feature/dashboard');
     await page.click('#branchCompareModal [data-action="compareBranches"]');
     await page.waitForFunction(() => /Branches: main → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
-    await page.locator('#reviewSelectionChangesButton').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.getElementById('reviewSelectionChangesButton').getAttribute('aria-disabled') === null);
     await page.click('#reviewSelectionChangesButton');
-    await page.waitForFunction(() => /^Diff: main → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent));
+    await rv.waitForFunction(() => /^Diff: main → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent));
     for (let i = 0; i < 100 && runs.length < 4; i++) await page.waitForTimeout(20);
-    await page.click('#detailTabChanges');
     await page.click('[data-action="clearCommitComparison"]');
 
     // History menu: "changes" reviews the commit against its parent; "branch" every file at it.
@@ -733,69 +774,69 @@ async function main() {
     await page.click('#historyContextMenu [data-action="contextReviewCommit"]');
     for (let i = 0; i < 100 && runs.length < 5; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['changes', undefined]);
-    await page.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Diff: parent → '));
+    await rv.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Diff: parent → '));
     // Cancelling a running branch review.
     reviewProbe.runner = (request, token) => new Promise((resolve, reject) => {
       const timer = setInterval(() => { if (token.isCancellationRequested) { clearInterval(timer); reject(new Error('Cancelled')); } }, 20);
     });
     await page.locator('.history-row').first().click({ button: 'right' });
     await page.click('#historyContextMenu [data-action="contextReviewSnapshot"]');
-    await page.locator('#cancelReviewButton').waitFor({ state: 'visible' });
-    assert.match(await page.textContent('#reviewMeta'), /^Branch: /);
-    await page.click('#cancelReviewButton');
-    await page.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
+    await rv.locator('#cancelReviewButton').waitFor({ state: 'visible' });
+    assert.match(await rv.textContent('#reviewMeta'), /^Branch: /);
+    await rv.click('#cancelReviewButton');
+    await rv.waitForFunction(() => /Review cancelled/.test(document.getElementById('reviewBody').textContent));
+    await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '');
     assert.equal(reviewProbe.questions.length, questionsAsked, 'asked for consent after "Always allow"');
 
     // Past reviews: every completed review was saved (the cancelled one was not), newest first.
-    const historyRows = page.locator('#reviewHistoryList .review-history-item');
-    await page.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 6);
-    assert.equal(await page.textContent('#reviewHistoryCount'), '6');
+    const historyRows = rv.locator('#reviewHistoryList .review-history-item');
+    await rv.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 6);
+    assert.equal(await rv.textContent('#reviewHistoryCount'), '6');
     assert.match(await historyRows.nth(5).textContent(), /Diff: 1\.0\.0 → feature\/dashboard.*Blocked.*2 findings · 1 to fix · 1 dismissed/s);
-    // A reopened dashboard (as after restarting VS Code) still lists them, with the Review tab showing.
+    // A reopened dashboard (as after restarting VS Code) still lists them in its review tab.
     const reopened = await openPage(1440, 900);
-    await reopened.locator('#detailTabReview').waitFor();
-    await reopened.click('#detailTabReview');
-    await reopened.locator('#reviewHistoryList .review-history-item').nth(5).waitFor();
-    assert.equal(await reopened.getAttribute('#reviewHistory', 'open'), '', 'Past reviews should start expanded when no review is open');
-    assert.match(await reopened.textContent('#reviewBody'), /No review is open/);
-    await snap(reopened, '13-past-reviews');
+    await reopened.click('#openReviewTabButton');
+    const rtab = await reopened.reviewTab();
+    await rtab.locator('#reviewHistoryList .review-history-item').nth(5).waitFor();
+    assert.equal(await rtab.getAttribute('#reviewHistory', 'open'), '', 'Past reviews should start expanded when no review is open');
+    assert.match(await rtab.textContent('#reviewBody'), /No review is open/);
+    await snap(rtab, '13-past-reviews');
     // Opening one restores its findings and triage; export works from the saved copy.
-    await reopened.click('#reviewHistoryList .review-history-item:nth-child(6) [data-action="openStoredReview"]');
-    await reopened.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
-    assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(6) .review-history-commit'), `${releaseSha} → ${branchSha}`);
-    assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
-    assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(6)', 'aria-current'), 'true');
+    await rtab.click('#reviewHistoryList .review-history-item:nth-child(6) [data-action="openStoredReview"]');
+    await rtab.locator('.review-readiness.readiness-blocked').waitFor();
+    assert.equal(await rtab.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
+    assert.equal(await rtab.textContent('#reviewHistoryList .review-history-item:nth-child(6) .review-history-commit'), `${releaseSha} → ${branchSha}`);
+    assert.match(await rtab.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
+    assert.equal(await rtab.getAttribute('#reviewHistoryList .review-history-item:nth-child(6)', 'aria-current'), 'true');
     reviewProbe.copied = null;
-    await reopened.click('[data-action="exportReview"][data-format="copy"]');
-    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await reopened.waitForTimeout(20);
+    await rtab.click('[data-action="exportReview"][data-format="copy"]');
+    for (let i = 0; i < 100 && !reviewProbe.copied; i++) await rtab.waitForTimeout(20);
     assert.match(reviewProbe.copied || '', /dismissed: accepted risk/);
     // Triage of a reopened review is saved again; a reopened review starts with every finding folded.
-    assert.equal(await reopened.isVisible('.review-finding[data-finding-id="high-verified"] .review-finding-body'), false);
-    await reopened.click('.review-finding[data-finding-id="high-verified"] [data-action="toggleFinding"]');
-    await reopened.click('.review-finding[data-finding-id="high-verified"] .review-triage [data-action="triageFinding"][data-decision="fix"]');
-    await reopened.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
-    await reopened.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[5].textContent));
+    assert.equal(await rtab.isVisible('.review-finding[data-finding-id="high-verified"] .review-finding-body'), false);
+    await rtab.click('.review-finding[data-finding-id="high-verified"] [data-action="toggleFinding"]');
+    await rtab.click('.review-finding[data-finding-id="high-verified"] .review-triage [data-action="triageFinding"][data-decision="fix"]');
+    await rtab.waitForFunction(() => /0 to fix/.test(document.querySelector('.review-triage-summary').textContent));
+    await rtab.waitForFunction(() => !/to fix/.test(document.querySelectorAll('#reviewHistoryList .review-history-item')[5].textContent));
     // Deleting removes it from the list; the open copy stays on screen.
-    await reopened.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
-    await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 5);
+    await rtab.click('#reviewHistoryList .review-history-item:nth-child(1) [data-action="deleteStoredReview"]');
+    await rtab.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 5);
     await reopened.close();
 
     // Review skills: the bundled ones are listed, can be turned off, and an imported one can be removed.
-    await page.click('#detailTabReview');
-    await page.click('#reviewSkills > summary');
-    await page.waitForFunction(() => document.querySelectorAll('#reviewSkillsList .review-skill').length === 9);
-    assert.equal(await page.textContent('#reviewSkillsCount'), '9/9');
-    await page.click('#reviewSkillsList [data-action="toggleReviewSkill"][data-skill-id="cloud-iac"]');
-    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
-    assert.equal(await page.getAttribute('#reviewSkillsList [data-skill-id="cloud-iac"]', 'aria-pressed'), 'false');
+    await rv.click('#reviewSkills > summary');
+    await rv.waitForFunction(() => document.querySelectorAll('#reviewSkillsList .review-skill').length === 9);
+    assert.equal(await rv.textContent('#reviewSkillsCount'), '9/9');
+    await rv.click('#reviewSkillsList [data-action="toggleReviewSkill"][data-skill-id="cloud-iac"]');
+    await rv.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
+    assert.equal(await rv.getAttribute('#reviewSkillsList [data-skill-id="cloud-iac"]', 'aria-pressed'), 'false');
     reviewProbe.skillFile = '---\nid: team-go\nname: Team Go\ncategory: security\nappliesTo: ["**/*.go"]\n---\n- Check every exec.Command.\n';
-    await page.click('[data-action="importReviewSkill"]');
-    await page.waitForFunction(() => /Imported "Team Go"/.test(document.getElementById('reviewSkillsStatus').textContent));
-    await snap(page, '13b-review-skills');
-    await page.click('#reviewSkillsList [data-action="removeReviewSkill"][data-skill-id="team-go"]');
-    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
-    await page.click('#reviewSkills > summary');
+    await rv.click('[data-action="importReviewSkill"]');
+    await rv.waitForFunction(() => /Imported "Team Go"/.test(document.getElementById('reviewSkillsStatus').textContent));
+    await snap(rv, '13b-review-skills');
+    await rv.click('#reviewSkillsList [data-action="removeReviewSkill"][data-skill-id="team-go"]');
+    await rv.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
+    await rv.click('#reviewSkills > summary');
 
     // Clean code: the checkbox adds the quality category; its notes have their own section and never block.
     await page.check('#reviewQualityToggle');
@@ -812,35 +853,36 @@ async function main() {
         coverage: { surveyed: 3, analyzed: 1, skipped: [], complete: false,
           failed: [{ path: 'api/a.js', reason: 'Selected model cannot fit review context' }, { path: 'api/b.js', reason: 'Selected model cannot fit review context' }] } };
     };
-    await page.click('#detailTabChanges');
     await page.click('.review-current-group [data-scope="branch"]');
-    await page.locator('.review-quality .review-finding[data-finding-id="quality-note"]').waitFor();
+    await rv.locator('.review-quality .review-finding[data-finding-id="quality-note"]').waitFor();
     assert.deepEqual(runs.at(-1).categories, ['security', 'compliance', 'quality']);
-    assert.equal(await page.locator('.review-blocking .review-finding, .review-attention .review-finding').count(), 0, 'a quality note was listed as a finding');
-    assert.match(await page.textContent('.review-readiness strong'), /1 code quality note/);
-    assert.match(await page.textContent('.review-quality .review-finding-meta'), /clean code.*skill clean-code/s);
-    assert.match(await page.textContent('.review-skills-applied'), /src.*secrets-crypto.*clean-code/s);
-    await page.click('.review-quality [data-action="toggleFinding"]');
-    await snap(page, '10e-review-clean-code');
+    assert.equal(await rv.locator('.review-blocking .review-finding, .review-attention .review-finding').count(), 0, 'a quality note was listed as a finding');
+    assert.match(await rv.textContent('.review-readiness strong'), /1 code quality note/);
+    assert.match(await rv.textContent('.review-quality .review-finding-meta'), /clean code.*skill clean-code/s);
+    assert.match(await rv.textContent('.review-skills-applied'), /src.*secrets-crypto.*clean-code/s);
+    await rv.click('.review-quality [data-action="toggleFinding"]');
+    await snap(rv, '10e-review-clean-code');
     // The uncommitted-changes note follows the repository: committing (or applying a fix) updates it.
-    const noteAfter = async dirty => page.evaluate(value => {
-      const list = window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: value }) : repository);
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
-      return Boolean(document.querySelector('.review-uncommitted-note'));
-    }, dirty);
-    assert.equal(await noteAfter(false), false, 'the note stayed after the changes were committed');
-    assert.equal(await noteAfter(true), true, 'the note did not appear for new uncommitted changes');
+    const noteAfter = async dirty => {
+      await page.evaluate(value => {
+        const list = window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: value }) : repository);
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      }, dirty);
+      await rv.waitForFunction(value => Boolean(document.querySelector('.review-uncommitted-note')) === value, dirty);
+    };
+    await noteAfter(false);
+    await noteAfter(true);
 
     // Failed checks: once per reason, with what to do, the log, and Retry failed for only those.
-    const failedText = await page.textContent('.review-failed');
+    const failedText = await rv.textContent('.review-failed');
     assert.match(failedText, /Selected model cannot fit review context — 2 entries: api\/a\.js, api\/b\.js/);
     assert.match(failedText, /larger context/);
-    await page.click('.review-log > summary');
-    assert.match(await page.textContent('.review-log'), /1m 05s Component api failed/);
-    assert.equal(await page.locator('.review-log li.review-log-failed').count(), 1);
-    await snap(page, '10f-review-failed-checks');
-    // Retry runs the same review again (same commit, same categories); this time the model reports
-    // the finding dismissed in the first review, on the same code: it stays dismissed.
+    await rv.click('.review-log > summary');
+    assert.match(await rv.textContent('.review-log'), /1m 05s Component api failed/);
+    assert.equal(await rv.locator('.review-log li.review-log-failed').count(), 1);
+    await snap(rv, '10f-review-failed-checks');
+    // Retry runs the same review again (same commit, categories and model); this time the model
+    // reports the finding dismissed in the first review, on the same code: it stays dismissed.
     const before = runs.length;
     const retried = runs.at(-1);
     let retryModel;
@@ -853,27 +895,54 @@ async function main() {
           explanation: 'Command injection through the request input', impact: 'Runs commands', suggestedAction: 'Pass arguments as an array', evidence }],
         coverage: { surveyed: 3, analyzed: 3, skipped: [], failed: [], complete: true } };
     };
-    // Retry repeats the reviewed repository and model, even after the dashboard moved to another one.
-    await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
-    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
-    await page.click('#detailTabReview');
-    await page.click('.review-failed [data-action="continueReview"]');
-    await page.locator('.review-finding[data-finding-id="reworded"]').waitFor();
+    await rv.click('.review-failed [data-action="continueReview"]');
+    await rv.locator('.review-finding[data-finding-id="reworded"]').waitFor();
     assert.equal(runs.length, before + 1);
-    assert.equal(runs.at(-1).repositoryPath, retried.repositoryPath, 'Retry reviewed the repository now on screen');
-    assert.equal(retryModel, 'scripted-large', 'Retry switched to the model now selected');
-    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
-    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
-    await page.click('#detailTabReview');
+    assert.equal(runs.at(-1).repositoryPath, retried.repositoryPath);
+    assert.equal(retryModel, 'scripted-large', 'Retry switched to the model the dashboard has selected');
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).targetSha, runs.at(-1).categories], [retried.scope, retried.targetSha, retried.categories]);
-    assert.equal(await page.locator('.review-failed').count(), 0);
-    const chip = page.locator('.review-finding[data-finding-id="reworded"] .review-triage-chip');
+    assert.equal(await rv.locator('.review-failed').count(), 0);
+    const chip = rv.locator('.review-finding[data-finding-id="reworded"] .review-triage-chip');
     assert.match(await chip.textContent(), /^Dismissed · Accepted risk · earlier review$/);
     assert.match(await chip.getAttribute('title'), /Taken over from the review of/);
-    assert.match(await page.textContent('.review-triage-summary'), /1 dismissed.*0 not triaged/);
+    assert.match(await rv.textContent('.review-triage-summary'), /1 dismissed.*0 not triaged/);
     // The choice is remembered for the next review.
     assert.equal(await page.isChecked('#reviewQualityToggle'), true);
     await page.uncheck('#reviewQualityToggle');
+
+    // The review tab follows the dashboard: another repository shows its own past reviews.
+    await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    await rv.waitForFunction(() => /No review (yet|is open)/.test(document.getElementById('reviewBody').textContent));
+    assert.match(await rv.textContent('#reviewTitle'), /Review · lib-b/);
+    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
+    await rv.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length > 0);
+
+    // Closing the tab leaves a running review going; the Review button shows how far it is and,
+    // once it is done, its blocking items. Opening the tab again shows the result.
+    let finishBackground;
+    const backgroundGate = new Promise(resolve => { finishBackground = resolve; });
+    reviewProbe.runner = async (request, token, progress) => {
+      progress('Reviewing component 1/2: src', { phase: 'analyzing', unit: 1, units: 2, component: 'src', filesDone: 1, filesTotal: 2, candidates: 0,
+        components: [{ component: 'src', files: 1 }, { component: 'lib', files: 1 }] });
+      await backgroundGate;
+      const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
+      return { request, policyResults: [], policyStatus: 'not_configured', limitations: [], modelId: 'scripted:1',
+        findings: [{ id: 'background', fingerprint: 'fp-background', category: 'security', severity: 'high', confidence: 'high', status: 'verified',
+          explanation: 'Found while the tab was closed', impact: 'Impact', suggestedAction: 'Fix it', evidence }],
+        coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true } };
+    };
+    await page.click('.review-current-group [data-scope="branch"]');
+    await rv.locator('.review-steps .review-step-current').waitFor();
+    await page.closeReviewTab();
+    await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '50%');
+    finishBackground();
+    await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
+    await page.click('#openReviewTabButton');
+    const reopenedTab = await page.reviewTab();
+    await reopenedTab.locator('.review-finding[data-finding-id="background"]').waitFor();
+    assert.match(await reopenedTab.textContent('.review-readiness strong'), /^Blocked: 1 blocking item/);
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
@@ -1141,7 +1210,7 @@ async function main() {
           .map(selector => document.querySelector(selector).innerText.replace(/\s+/g, ' ').trim()).join(' | ')
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), '◈ range | branch all clean code');
+      assert.equal(layout.releaseText.toLowerCase(), '◈ range | commit branch all clean code review ↗');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();

@@ -32,12 +32,8 @@
   let historyPanelHeight = Number(previousState.historyPanelHeight) || 0;
   let historyAppendPending = false; // a Load more page is on its way (also started by scrolling)
   let summaryModelsState = 'idle'; // the Model menu's list: idle (not loaded), loading, loaded
-  // The Review tab can take the whole dashboard (history hidden); remembered across reloads.
-  let reviewExpanded = Boolean(previousState.reviewExpanded);
-  let openFindings = new Set(); // findings of the open review shown expanded (all start collapsed)
   // Reviews also check clean code when this is on (the "Clean code" box); remembered across reloads.
   let reviewQuality = Boolean(previousState.reviewQuality);
-  let reviewSkills = [];
   let filesPanelWidth = Number(previousState.filesPanelWidth) || 0;
   const defaultHistoryColumnWidths = [76, 420, 150, 110, 80];
   let historyColumnWidths = Array.isArray(previousState.historyColumnWidths)
@@ -60,8 +56,8 @@
   let changeSummaryRequestId = 0;
   let changeSummarySelection = null;
   let selectedSummaryModelId = '';
-  // Security and compliance review; declared early because rendering checks the review lock.
-  let reviewRequestId = 0;
+  // The Repository Review tab's last review, as the extension reports it (ReviewBridge).
+  let reviewStatus = { state: 'idle' };
   let historyDateFormat = null; // shared by every history row (see formatHistoryDate)
   let repositoryDataAt = Date.now(); // when the repository list was last received (the page starts with it)
   // Release › Load range: the request resolving the range since the latest release tag.
@@ -69,10 +65,6 @@
   // Names for the ends of the loaded comparison (e.g. a release tag and a branch), for reviews of it.
   let comparisonLabels = null;
   let releaseRangeRequestId = 0;
-  // Past reviews of the active repository, as listed by the extension.
-  let reviewHistory = { repositoryPath: null, entries: [] };
-  let reviewHistoryListId = 0;
-  let reviewState = null; // { requestId, repositoryPath, scope, kind, status, progress, result, readiness, context, message }
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
   let historyContextTarget = null;
@@ -153,6 +145,7 @@
   function resetChangeSummary(cancelPending = false) {
     if (cancelPending) cancelPendingChangeSummary();
     changeSummarySelection = null;
+    applyReviewLock(); // nothing for Review commit until the next commit or comparison loads
     const area = document.getElementById('changeSummary');
     const result = document.getElementById('changeSummaryResult');
     const status = document.getElementById('changeSummaryStatus');
@@ -230,7 +223,6 @@
       comparisonRepository,
       dashboardHistoryState,
       historyPanelHeight,
-      reviewExpanded,
       reviewQuality,
       filesPanelWidth,
       historyColumnWidths
@@ -404,7 +396,6 @@
       }
       clearCommitComparison(false);
       loadParentCommitDetail(commitHash);
-      showDetailTab('changes');
     },
 
     selectChangedFile: (el) => {
@@ -715,111 +706,8 @@
       startReview({ scope: 'branch', target: historyContextTarget.hash });
     },
 
-    toggleReviewExpanded: () => {
-      reviewExpanded = !reviewExpanded;
-      applyReviewExpanded();
-      saveState();
-    },
-    cancelReview: () => postMessage('cancelReview', {}),
-
-    openStoredReview: (el) => {
-      if (!activeDashboardRepository || reviewLocked() || !el.dataset.historyId) return;
-      const entry = reviewHistory.entries.find(item => item.id === el.dataset.historyId);
-      if (!entry) return;
-      reviewRequestId += 1;
-      const repository = getRepository(activeDashboardRepository);
-      reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
-        repositoryName: repository ? repository.name : activeDashboardRepository, scope: entry.scope, kind: entry.kind,
-        baseLabel: entry.baseLabel || '', targetLabel: entry.targetLabel, status: 'opening', cancelled: true, message: 'Opening the saved review…' };
-      renderReviewPanel();
-      showDetailTab('review');
-      postMessage('openStoredReview', { requestId: reviewRequestId, id: entry.id, repositoryPath: activeDashboardRepository });
-    },
-    deleteStoredReview: (el) => {
-      if (!activeDashboardRepository || !el.dataset.historyId) return;
-      if (reviewState && reviewState.historyId === el.dataset.historyId) reviewState.historyId = null;
-      postMessage('deleteStoredReview', { id: el.dataset.historyId, repositoryPath: activeDashboardRepository, listId: ++reviewHistoryListId });
-    },
-    exportReview: (el) => {
-      if (reviewState && reviewState.status === 'completed') {
-        postMessage('exportReviewReport', { requestId: reviewState.requestId, format: el.dataset.format === 'save' ? 'save' : 'copy' });
-      }
-    },
-
-    showDetailTab: (el) => showDetailTab(el.dataset.tab === 'review' ? 'review' : 'changes'),
-
-    reviewEvidence: (el) => jumpToReviewEvidence(Number(el.dataset.finding), Number(el.dataset.evidence)),
-
-    proposeReviewFix: () => {
-      if (!reviewState || reviewState.status !== 'completed') return;
-      reviewState.fix = { status: 'running', message: 'Checking the cited files in your working tree…', startedAt: Date.now() };
-      renderReviewPanel();
-      postMessage('proposeReviewFix', { requestId: reviewState.requestId, modelId: selectedSummaryModelId || undefined });
-    },
-    // Apply all, or only the files ticked in the proposal (Apply selected).
-    applyReviewFix: (el) => {
-      if (!reviewState || !reviewState.fix || !reviewState.fix.files) return;
-      const paths = el.dataset.selection === 'selected' ? reviewState.fix.files.map(file => file.path).filter(item => reviewState.fix.selected.has(item)) : undefined;
-      if (paths && !paths.length) return;
-      postMessage('applyReviewFix', { requestId: reviewState.requestId, paths });
-    },
-    discardReviewFix: () => { if (reviewState) postMessage('discardReviewFix', { requestId: reviewState.requestId }); },
-    // Runs the review again at the same commits: finished and clean components are reused, so only
-    // the rest (after a stop) or the components whose checks failed are asked again.
-    continueReview: () => {
-      const result = reviewState && reviewState.result;
-      if (!result || !(result.partial || (result.coverage.failed || []).length)) return;
-      const { request } = result;
-      const context = reviewState.context || {};
-      // The repository path is relative to the workspace folder the review ran in.
-      if (reviewState.folder !== currentWorkspaceFolder()) {
-        const status = document.getElementById('reviewStatus');
-        if (status) status.textContent = 'Switch back to the workspace folder this review ran in to run it again.';
-        return;
-      }
-      // The same repository, model ("id:version" → id) and categories, so its saved components match.
-      const modelId = result.modelId ? result.modelId.slice(0, result.modelId.lastIndexOf(':') > 0 ? result.modelId.lastIndexOf(':') : undefined) : '';
-      startReview({ scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
-        targetLabel: context.targetLabel, baseLabel: context.baseLabel, includeQuality: (request.categories || []).includes('quality'),
-        repositoryPath: reviewState.repositoryPath, modelId });
-    },
-    importReviewSkill: () => postMessage('importReviewSkill', {}),
-    toggleReviewSkill: (el) => {
-      if (el.dataset.skillId) postMessage('setReviewSkillEnabled', { id: el.dataset.skillId, enabled: el.dataset.enabled === 'true' });
-    },
-    removeReviewSkill: (el) => {
-      if (el.dataset.skillId) postMessage('removeReviewSkill', { id: el.dataset.skillId });
-    },
-    // A note or a failure about the fix stays until it is closed; it holds nothing to apply.
-    closeFixNote: () => {
-      if (!reviewState || !reviewState.fix || reviewState.fix.files) return;
-      reviewState.fix = null;
-      renderReviewPanel();
-    },
-    // Findings are collapsed to one line; the open ones stay open across refreshes.
-    toggleFinding: (el) => {
-      const id = el.dataset.findingId;
-      if (!id) return;
-      if (openFindings.has(id)) openFindings.delete(id); else openFindings.add(id);
-      const item = el.closest('.review-finding');
-      if (item) item.classList.toggle('open', openFindings.has(id));
-      el.setAttribute('aria-expanded', String(openFindings.has(id)));
-    },
-    expandAllFindings: (el) => {
-      if (!reviewState || !reviewState.result) return;
-      const open = el.dataset.expand === 'true';
-      openFindings = open ? new Set((reviewState.result.findings || []).map(finding => finding.id)) : new Set();
-      renderReviewPanel();
-    },
-    cancelReviewFix: () => postMessage('cancelReviewFix', {}),
-
-    triageFinding: (el) => {
-      if (!reviewState || reviewState.status !== 'completed') return;
-      const current = (reviewState.triage || {})[el.dataset.findingId];
-      const decision = current && current.decision === el.dataset.decision ? null : el.dataset.decision;
-      postMessage('setFindingTriage', { requestId: reviewState.requestId, findingId: el.dataset.findingId, decision,
-        reason: decision === 'dismiss' ? 'false_positive' : undefined });
-    },
+    // The Repository Review tab: opened beside the dashboard, where reviews run and are read.
+    openReviewTab: () => postMessage('openReviewTab', {}),
 
     syncAll: () => postMessage('syncVersions', { submodules: [] })
   };
@@ -1287,10 +1175,8 @@
     dashboardActivated = true;
     updateCommitCompareUI();
     releaseRange = null;
-    reviewHistory = { repositoryPath: null, entries: [] };
-    requestReviewHistory();
-    // The Review header names the reviewed repository once the dashboard shows another one.
-    renderReviewPanel();
+    // The review tab follows the repository the dashboard shows.
+    publishReviewContext();
     const behindCount = document.getElementById('dashboardBehindCount');
     const aheadCount = document.getElementById('dashboardAheadCount');
     if (behindCount) {
@@ -1666,6 +1552,7 @@
     comparisonBaseHash = detail.comparisonBaseHash || null;
     resetChangeSummary();
     changeSummarySelection = { baseSha: comparisonBaseHash, targetSha: detail.hash, files: detail.files || [] };
+    applyReviewLock(); // Review commit has something to review
     restoreChangeSummary();
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
@@ -1763,11 +1650,6 @@
   });
   window.addEventListener('scroll', hideHistoryContextMenu, true);
   window.addEventListener('blur', hideHistoryContextMenu);
-  // Once the user opens or closes Past reviews, the dashboard stops choosing for them.
-  const reviewHistoryDetails = document.getElementById('reviewHistory');
-  if (reviewHistoryDetails) reviewHistoryDetails.addEventListener('click', event => {
-    if (event.target.closest('summary')) reviewHistoryDetails.dataset.touched = 'true';
-  });
   document.body.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') hideHistoryContextMenu();
     if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && e.target.closest('.history-row')) {
@@ -1790,23 +1672,6 @@
     if (!graphNode || (e.key !== 'Enter' && e.key !== ' ')) return;
     e.preventDefault();
     toggleCommitCompareNode(graphNode.dataset.commit);
-  });
-
-  // The reason for a dismissal is a select inside the finding, so it reports through 'change'.
-  document.addEventListener('change', event => {
-    const select = event.target;
-    // A file ticked or unticked in a proposed fix: only the selection and Apply selected change.
-    if (select && select.classList && select.classList.contains('review-fix-select')) {
-      const fix = reviewState && reviewState.fix;
-      if (!fix || !fix.selected) return;
-      if (select.checked) fix.selected.add(select.dataset.path); else fix.selected.delete(select.dataset.path);
-      renderReviewPanel();
-      return;
-    }
-    if (!select || !select.classList || !select.classList.contains('review-dismiss-reason')) return;
-    if (!reviewState || reviewState.status !== 'completed') return;
-    postMessage('setFindingTriage', { requestId: reviewState.requestId, findingId: select.dataset.findingId,
-      decision: 'dismiss', reason: select.value });
   });
 
   // Handle workspace folder switching
@@ -1873,6 +1738,7 @@
           if (selectedSummaryModelId && !models.some(model => model.id === selectedSummaryModelId)) {
             cancelPendingChangeSummary();
             selectedSummaryModelId = '';
+            publishReviewContext();
           }
           select.innerHTML += '<option value="__reload__">↻ Reload model list</option>';
           select.value = selectedSummaryModelId;
@@ -1969,84 +1835,20 @@
           break;
         }
 
-        case 'reviewHistoryLoaded': {
-          const payload = message.payload || {};
-          if (payload.listId !== reviewHistoryListId) break;
-          reviewHistory = { repositoryPath: payload.repositoryPath, entries: Array.isArray(payload.entries) ? payload.entries : [] };
-          renderReviewPanel();
+        // The Repository Review tab's progress or result, for the Review button.
+        case 'reviewStatus':
+          reviewStatus = message.payload || { state: 'idle' };
+          applyReviewLock();
           break;
-        }
 
-        case 'reviewProgress':
-        case 'reviewCompleted':
-        case 'reviewFailed': {
+        // Evidence of a diff review: the comparison it reviewed, with the cited line highlighted.
+        case 'showReviewEvidence': {
           const payload = message.payload || {};
-          if (!reviewState || payload.requestId !== reviewState.requestId) break;
-          if (message.type === 'reviewProgress') {
-            reviewState.progress = payload.message;
-            if (payload.detail) {
-              reviewState.detail = payload.detail;
-              if (payload.detail.components) reviewState.components = payload.detail.components;
-              if (!reviewState.startedAt) reviewState.startedAt = Date.now();
-            }
-            // The extension resolves the release range, so it reports the labels it settled on.
-            if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
-          } else if (message.type === 'reviewCompleted') {
-            Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
-              layout: payload.layout || null, triage: payload.triage || {}, historyId: payload.historyId || null });
-            openFindings = new Set();
-            if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
-            requestReviewHistory();
-          } else {
-            Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
-          }
-          renderReviewPanel();
-          break;
-        }
-
-        case 'reviewFixProgress':
-        case 'reviewFixProposed':
-        case 'reviewFixFailed':
-        case 'reviewFixApplied':
-        case 'reviewFixUpdated':
-        case 'reviewFixDiscarded': {
-          const payload = message.payload || {};
-          if (!reviewState || payload.requestId !== reviewState.requestId) break;
-          const previous = reviewState.fix || {};
-          reviewState.fix = {
-            reviewFixProgress: () => ({ status: 'running', message: payload.message, detail: payload.detail || previous.detail,
-              startedAt: previous.startedAt || Date.now() }),
-            reviewFixProposed: () => ({ status: 'proposed', files: payload.files || [], notes: payload.notes || [], rejected: payload.rejected || [],
-              selected: new Set((payload.files || []).map(file => file.path)) }),
-            // A failed Apply keeps the proposal on screen with the reason.
-            reviewFixFailed: () => (payload.keepProposal ? Object.assign({}, previous, { message: payload.message })
-              : payload.cancelled ? null : { status: 'failed', message: payload.message }),
-            // Apply selected leaves the other files proposed, still ticked as they were.
-            reviewFixApplied: () => ((payload.remaining || []).length
-              ? Object.assign({}, previous, { files: payload.remaining, message: '', applied: (previous.applied || []).concat(payload.paths || []),
-                selected: new Set(payload.remaining.map(file => file.path).filter(item => previous.selected && previous.selected.has(item))) })
-              : { status: 'applied', paths: (previous.applied || []).concat(payload.paths || []) }),
-            // Findings no longer marked "Needs fix" took their files out of the proposal; the rest stays.
-            reviewFixUpdated: () => Object.assign({}, previous, { files: payload.files || [], note: payload.message || '',
-              selected: new Set((payload.files || []).map(file => file.path).filter(item => !previous.selected || previous.selected.has(item))) }),
-            // Closed by a triage change: say why, until the note is closed.
-            reviewFixDiscarded: () => (payload.message ? { status: 'note', message: payload.message } : null)
-          }[message.type]();
-          renderReviewPanel();
-          break;
-        }
-
-        case 'reviewTriageUpdated': {
-          const payload = message.payload || {};
-          if (!reviewState || payload.requestId !== reviewState.requestId || reviewState.status !== 'completed') break;
-          // A finding just dismissed or fixed folds away where it is; Undo brings it back.
-          const before = reviewState.triage || {};
-          Object.entries(payload.triage || {}).forEach(([id, item]) => {
-            if (['dismiss', 'fixed'].includes(item.decision) && (!before[id] || before[id].decision !== item.decision)) openFindings.delete(id);
-          });
-          Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness, layout: payload.layout || reviewState.layout });
-          renderReviewPanel();
-          if (reviewState.historyId) requestReviewHistory();
+          if (payload.folder !== currentWorkspaceFolder() || payload.repositoryPath !== activeDashboardRepository) break;
+          pendingEvidenceJump = { path: payload.path, side: payload.side, line: payload.line };
+          commitCompareSelection = [];
+          updateCommitCompareUI();
+          loadComparison(payload.baseSha, payload.targetSha, 'review');
           break;
         }
 
@@ -2067,8 +1869,6 @@
           repositoryDataAt = Date.now();
           dashboardHistoryState = {};
           Object.keys(pendingOperations).forEach(key => delete pendingOperations[key]);
-          // A review keeps running (and its results stay) across folders: it is pinned to its own folder.
-          renderReviewPanel();
           cancelPendingChangeSummary();
           changeSummaries.clear();
           activeDashboardRepository = null;
@@ -2086,10 +1886,6 @@
         }
 
         case 'updateSubmodules': {
-          // The Review tab notes uncommitted changes in the reviewed repository: keep it current
-          // (an applied fix or a commit changes it) without re-rendering on every refresh.
-          const reviewedPath = reviewState && reviewState.result ? reviewState.repositoryPath : null;
-          const wasDirty = reviewedPath !== null && Boolean((getRepository(reviewedPath) || {}).hasChanges);
           repositoryData = message.payload.submodules;
           repositoryDataAt = Date.now();
           saveState();
@@ -2099,7 +1895,8 @@
             activateDashboardRepository(repositoryData[0].path);
           }
           renderRepositorySwitcher();
-          if (reviewedPath !== null && wasDirty !== Boolean((getRepository(reviewedPath) || {}).hasChanges)) renderReviewPanel();
+          // The review tab notes uncommitted changes in the reviewed repository: keep it current.
+          publishReviewContext();
           break;
         }
 
@@ -2163,11 +1960,8 @@
           renderDashboardError(message.payload);
           break;
 
-        case 'reviewSkillsLoaded':
-          reviewSkills = Array.isArray(message.payload && message.payload.skills) ? message.payload.skills : [];
-          renderReviewSkills(message.payload && message.payload.message);
+        case 'reviewQualityLoaded':
           if (message.payload && typeof message.payload.includeQuality === 'boolean') setReviewQuality(message.payload.includeQuality, false);
-          renderReviewPanel();
           break;
 
         case 'publishSidebar':
@@ -2515,6 +2309,7 @@
       cancelPendingChangeSummary();
       selectedSummaryModelId = summaryModelSelect.value;
       restoreChangeSummary();
+      publishReviewContext(); // the review tab's Fix uses the same model
     });
   }
   if (dashboardSearch) {
@@ -2762,33 +2557,21 @@
     });
   }
 
-  // ---- Security and compliance review (MVP 2, W6–W7) ----
-  // The extension runs the review and classifies readiness; this code only collects input
-  // and displays results, so the dashboard and the exported report always agree.
+  // ---- Security and compliance review ----
+  // Reviews run and are read in the Repository Review tab (resources/review.js). The dashboard
+  // starts them from its buttons and history menu, shows their status on the Review button, and
+  // shows the evidence of a diff review in its own diff.
   let pendingEvidenceJump = null;
-  const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+  let lastReviewContext = '';
 
-  // Starts at once with security and team policy, using the model chosen for AI summaries;
-  // the extension asks for consent until it is allowed for the repository.
+  // Starts at once with security and team policy, using the model chosen for AI summaries; the
+  // extension opens the review tab and asks for consent until it is allowed for the repository.
   function startReview(options) {
-    // A retry names the repository and model of the review it repeats; otherwise the dashboard's.
-    const repositoryPath = options.repositoryPath || activeDashboardRepository;
-    const modelId = options.modelId !== undefined ? options.modelId : selectedSummaryModelId;
-    if (!repositoryPath || reviewLocked()) return;
-    const scope = options.scope;
-    const kind = options.kind || 'review';
-    reviewRequestId += 1;
-    const repository = getRepository(repositoryPath);
-    reviewState = { requestId: reviewRequestId, repositoryPath, folder: currentWorkspaceFolder(),
-      repositoryName: repository ? repository.name : repositoryPath, scope, kind,
-      baseLabel: scope === 'changes' ? (options.baseLabel || options.base || '') : '', targetLabel: options.targetLabel || options.target || '', status: 'running' };
-    renderReviewPanel();
-    showDetailTab('review');
-    postMessage('startReview', { requestId: reviewRequestId, repositoryPath, scope, kind,
-      baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
-      baseLabel: scope === 'changes' && options.base ? options.baseLabel || shortRevision(options.base) : undefined,
-      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: modelId || undefined,
-      includeQuality: options.includeQuality === undefined ? reviewQuality : options.includeQuality });
+    if (!activeDashboardRepository || reviewLocked()) return;
+    const repository = getRepository(activeDashboardRepository);
+    postMessage('requestReview', Object.assign({}, options, { repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
+      repositoryName: repository ? repository.name : activeDashboardRepository, modelId: selectedSummaryModelId || undefined,
+      includeQuality: reviewQuality }));
   }
 
   // Clean code is remembered by the host (global state), so a new dashboard panel keeps it.
@@ -2800,25 +2583,6 @@
     if (save) postMessage('setReviewQuality', { enabled: value });
   }
 
-  function renderReviewSkills(message) {
-    const list = document.getElementById('reviewSkillsList');
-    const count = document.getElementById('reviewSkillsCount');
-    const status = document.getElementById('reviewSkillsStatus');
-    if (!list) return;
-    if (count) count.textContent = `${reviewSkills.filter(skill => skill.enabled).length}/${reviewSkills.length}`;
-    if (status) status.textContent = message || '';
-    list.innerHTML = reviewSkills.map(skill => {
-      const id = escapeHtml(skill.id);
-      const globs = skill.appliesTo.length > 4 ? `${skill.appliesTo.slice(0, 4).join(', ')} +${skill.appliesTo.length - 4}` : skill.appliesTo.join(', ');
-      return `<li class="review-skill${skill.enabled ? '' : ' off'}">
-        <button type="button" class="review-skill-switch" data-action="toggleReviewSkill" data-skill-id="${id}" data-enabled="${!skill.enabled}" aria-pressed="${skill.enabled}" title="${skill.enabled ? 'Turn off' : 'Turn on'}">${skill.enabled ? 'On' : 'Off'}</button>
-        <span class="review-skill-copy"><strong>${escapeHtml(skill.name)}</strong> <span class="review-skill-kind">${skill.category === 'quality' ? 'clean code' : 'security'}${skill.source === 'imported' ? ' · imported' : ''}</span>
-          <small title="${escapeHtml(skill.appliesTo.join(', '))}">${escapeHtml(globs)}</small>${skill.references ? `<small>${escapeHtml(skill.references)}</small>` : ''}</span>
-        ${skill.source === 'imported' ? `<button type="button" class="review-history-delete" data-action="removeReviewSkill" data-skill-id="${id}" aria-label="Remove ${escapeHtml(skill.name)}" title="Remove this imported skill">×</button>` : ''}
-      </li>`;
-    }).join('');
-  }
-
   // A review runs in the background: the rest of the dashboard stays usable (other repositories,
   // folders, tabs and commits). Only starting a second review waits, since it would replace this one.
   function currentWorkspaceFolder() {
@@ -2826,35 +2590,43 @@
     return select ? select.value : '';
   }
 
-  // Whether the dashboard currently shows the repository the review is about.
-  function reviewIsForActiveRepository() {
-    return Boolean(reviewState && reviewState.folder === currentWorkspaceFolder() && reviewState.repositoryPath === activeDashboardRepository);
-  }
-
-  function reviewProgressPercent() {
-    const detail = reviewState && reviewState.detail;
-    if (!detail) return 0;
-    if (detail.phase === 'finishing') return 100;
-    if (detail.filesTotal) return Math.round((100 * detail.filesDone) / detail.filesTotal);
-    return detail.units ? Math.round((100 * Math.max(0, detail.unit - 1)) / detail.units) : 0;
+  // What the review tab follows: the repository and folder shown here, and the selected model.
+  function publishReviewContext() {
+    const repository = getRepository(activeDashboardRepository);
+    const payload = { repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
+      repositoryName: repository ? repository.name : activeDashboardRepository || '', modelId: selectedSummaryModelId || '',
+      repositories: repositoryData.map(item => ({ path: item.path, name: item.name, hasChanges: Boolean(item.hasChanges) })) };
+    const key = JSON.stringify(payload);
+    if (key === lastReviewContext) return;
+    lastReviewContext = key;
+    postMessage('dashboardContext', payload);
   }
 
   function reviewLocked() {
-    return Boolean(reviewState && reviewState.status === 'running');
+    return reviewStatus.state === 'running';
   }
 
-  const REVIEW_LOCK_HINT = 'A review is running. Wait for it, or cancel it to start another.';
+  const REVIEW_LOCK_HINT = 'A review is running. Wait for it, or cancel it in the Review tab to start another.';
 
+  // The review buttons wait while a review runs; the Review button shows its progress, then the
+  // number of blocking items. Review commit needs a commit or a comparison to review.
   function applyReviewLock() {
     const locked = reviewLocked();
     if (document.body && document.body.classList) document.body.classList.toggle('review-running', locked);
+    const badge = document.getElementById('reviewTabBadge');
+    if (badge) {
+      badge.textContent = reviewStatus.state === 'running' ? `${reviewStatus.percent || 0}%`
+        : reviewStatus.state === 'completed' && reviewStatus.blocking ? String(reviewStatus.blocking) : '';
+      badge.classList.toggle('review-open-badge-blocking', reviewStatus.state === 'completed' && reviewStatus.blocking > 0);
+    }
     const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
-      if (locked) {
+      const nothingSelected = element.dataset.action === 'reviewSelection' && !changeSummarySelection;
+      if (locked || nothingSelected) {
         element.setAttribute('aria-disabled', 'true');
         if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';
-        element.setAttribute('title', REVIEW_LOCK_HINT);
+        element.setAttribute('title', locked ? REVIEW_LOCK_HINT : 'Select a commit, or load a comparison, to review it');
       } else if (element.getAttribute('aria-disabled') === 'true') {
         element.removeAttribute('aria-disabled');
         const title = element.dataset.unlockedTitle;
@@ -2862,507 +2634,6 @@
         if (title) element.setAttribute('title', title); else element.removeAttribute('title');
       }
     });
-  }
-
-  function applyReviewExpanded() {
-    if (document.body && document.body.classList) document.body.classList.toggle('review-expanded', reviewExpanded);
-    const button = document.getElementById('expandReviewButton');
-    if (button) {
-      button.setAttribute('aria-pressed', String(reviewExpanded));
-      button.textContent = reviewExpanded ? 'Collapse' : 'Expand';
-      button.title = reviewExpanded ? 'Show the history again' : 'Give the review the whole dashboard';
-    }
-  }
-
-  function showDetailTab(tab) {
-    const review = tab === 'review';
-    // On the Review tab the commit header and its summary toolbar make room for the review.
-    if (document.body && document.body.classList) document.body.classList.toggle('review-tab', review);
-    applyReviewExpanded();
-    const panel = document.getElementById('reviewPanel');
-    const content = document.getElementById('commitContent');
-    if (panel) panel.hidden = !review;
-    if (content) content.hidden = review;
-    document.querySelectorAll('#detailTabs [role="tab"]').forEach(button => {
-      button.setAttribute('aria-selected', button.dataset.tab === tab ? 'true' : 'false');
-    });
-  }
-
-  const REVIEW_PHASES = { planning: 'Planning', analyzing: 'Analyzing', verifying: 'Checking candidate findings', finishing: 'Collecting results' };
-  let reviewClock = null;
-
-  function formatElapsed(milliseconds) {
-    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
-    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
-  }
-
-  function stopReviewClock() {
-    if (reviewClock) clearInterval(reviewClock);
-    reviewClock = null;
-  }
-
-  // Progress while a review runs: overall bar, where it is, and every component with its state.
-  function renderReviewProgress(body) {
-    const detail = reviewState.detail;
-    const components = reviewState.components || [];
-    const list = body.querySelector('.review-steps');
-    const scrollTop = list ? list.scrollTop : 0;
-    const finishing = detail && detail.phase === 'finishing';
-    const percent = reviewProgressPercent();
-    const phase = detail ? REVIEW_PHASES[detail.phase] || 'Reviewing' : 'Waiting';
-    const where = detail && detail.unit && !finishing
-      ? `Component ${detail.unit} of ${detail.units}: <code>${escapeHtml(detail.component || '')}</code> · ${escapeHtml(phase)}`
-      : escapeHtml(detail ? phase : reviewState.progress || 'Starting…');
-    const counts = detail
-      ? `${detail.filesDone} of ${detail.filesTotal} files · ${detail.candidates} candidate finding${detail.candidates === 1 ? '' : 's'} · <span id="reviewElapsed"></span>`
-      : '';
-    const steps = components.map((component, index) => {
-      const state = finishing || (detail && index + 1 < detail.unit) ? 'done' : detail && index + 1 === detail.unit ? 'current' : 'pending';
-      const mark = { done: '✓', current: '●', pending: '○' }[state];
-      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><code>${escapeHtml(component.component)}</code><span>${component.files} file${component.files === 1 ? '' : 's'}</span></li>`;
-    }).join('');
-    body.innerHTML = `<div class="review-progress-block">
-        <div class="review-progress-where">${where}</div>
-        <div class="review-progress" role="progressbar" aria-label="Review progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span class="review-progress-fill"></span></div>
-        <div class="review-progress-counts">${counts}</div>
-        <div class="review-progress-message" aria-live="polite">${escapeHtml(reviewState.progress || '')}</div>
-      </div>
-      ${steps ? `<ol class="review-steps">${steps}</ol>` : ''}
-      <p class="review-lock-note">The review keeps running while you use the rest of the dashboard; its progress shows on the Review tab.</p>`;
-    body.querySelector('.review-progress-fill').style.width = `${percent}%`;
-    const newList = body.querySelector('.review-steps');
-    if (newList) {
-      newList.scrollTop = scrollTop;
-      const current = newList.querySelector('[aria-current="step"]');
-      if (current && (current.offsetTop < newList.scrollTop || current.offsetTop > newList.scrollTop + newList.clientHeight - 24)) {
-        newList.scrollTop = current.offsetTop - newList.clientHeight / 2;
-      }
-    }
-    const tick = () => {
-      const elapsed = document.getElementById('reviewElapsed');
-      if (elapsed && reviewState && reviewState.startedAt) elapsed.textContent = `${formatElapsed(Date.now() - reviewState.startedAt)} elapsed`;
-    };
-    tick();
-    if (!reviewClock) reviewClock = setInterval(tick, 1000);
-  }
-
-  function reviewEvidenceButton(evidence, findingIndex, evidenceIndex) {
-    const lines = evidence.startLine === evidence.endLine ? `${evidence.startLine}` : `${evidence.startLine}-${evidence.endLine}`;
-    return `<button type="button" class="review-evidence" data-action="reviewEvidence" data-finding="${findingIndex}" data-evidence="${evidenceIndex}" title="${escapeHtml(`${evidence.side} ${shortRevision(evidence.revision)}`)}">${escapeHtml(`${evidence.path}:${lines}`)}</button>`;
-  }
-
-  // Auto-fix: one button in the triage summary, and the proposal (or its outcome) below it.
-  function renderFixAction(readiness) {
-    const count = readiness.toFix || 0;
-    const busy = reviewState.fix && reviewState.fix.status === 'running';
-    const title = count ? 'Copilot proposes edits for the findings marked Needs fix; you see the diff before anything is written'
-      : 'Mark findings "Needs fix" first';
-    return `<button type="button" class="btn review-fix-action" data-action="proposeReviewFix" title="${title}"${count && !busy ? '' : ' disabled'}>Fix ${count || ''} with Copilot…</button>`;
-  }
-
-  const FIX_STEPS = [
-    ['checking', 'Check the cited files'],
-    ['sending', 'Send findings and files to Copilot'],
-    ['receiving', 'Receive the proposed edits'],
-    ['validating', 'Check the edits against the files']
-  ];
-
-  function formatSize(characters) {
-    return characters >= 1024 ? `${(characters / 1024).toFixed(1)} KB` : `${characters} B`;
-  }
-
-  // Auto-fix progress: each step with its state, what was sent, how much has arrived, elapsed time.
-  function renderFixProgress(fix) {
-    const detail = fix.detail || { step: 'checking' };
-    const current = FIX_STEPS.findIndex(([step]) => step === detail.step);
-    const extra = {
-      sending: detail.files ? `${detail.findings} finding${detail.findings === 1 ? '' : 's'}, ${detail.files} file${detail.files === 1 ? '' : 's'} · ${formatSize(detail.sentCharacters || 0)}` : '',
-      receiving: detail.receivedCharacters ? `${formatSize(detail.receivedCharacters)} so far` : current === 1 ? 'waiting for Copilot' : ''
-    };
-    const steps = FIX_STEPS.map(([step, label], index) => {
-      const state = index < current ? 'done' : index === current ? 'current' : 'pending';
-      const mark = { done: '✓', current: '●', pending: '○' }[state];
-      const note = extra[step] && (state !== 'pending' || step === 'receiving' && current === 1) ? `<span>${escapeHtml(extra[step])}</span>` : '';
-      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><span>${escapeHtml(label)}</span>${note}</li>`;
-    }).join('');
-    return `<section class="review-fix review-fix-running"><h4>Auto-fix · <span id="reviewFixElapsed"></span></h4>
-      <p aria-live="polite">${escapeHtml(fix.message || 'Asking Copilot for a fix…')}</p>
-      <ol class="review-steps review-fix-steps">${steps}</ol>
-      <button type="button" class="btn" data-action="cancelReviewFix">Cancel</button></section>`;
-  }
-
-  let fixClock = null;
-  // Ticks the auto-fix elapsed time while a proposal is running; stops itself otherwise.
-  function tickFixClock() {
-    const fix = reviewState && reviewState.fix;
-    const elapsed = document.getElementById('reviewFixElapsed');
-    if (!fix || fix.status !== 'running' || !elapsed) { if (fixClock) clearInterval(fixClock); fixClock = null; return; }
-    elapsed.textContent = `${formatElapsed(Date.now() - (fix.startedAt || Date.now()))} elapsed`;
-    if (!fixClock) fixClock = setInterval(tickFixClock, 1000);
-  }
-
-  function renderFixPanel() {
-    const fix = reviewState.fix;
-    if (!fix) return '';
-    if (fix.status === 'running') return renderFixProgress(fix);
-    if (fix.status === 'applied') {
-      return `<section class="review-fix review-fix-applied" role="status"><h4>Auto-fix applied</h4><p>Changed ${fix.paths.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')} in your working tree. Nothing was staged or committed: check the changes, run your tests, then commit.</p></section>`;
-    }
-    const close = '<button type="button" class="review-fix-close" data-action="closeFixNote" aria-label="Close" title="Close">×</button>';
-    if (fix.status === 'note') return `<section class="review-fix review-fix-note-panel" role="status"><h4>Auto-fix</h4>${close}<p>${escapeHtml(fix.message)}</p></section>`;
-    const error = fix.message ? `<div class="dashboard-error" role="alert">${escapeHtml(fix.message)}</div>` : '';
-    if (!fix.files) return `<section class="review-fix"><h4>Auto-fix</h4>${close}${error}</section>`;
-    const list = (items, className) => items && items.length ? `<ul class="${className}">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
-    const selected = fix.selected || new Set();
-    const count = fix.files.filter(file => selected.has(file.path)).length;
-    const applied = (fix.applied || []).length
-      ? `<p class="review-fix-applied-note" role="status">Applied to ${fix.applied.map(item => `<code>${escapeHtml(item)}</code>`).join(', ')}. The files below are still only proposed.</p>` : '';
-    const findingText = file => {
-      const titles = (file.findingIds || []).map(id => (reviewState.result.findings || []).find(finding => finding.id === id))
-        .filter(Boolean).map(finding => `${finding.severity} ${finding.category}`);
-      return titles.length ? `<span class="review-fix-fixes">fixes ${escapeHtml(titles.join(', '))}</span>` : '';
-    };
-    return `<section class="review-fix"><h4>Proposed fix · ${fix.files.length} file${fix.files.length === 1 ? '' : 's'}</h4>
-      ${error}${applied}${fix.note ? `<p class="review-fix-applied-note" role="status">${escapeHtml(fix.note)}</p>` : ''}
-      <p class="review-fix-note">Nothing is written until you apply it. Applying edits your working tree only; it does not stage or commit. Untick a file to leave it out.</p>
-      ${list(fix.notes, 'review-gaps')}${list(fix.rejected, 'review-gaps review-fix-rejected')}
-      ${fix.files.map(file => `<details class="review-fix-file" open><summary><input type="checkbox" class="review-fix-select" data-path="${escapeHtml(file.path)}" aria-label="Apply ${escapeHtml(file.path)}"${selected.has(file.path) ? ' checked' : ''}> <code>${escapeHtml(file.path)}</code>${findingText(file)}</summary><pre class="diff-viewer">${renderPatchLines(file.patch)}</pre></details>`).join('')}
-      <div class="review-fix-buttons"><button type="button" class="btn btn-primary" data-action="applyReviewFix" data-selection="all">Apply all</button><button type="button" class="btn" data-action="applyReviewFix" data-selection="selected"${count && count < fix.files.length ? '' : ' disabled'}>Apply selected (${count})</button><button type="button" class="btn" data-action="discardReviewFix">Discard</button></div>
-    </section>`;
-  }
-
-  const DISMISS_REASONS = { false_positive: 'False positive', accepted_risk: 'Accepted risk', not_applicable: 'Not applicable' };
-
-  // Needs fix / Dismiss for one finding; pressing the active choice again clears it.
-  function renderTriageControls(finding) {
-    const triage = (reviewState.triage || {})[finding.id];
-    const decision = triage ? triage.decision : '';
-    const id = escapeHtml(finding.id);
-    const reason = decision === 'dismiss'
-      ? `<select class="review-dismiss-reason" data-finding-id="${id}" aria-label="Why it is dismissed">${Object.entries(DISMISS_REASONS)
-        .map(([value, label]) => `<option value="${value}"${triage.reason === value ? ' selected' : ''}>${label}</option>`).join('')}</select>`
-      : '';
-    return `<div class="review-triage" role="group" aria-label="Triage this finding">
-      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="fix" aria-pressed="${decision === 'fix'}">Needs fix</button>
-      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="dismiss" aria-pressed="${decision === 'dismiss'}">Dismiss</button>${reason}
-      <button type="button" data-action="triageFinding" data-finding-id="${id}" data-decision="fixed" aria-pressed="${decision === 'fixed'}" title="Fixed by an applied auto-fix, or mark it fixed by hand">Fixed</button>
-    </div>`;
-  }
-
-  // Model text with `code` spans shown as code, so names and paths stand out.
-  function richText(text) {
-    return escapeHtml(text || '').replace(/`([^`\n]{1,200})`/g, '<code>$1</code>');
-  }
-
-  // The first sentence, for the one-line view of a collapsed finding.
-  function firstSentence(text) {
-    const value = String(text || '').trim();
-    const match = /^(.{20,180}?[.!?])(\s|$)/.exec(value);
-    return match ? match[1] : value.length > 180 ? `${value.slice(0, 177)}…` : value;
-  }
-
-  const TRIAGE_LABELS = { fix: 'Needs fix', dismiss: 'Dismissed', fixed: 'Fixed' };
-
-  // What to do about a failed check, from its reason (see SecurityReviewService).
-  function failureHint(reason) {
-    if (/cannot fit|context/i.test(reason)) return 'The files did not fit in the model\'s context. Choose a model with a larger context in Model, or review fewer files with Review commit.';
-    if (/ungrounded evidence/i.test(reason)) return 'The model cited lines that are not in the reviewed files (or not changed). Retrying usually clears it.';
-    if (/verification|verdict/i.test(reason)) return 'The second check did not answer for every finding, so they stay unconfirmed. Retry to check them again.';
-    if (/limit exceeded/i.test(reason)) return 'The model returned more results than one component allows. Review a smaller range with Review commit.';
-    if (/policy result/i.test(reason)) return 'The model did not answer for a policy rule. Retry, or check the rule by hand.';
-    if (/cancel/i.test(reason)) return 'Stopped before it finished. Retry to review it.';
-    return 'Retry; if it fails again with the same reason, try another model.';
-  }
-
-  function renderReviewFinding(finding, index) {
-    const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
-    const triage = (reviewState.triage || {})[finding.id];
-    const triageClass = triage ? ` triage-${triage.decision}` : '';
-    const open = openFindings.has(finding.id);
-    const id = escapeHtml(finding.id);
-    const where = finding.evidence && finding.evidence[0]
-      ? `<code class="review-finding-where">${escapeHtml(finding.evidence[0].path)}:${finding.evidence[0].startLine}</code>` : '';
-    // A dismissed or fixed finding stays where it was, collapsed, with a way back.
-    const reason = triage && triage.decision === 'dismiss' && triage.reason ? ` · ${DISMISS_REASONS[triage.reason] || triage.reason}` : '';
-    // A decision taken over from an earlier review of the same issue says so.
-    const carried = triage && triage.carried;
-    const carriedDate = carried ? new Date(carried.at).toLocaleDateString() : '';
-    const chipText = carried && carried.decision === 'fixed' ? 'Reported again after Fixed'
-      : `${TRIAGE_LABELS[triage && triage.decision] || (triage && triage.decision) || ''}${reason}${carried ? ' · earlier review' : ''}`;
-    const chipTitle = carried ? (carried.decision === 'fixed'
-      ? `Marked Fixed in the review of ${carriedDate}, but the same code is reported again: the fix is not in this commit, or did not remove the issue`
-      : `Taken over from the review of ${carriedDate}: the same issue on the same code`) : '';
-    const chip = triage ? `<span class="review-triage-chip triage-chip-${escapeHtml(triage.decision)}${carried && carried.decision === 'fixed' ? ' triage-chip-again' : ''}"${chipTitle ? ` title="${escapeHtml(chipTitle)}"` : ''}>${escapeHtml(chipText)}</span>` : '';
-    const undo = triage && triage.decision !== 'fix'
-      ? `<button type="button" class="review-undo" data-action="triageFinding" data-finding-id="${id}" data-decision="${escapeHtml(triage.decision)}" title="Undo: back to not triaged">Undo</button>` : '';
-    return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}${open ? ' open' : ''}" data-finding-id="${id}">
-      <div class="review-finding-head">
-        <button type="button" class="review-finding-toggle" data-action="toggleFinding" data-finding-id="${id}" aria-expanded="${open}">
-          <span class="review-finding-chevron" aria-hidden="true"></span>
-          <span class="review-severity">${escapeHtml(finding.severity)}</span>
-          <span class="review-finding-title">${richText(firstSentence(finding.explanation))}</span>
-          ${where}
-        </button>
-        <span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span>${chip}${undo}
-      </div>
-      <div class="review-finding-body">
-        <p class="review-finding-meta">${escapeHtml(finding.category === 'quality' ? 'clean code' : finding.category)}${rule} · confidence ${escapeHtml(finding.confidence)}${finding.skill ? ` · skill <span class="review-skill-tag">${escapeHtml(finding.skill)}</span>` : ''}</p>
-        <p class="review-finding-explanation">${richText(finding.explanation)}</p>
-        <dl><dt>Impact</dt><dd>${richText(finding.impact)}</dd><dt>Suggested action</dt><dd>${richText(finding.suggestedAction)}</dd></dl>
-        <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
-        ${renderTriageControls(finding)}
-      </div>
-    </li>`;
-  }
-
-  const isQualityItem = item => {
-    const finding = item.findingId && reviewState.result && (reviewState.result.findings || []).find(entry => entry.id === item.findingId);
-    return Boolean(finding && finding.category === 'quality');
-  };
-
-  // Findings stay in the section they were found in (layout: the readiness without triage);
-  // policy items follow the current readiness, since a fixed finding can resolve its rule.
-  function sectionItems(key) {
-    const readiness = reviewState.readiness || {};
-    const layout = reviewState.layout;
-    if (!layout) {
-      const triaged = key === 'attention' || key === 'quality'
-        ? (readiness.fixed || []).concat(readiness.dismissed || []).filter(item => isQualityItem(item) === (key === 'quality')) : [];
-      return (readiness[key] || []).concat(triaged);
-    }
-    return (layout[key] || []).filter(item => item.findingId).concat((readiness[key] || []).filter(item => !item.findingId));
-  }
-
-  function renderReviewItems(items, findings) {
-    if (!items.length) return '<p class="review-none">None.</p>';
-    return `<ul class="review-list">${items.map(item => {
-      const index = item.findingId ? findings.findIndex(finding => finding.id === item.findingId) : -1;
-      return index >= 0
-        ? renderReviewFinding(findings[index], index)
-        : `<li class="review-item"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></li>`;
-    }).join('')}</ul>`;
-  }
-
-  function requestReviewHistory() {
-    if (!activeDashboardRepository) return;
-    postMessage('listReviewHistory', { repositoryPath: activeDashboardRepository, listId: ++reviewHistoryListId });
-  }
-
-  function activeReviewHistory() {
-    return reviewHistory.repositoryPath === activeDashboardRepository ? reviewHistory.entries : [];
-  }
-
-  // The exact commits a review read: a label like a branch name moves on, these do not.
-  function reviewedCommits(scope, baseSha, targetSha) {
-    if (!targetSha) return '';
-    return scope === 'changes' && baseSha ? `${shortRevision(baseSha)} → ${shortRevision(targetSha)}` : shortRevision(targetSha);
-  }
-
-  const READINESS_LABELS = { blocked: 'Blocked', needs_attention: 'Needs attention', no_blocking_findings: 'No blocking findings' };
-
-  // Past reviews of the active repository, newest first; the open one is marked.
-  function renderReviewHistory(hasOpenReview) {
-    const container = document.getElementById('reviewHistory');
-    const list = document.getElementById('reviewHistoryList');
-    if (!container || !list) return;
-    const entries = activeReviewHistory();
-    container.hidden = entries.length === 0;
-    if (!entries.length) { list.innerHTML = ''; return; }
-    // With nothing open the list is all there is to see, so it starts expanded.
-    if (!hasOpenReview && !container.dataset.touched) container.open = true;
-    document.getElementById('reviewHistoryCount').textContent = String(entries.length);
-    const locked = reviewLocked();
-    list.innerHTML = entries.map(entry => {
-      const range = entry.scope === 'changes'
-        ? `Diff: ${entry.baseLabel || 'parent'} → ${entry.targetLabel}` : `Branch: ${entry.targetLabel}`;
-      const counts = [`${entry.findings} finding${entry.findings === 1 ? '' : 's'}`,
-        entry.toFix ? `${entry.toFix} to fix` : '', entry.fixed ? `${entry.fixed} fixed` : '', entry.dismissed ? `${entry.dismissed} dismissed` : '',
-        entry.stopped ? `stopped at ${entry.stopped.unitsDone}/${entry.stopped.unitsTotal} components` : ''].filter(Boolean).join(' · ');
-      const current = reviewState && reviewState.historyId === entry.id;
-      const id = escapeHtml(entry.id);
-      return `<li class="review-history-item"${current ? ' aria-current="true"' : ''}>
-        <button type="button" class="review-history-open" data-action="openStoredReview" data-history-id="${id}"${locked ? ` aria-disabled="true" title="${REVIEW_LOCK_HINT}"` : ` title="Open this review (${escapeHtml(shortRevision(entry.targetSha))})"`}>
-          <span class="review-history-date">${escapeHtml(formatHistoryDate(entry.generatedAt))}</span>
-          <span class="review-history-range">${entry.kind === 'release' ? '◈ ' : ''}${escapeHtml(range)}</span>
-          <code class="review-history-commit" title="Reviewed commit${entry.scope === 'changes' && entry.baseSha ? 's' : ''}">${escapeHtml(reviewedCommits(entry.scope, entry.baseSha, entry.targetSha))}</code>
-          <span class="review-history-status readiness-${escapeHtml(entry.status)}">${escapeHtml(READINESS_LABELS[entry.status] || entry.status)}</span>
-          <span class="review-history-counts">${escapeHtml(counts)}</span>
-        </button>
-        <button type="button" class="review-history-delete" data-action="deleteStoredReview" data-history-id="${id}" aria-label="Delete this saved review" title="Delete this saved review">×</button>
-      </li>`;
-    }).join('');
-  }
-
-  function renderReviewPanel() {
-    const tabs = document.getElementById('detailTabs');
-    const badge = document.getElementById('reviewTabBadge');
-    const title = document.getElementById('reviewTitle');
-    const meta = document.getElementById('reviewMeta');
-    const status = document.getElementById('reviewStatus');
-    const body = document.getElementById('reviewBody');
-    if (!tabs || !body) return;
-    const hasHistory = activeReviewHistory().length > 0;
-    // The Review tab is there before the first review too, so its skills can be set up first.
-    tabs.hidden = !reviewState && !hasHistory && !reviewSkills.length;
-    renderReviewHistory(Boolean(reviewState));
-    if (!reviewState) {
-      applyReviewLock();
-      if (tabs.hidden) { showDetailTab('changes'); return; }
-      ['cancelReviewButton', 'copyReviewButton', 'saveReviewButton'].forEach(id => { document.getElementById(id).hidden = true; });
-      if (badge) badge.textContent = '';
-      title.textContent = 'Review';
-      meta.textContent = '';
-      status.textContent = '';
-      body.innerHTML = hasHistory
-        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one from Release or a comparison.</div>'
-        : '<div class="dashboard-empty">No review yet. Start one with Review commit, Review branch or Review all; Review skills above sets what Copilot checks.</div>';
-      return;
-    }
-    const running = reviewState.status === 'running';
-    const done = reviewState.status === 'completed';
-    applyReviewLock();
-    document.getElementById('cancelReviewButton').hidden = !running;
-    document.getElementById('copyReviewButton').hidden = !done;
-    document.getElementById('saveReviewButton').hidden = !done;
-    // A release review's ends are unknown until the extension has resolved them.
-    const release = reviewState.kind === 'release';
-    const target = reviewState.targetLabel || (release ? 'current branch' : '');
-    const label = reviewState.scope === 'changes'
-      ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
-      : `Branch: ${target}`;
-    title.textContent = reviewState.kind === 'release' ? 'Current branch review' : 'Review';
-    // Name the repository when the dashboard has moved on to another one (or another folder).
-    const request = reviewState.result && reviewState.result.request;
-    // The exact commits, unless the label already is them (a Base/Target selection of plain commits).
-    const shas = request ? reviewedCommits(request.scope, request.baseSha, request.targetSha) : '';
-    const commits = shas && !label.includes(shas) ? ` · ${request.baseSha ? '' : 'commit '}${shas}` : '';
-    // Which model is reviewing (while it runs) or reviewed (a saved review keeps it).
-    const reviewed = reviewState.result;
-    const modelName = (reviewed && (reviewed.modelName || reviewed.modelId)) || (reviewState.detail && reviewState.detail.model) || '';
-    const model = modelName ? ` · ${modelName}` : '';
-    meta.textContent = `${label}${commits}${model}${reviewIsForActiveRepository() ? '' : ` · ${reviewState.repositoryName || reviewState.repositoryPath}`}`;
-    meta.title = reviewed && reviewed.modelId ? `Reviewed with ${reviewed.modelName || reviewed.modelId} (${reviewed.modelId})` : modelName ? `Reviewing with ${modelName}` : '';
-    if (running) {
-      // Visible from the Changes tab too, so progress can be followed while working elsewhere.
-      if (badge) badge.textContent = reviewState.detail ? `${reviewProgressPercent()}%` : '…';
-      // Before the engine reports (e.g. waiting for consent) the header says what it waits for.
-      status.textContent = reviewState.detail ? '' : reviewState.progress || 'Starting…';
-      renderReviewProgress(body);
-      return;
-    }
-    stopReviewClock();
-    if (!done) {
-      if (badge) badge.textContent = '';
-      status.textContent = '';
-      body.innerHTML = `<div class="${reviewState.cancelled ? 'dashboard-empty' : 'dashboard-error'}">${escapeHtml(reviewState.message || 'Review failed.')}</div>`;
-      return;
-    }
-    const { result, readiness } = reviewState;
-    const findings = result.findings || [];
-    if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
-    // The model is named in the header line (reviewMeta), with its exact id in the tooltip.
-    status.textContent = '';
-    // Findings and review gaps are counted apart ("5 items" hid that 2 of them were not findings),
-    // in a blocked result too.
-    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-    const findingAndGapCounts = [readiness.attention.length
-      ? plural(readiness.attention.length, readiness.status === 'blocked' ? 'other finding' : 'finding') : '',
-      (readiness.gaps || []).length ? plural(readiness.gaps.length, 'review gap') : '',
-      (readiness.quality || []).length ? plural(readiness.quality.length, 'code quality note') : ''].filter(Boolean);
-    const banner = {
-      blocked: `Blocked: ${[`${readiness.blocking.length} blocking item${readiness.blocking.length === 1 ? '' : 's'}`, ...findingAndGapCounts].join(' · ')}`,
-      needs_attention: `Needs attention: ${findingAndGapCounts.join(' · ')}`,
-      no_blocking_findings: `No blocking findings in what was reviewed${(readiness.quality || []).length ? ` · ${plural(readiness.quality.length, 'code quality note')}` : ''}`
-    }[readiness.status];
-    const coverage = result.coverage;
-    const isPartlyReviewed = item => item.partial || /^Partly reviewed/.test(item.reason || '');
-    const gaps = coverage.skipped.map(item => [isPartlyReviewed(item) ? 'partly reviewed' : 'skipped', item])
-      .concat(coverage.failed.map(item => ['failed', item]));
-    const summary = readiness.coverage;
-    const coverageText = summary
-      ? `${summary.files} file${summary.files === 1 ? '' : 's'}: ${summary.fully} fully reviewed · ${summary.partly} partly${summary.partlyData ? ` (${summary.partlyData} data or generated)` : ''} · ${summary.notReviewed} not reviewed · ${summary.failedChecks} failed check${summary.failedChecks === 1 ? '' : 's'}`
-      : `Analyzed ${coverage.analyzed} of ${coverage.surveyed} files · ${coverage.skipped.length} skipped · ${coverage.failed.length} failed checks`;
-    // A stopped review shows what it finished; running it again reuses those components.
-    const stopped = result.partial
-      ? `<div class="review-stopped" role="status"><span>Stopped after <strong>${result.partial.unitsDone} of ${result.partial.unitsTotal}</strong> components. The rest was not reviewed.</span><button type="button" class="btn" data-action="continueReview">Continue review</button></div>`
-      : '';
-    // Failed checks, once per reason: what failed, where, what to do, and a way to run them again.
-    const failedGroups = [];
-    for (const item of coverage.failed || []) {
-      let group = failedGroups.find(entry => entry.reason === item.reason);
-      if (!group) failedGroups.push(group = { reason: item.reason, paths: [] });
-      // Older saved reviews list a component once per bad finding.
-      if (!group.paths.includes(item.path)) group.paths.push(item.path);
-    }
-    const failedCount = failedGroups.reduce((sum, group) => sum + group.paths.length, 0);
-    const failedSection = failedGroups.length
-      ? `<section class="review-failed"><h4>Failed checks <span class="review-count">${failedCount}</span></h4>
-        <p class="review-gaps-note">These parts were not reviewed, or their findings were not checked. They are not a pass. <strong>Retry failed</strong> asks Copilot again for them only; components that passed are reused.</p>
-        <ul class="review-gaps">${failedGroups.map(group => `<li><strong>${escapeHtml(group.reason)}</strong> — ${group.paths.length === 1 ? `<code>${escapeHtml(group.paths[0])}</code>` : `${group.paths.length} entries: ${group.paths.slice(0, 6).map(path => `<code>${escapeHtml(path)}</code>`).join(', ')}${group.paths.length > 6 ? ', …' : ''}`}<br><span class="review-failed-hint">${escapeHtml(failureHint(group.reason))}</span></li>`).join('')}</ul>
-        ${result.partial ? '' : `<button type="button" class="btn" data-action="continueReview" title="Run this review again: components that passed are reused, only the failed ones are asked again">Retry failed</button>`}</section>` : '';
-    const logSection = (result.log || []).length
-      ? `<details class="review-log"><summary>Review log <span class="review-count">${result.log.length}</span></summary><ol>${result.log.map(entry =>
-        `<li class="${/\bfail|\berror/i.test(entry.message) ? 'review-log-failed' : ''}"><time>${escapeHtml(formatElapsed(entry.at))}</time> ${escapeHtml(entry.message)}</li>`).join('')}</ol></details>` : '';
-    const toVerify = (result.toVerify || []).length
-      ? `<details class="review-to-verify"><summary>To verify <span class="review-count">${result.toVerify.length}</span></summary><p class="review-gaps-note">What the model could not see from the reviewed files: callers, CI settings, external services. Check these by hand.</p><ul>${result.toVerify.map(item => `<li>${richText(item)}</li>`).join('')}</ul></details>`
-      : '';
-    const policy = (result.policyResults || []).length
-      ? `<section><h4>Policy</h4><table class="review-policy"><thead><tr><th>Rule</th><th>Result</th><th>Reason</th></tr></thead><tbody>${result.policyResults.map(item =>
-        `<tr class="policy-${escapeHtml(item.status)}"><td><code>${escapeHtml(item.ruleId)}</code></td><td>${escapeHtml(item.status.replace(/_/g, ' '))}</td><td>${escapeHtml(item.reason)}</td></tr>`).join('')}</tbody></table></section>`
-      : '';
-    const allOpen = findings.length > 0 && findings.every(finding => openFindings.has(finding.id));
-    const triageBar = findings.length
-      ? `<div class="review-triage-summary" role="status"><span><strong>${readiness.toFix || 0}</strong> to fix</span><span><strong>${(readiness.fixed || []).length}</strong> fixed</span><span><strong>${(readiness.dismissed || []).length}</strong> dismissed</span><span><strong>${readiness.untriaged || 0}</strong> not triaged</span><button type="button" class="review-expand-all" data-action="expandAllFindings" data-expand="${!allOpen}">${allOpen ? 'Collapse all' : 'Expand all'}</button>${renderFixAction(readiness)}</div>`
-      : '';
-    const blockingItems = sectionItems('blocking');
-    const attentionItems = sectionItems('attention');
-    const reviewedQuality = (result.request.categories || []).includes('quality');
-    const qualitySection = reviewedQuality
-      ? `<section class="review-quality"><h4>Code quality <span class="review-count">${(readiness.quality || []).length}</span></h4><p class="review-gaps-note">Maintainability notes from the clean code review. They never block.</p>${renderReviewItems(sectionItems('quality'), findings)}</section>` : '';
-    const skillsUsed = (result.skillsApplied || []).length
-      ? `<details class="review-skills-applied"><summary>Review skills used <span class="review-count">${[...new Set(result.skillsApplied.flatMap(item => item.skills))].length}</span></summary><ul>${result.skillsApplied.map(item =>
-        `<li><code>${escapeHtml(item.component)}</code> ${item.skills.map(id => `<span class="review-skill-tag">${escapeHtml(id)}</span>`).join(' ')}${(item.omitted || []).length ? ` <small>left out (too long): ${escapeHtml(item.omitted.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>` : '';
-    // Reviews read commits only; say so when there is work they did not see.
-    const reviewedRepository = getRepository(reviewState.repositoryPath);
-    const uncommitted = reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
-      ? '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed; commit them and review again to include them.</p>' : '';
-    body.innerHTML = `${uncommitted}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
-      ${stopped}
-      ${triageBar}
-      ${renderFixPanel()}
-      <section class="review-blocking"><h4>Blocking <span class="review-count">${readiness.blocking.length}</span></h4>${renderReviewItems(blockingItems, findings)}</section>
-      <section class="review-attention"><h4>Needs attention <span class="review-count">${readiness.attention.length}</span></h4>${renderReviewItems(attentionItems, findings)}</section>
-      ${qualitySection}
-      ${(readiness.gaps || []).length ? `<section class="review-gaps-section"><h4>Review gaps</h4><p class="review-gaps-note">What this review could not establish. Not findings, but not passes either.</p>${renderReviewItems(readiness.gaps, findings)}</section>` : ''}
-      ${policy}
-      ${toVerify}
-      ${skillsUsed}
-      ${failedSection}
-      <section><h4>Coverage</h4><p>${escapeHtml(coverageText)} · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
-        ? `<details><summary>Partly reviewed, skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
-      ${logSection}
-      ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
-      <p class="review-advisory">Advisory: verified findings passed mechanical evidence checks and a second AI assessment. No findings does not mean no vulnerabilities.</p>`;
-    tickFixClock();
-  }
-
-  // Show the cited line in the dashboard diff when the review compared two commits of the
-  // active repository; otherwise open the file at the reviewed revision in an editor.
-  function jumpToReviewEvidence(findingIndex, evidenceIndex) {
-    if (!reviewState || !reviewState.result) return;
-    const finding = reviewState.result.findings[findingIndex];
-    const evidence = finding && finding.evidence[evidenceIndex];
-    if (!evidence) return;
-    const request = reviewState.result.request;
-    if (request.scope === 'changes' && request.baseSha && reviewIsForActiveRepository()) {
-      pendingEvidenceJump = { path: evidence.path, side: evidence.side, line: evidence.startLine };
-      showDetailTab('changes');
-      commitCompareSelection = [];
-      updateCommitCompareUI();
-      loadComparison(request.baseSha, request.targetSha, 'review');
-      return;
-    }
-    postMessage('openReviewEvidence', { requestId: reviewState.requestId, repositoryPath: reviewState.repositoryPath, revision: evidence.revision, path: evidence.path, line: evidence.startLine });
   }
 
   function highlightEvidenceLine() {
@@ -3461,5 +2732,9 @@
     qualityToggle.checked = reviewQuality;
     qualityToggle.addEventListener('change', () => setReviewQuality(qualityToggle.checked, true));
   }
-  postMessage('listReviewSkills', {});
+  // The Clean code choice and the review tab's status live in the extension; the tab follows here.
+  postMessage('getReviewQuality', {});
+  postMessage('getReviewStatus', {});
+  publishReviewContext();
+  applyReviewLock();
 })();
