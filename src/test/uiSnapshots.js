@@ -590,6 +590,12 @@ async function main() {
     assert.equal(await page.locator('.review-dismissed').count(), 0, 'dismissed findings still move to their own section');
     assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), false, 'a dismissed finding did not fold');
     assert.match(await page.textContent(`${finding('critical-hypothesis')} .review-triage-chip`), /^Dismissed · False positive$/);
+    // With the status, triage chip and Undo beside it, a narrow pane still shows the file and line.
+    const roomy = page.viewportSize();
+    await page.setViewportSize({ width: 760, height: roomy.height });
+    const whereWidth = await page.evaluate(() => document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-finding-where').getBoundingClientRect().width);
+    await page.setViewportSize(roomy);
+    assert.ok(whereWidth > 40, `the file and line shrank to ${whereWidth}px`);
     assert.match(await page.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     // The reason is chosen in the opened finding.
     await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
@@ -813,6 +819,14 @@ async function main() {
     assert.match(await page.textContent('.review-skills-applied'), /src.*secrets-crypto.*clean-code/s);
     await page.click('.review-quality [data-action="toggleFinding"]');
     await snap(page, '10e-review-clean-code');
+    // The uncommitted-changes note follows the repository: committing (or applying a fix) updates it.
+    const noteAfter = async dirty => page.evaluate(value => {
+      const list = window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: value }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      return Boolean(document.querySelector('.review-uncommitted-note'));
+    }, dirty);
+    assert.equal(await noteAfter(false), false, 'the note stayed after the changes were committed');
+    assert.equal(await noteAfter(true), true, 'the note did not appear for new uncommitted changes');
     // The choice is remembered for the next review.
     assert.equal(await page.isChecked('#reviewQualityToggle'), true);
     await page.uncheck('#reviewQualityToggle');
@@ -853,6 +867,14 @@ async function main() {
     assert.deepEqual(pinned.libA, ['pinned:muted']);
     assert.ok(pinned.libB.includes('detached:warn') && pinned.libB.includes('≠ recorded:warn'), pinned.libB.join(' '));
     assert.match(pinned.tooltip, /git submodule update/);
+    // Detached with no recorded commit: only "unrecorded"; Align has nothing to restore, so no "detached" advice.
+    const unrecorded = await page.evaluate(() => {
+      const list = window.__initialRepositories.map(repository => repository.path === 'lib-a'
+        ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: undefined, recordedCommit: '' }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      return [...document.querySelectorAll('.sidebar-repository-item[data-path="lib-a"] .repo-badge')].map(badge => badge.textContent);
+    });
+    assert.deepEqual(unrecorded, ['unrecorded']);
 
     // If the active repository disappears from the list, the dashboard falls back to the parent.
     const fallback = await page.evaluate(() => {

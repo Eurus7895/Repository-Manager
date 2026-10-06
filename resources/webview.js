@@ -965,7 +965,8 @@
   function getRepositoryAlignment(repository, targetBranch) {
     if (repository.isParentRepo) return 'parent';
     if (repository.status === 'uninitialized') return 'uninitialized';
-    if (!repository.currentBranch) return repository.atRecordedCommit === true ? 'pinned' : 'detached';
+    // Detached with no recorded commit is "unrecorded" (its own badge): Align has nothing to restore.
+    if (!repository.currentBranch) return repository.atRecordedCommit === true ? 'pinned' : repository.atRecordedCommit === false ? 'detached' : 'unrecorded';
     return targetBranch && repository.currentBranch !== targetBranch ? 'drifted' : 'aligned';
   }
 
@@ -2076,6 +2077,10 @@
         }
 
         case 'updateSubmodules': {
+          // The Review tab notes uncommitted changes in the reviewed repository: keep it current
+          // (an applied fix or a commit changes it) without re-rendering on every refresh.
+          const reviewedPath = reviewState && reviewState.result ? reviewState.repositoryPath : null;
+          const wasDirty = reviewedPath !== null && Boolean((getRepository(reviewedPath) || {}).hasChanges);
           repositoryData = message.payload.submodules;
           repositoryDataAt = Date.now();
           saveState();
@@ -2085,6 +2090,7 @@
             activateDashboardRepository(repositoryData[0].path);
           }
           renderRepositorySwitcher();
+          if (reviewedPath !== null && wasDirty !== Boolean((getRepository(reviewedPath) || {}).hasChanges)) renderReviewPanel();
           break;
         }
 

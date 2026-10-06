@@ -2639,7 +2639,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-finding.open .review-finding-chevron::before { content: "▾"; }
 .review-finding-title { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text-strong); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .review-finding.open .review-finding-title { white-space: normal; }
-.review-finding-where { flex: 0 1 auto; max-width: 40%; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-finding-where { flex: none; max-width: 40%; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .review-finding-body { display: none; margin: 4px 0 2px 18px; }
 .review-finding.open .review-finding-body { display: block; }
 .review-finding-meta { color: var(--text-secondary); font-size: 11px; }
