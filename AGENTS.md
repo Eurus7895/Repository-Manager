@@ -13,8 +13,6 @@ Write repository documentation in English; converse in the user's language.
 - Support implementation claims with relevant code locations, logs, or test evidence. State what remains unverified.
 - Quantify when measurements exist; never invent numbers or imply precision without evidence.
 - Offer judgments and recommendations with reasons, rather than merely listing information.
-- Ask for a decision only when a material unresolved trade-off requires the user's judgment.
-- Respect reasoning ownership without forcing a lecture or a Socratic question sequence into every exchange.
 - Be detailed enough to assess the conclusion and concise enough to keep the important point visible.
 
 ## Start Each Task
@@ -46,7 +44,7 @@ Write repository documentation in English; converse in the user's language.
 Use Problem → Design → Predict → Build → Validate → Learn.
 
 - Let the user own problem framing, initial design, trade-offs, and technical decisions. Critique their reasoning after they have expressed it.
-- Ask targeted questions only for unresolved decisions that affect the work. Reuse answers already given; do not turn each small step into a questionnaire.
+- Ask targeted questions only for unresolved decisions that affect the work and need the user's judgment. Reuse answers already given; do not turn each small step into a questionnaire, a lecture or a Socratic sequence.
 - Before a meaningful implementation, elicit failure predictions if they have not already been stated, then add overlooked risks. If the user has none, state the risks with how you will handle them and proceed.
 - Implement authorized work, including routine code, tests, and documentation.
 - Report validation evidence; leave final product acceptance to the user.
@@ -78,15 +76,15 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 
 ## Branches and Commits — Read Before Every Git Command
 
-- Commit as the human author you are working for, never as an AI or tool identity: their name and GitHub no-reply address (`<id>+<login>@users.noreply.github.com`) for both author and committer, never a private email. Take it from the user, or from their earlier commits' author name and a no-reply author email (`git log origin/main --format='%an <%ae>'`); never from the committer field, and never a private address, both of which older commits got wrong. Ask if it is unclear.
+- Commit as the human author you are working for, never as an AI or tool identity: their name and GitHub no-reply address (`<id>+<login>@users.noreply.github.com`) for both author and committer, never a private email. Take it from the user, or from the most recent commits on `origin/main` whose author email is a no-reply address (`git log origin/main --format='%an <%ae>'`; history holds more than one name for the same address, so use the latest); never from the committer field, and never a private address, both of which older commits got wrong. Ask if it is unclear.
 - Never persist `user.name` or `user.email` with `git config`. The environment may hold another identity: a global config (cloud sessions have `Claude`) or preset `GIT_AUTHOR_*` variables (cloud sessions set the account's private email). Git uses them silently, and the variables win over `-c user.email`.
 - Set the identity as environment variables at the start of every command that writes a commit (commit, merge, cherry-pick, revert, amend, and each `rebase` and `rebase --continue`): `GIT_AUTHOR_NAME='<name>' GIT_AUTHOR_EMAIL='<no-reply>' GIT_COMMITTER_NAME='<name>' GIT_COMMITTER_EMAIL='<no-reply>' git commit ...`. They override every other source. Shell state does not carry over between tool calls, so an earlier `export` is gone.
 - Before every push, `git log origin/main..HEAD --format='%an <%ae> | %cn <%ce>' | sort -u` must print one line, with the author's no-reply identity on both sides; if not, recommit before pushing.
-- Never add AI/tool attribution, co-author/session trailers, generated-by footers, or AI session links to commits, PRs, comments, or documents.
+- Never add AI/tool attribution, co-author/session trailers, generated-by footers, or AI session links to commits, PRs, comments, or documents. Some tools append a footer on their own: read back each PR body or comment you post and remove it; where it cannot be removed (some review replies), resolve the thread without replying.
 - Never push to `claude/*`; never put `codex` or `claude` in branch names or PR titles.
 - Name work branches `<type>/<area>-<outcome>` in lowercase kebab-case, with `<type>` one of `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. The name must be meaningful on its own: `<area>-<outcome>` says what the branch changes (for example `feat/review-triage-autofix`, `fix/graph-dangling-lanes`), never a vague word (`fix/stuff`, `feat/update`), a bare ticket number, or a date. No session suffixes or tool prefixes. (Conventional Commits applies to commit messages, not branch names.)
 - Start work from the latest `origin/main` (this repository has no `dev` branch): fetch, then create the branch from it. If `main` advances, fetch and rebase before pushing; never push a stale base. Rebasing your own unmerged branch and pushing it with `--force-with-lease` is expected; never rewrite `main` or someone else's branch.
-- Release by tagging `main` (for example `1.7.0`) and publishing a GitHub release; the Build VSIX workflow runs on the published release, not on a tag push, and attaches the VSIX. Do not cut a branch for a normal release. If you cannot create the tag or release (cloud sessions get 403), hand the user the tag, the target SHA and the release notes, and stop.
+- Release by tagging `main` (for example `1.7.0`) and publishing a GitHub release; the Build VSIX workflow runs on the published release, not on a tag push, and attaches the VSIX. Do not cut a branch for a normal release. If you cannot create the tag or release (cloud sessions get 403), hand the user the tag, the target SHA and the release notes, and stop. A release that has no VSIX can be given one by running Build VSIX manually with `release_tag`.
 - If a published version needs a fix while `main` holds unreleased work, do not tag `main`; stop and ask the user how to ship the fix.
 - Never amend or rewrite a commit that is on `main` or in a merged PR; create a new commit instead.
 - Follow Conventional Commits 1.0.0: lowercase type/scope, imperative subject, at most 72 characters, no trailing period; wrap body at 72 columns and explain why.
@@ -97,7 +95,8 @@ Use Problem → Design → Predict → Build → Validate → Learn.
 ## This Repository
 
 - VS Code extension: TypeScript host in `src/`, bundled review skills in `resources/review-skills/`, webviews in `resources/` (dashboard: `webview.js`, `historyGraph.js`; Side Bar: `sidebar.js`; both use `webview.css`), HTML in `src/webview/template.ts`. The dashboard owns the repository list and mirrors it to the Side Bar (`src/repositoryManagerLauncher.ts`).
-- Validate with `npm run lint`, `npm test` (compiles, lints, then runs the suites listed in `package.json`'s `test` script; add a new `src/test/*Smoke.js` there or it never runs), and `npm run test:ui` (Playwright screenshots of the real webviews into `ui-snapshots/`; set `PLAYWRIGHT_CHROMIUM_PATH` if Chromium is not where Playwright looks).
+- Validate with `npm run lint`, `npm test` (compiles, lints, then runs the suites listed in `package.json`'s `test` script; add a new `src/test/*Smoke.js` there or it never runs), `npm run test:ui` (Playwright screenshots of the real webviews into `ui-snapshots/`; set `PLAYWRIGHT_CHROMIUM_PATH` if Chromium is not where Playwright looks), and `npm run package` (the VSIX; `.vscodeignore` decides what ships). CI (`.github/workflows/build-vsix.yml`) runs all three on every pull request.
+- Review skills (`resources/review-skills/*.md`, design in `docs/security-compliance-review-engine.md`): write guidance in your own words and name the public standard in `references` (at most 300 characters; longer is cut). Keep `injection-sinks` language-neutral and APIs in one language skill, so two skills never describe the same line. Cover each glob or size change with a selection test in `src/test/reviewSkillsSmoke.js`.
 - Webviews are sandboxed: do not use `alert`, `confirm` or `prompt`; ask from the host (`vscode.window.show*Message`).
 - Copilot (`vscode.lm`) calls are not available outside VS Code: tests use scripted runners and models. Live model paths remain unverified until run in VS Code; say so.
 - There is no `docs/roadmap.md` or commit guard script here. Verify `origin/main` and any referenced file exist before relying on them; report gaps instead of inventing them.
