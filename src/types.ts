@@ -174,6 +174,8 @@ export interface ReviewProgressDetail {
   filesTotal: number;
   /** Candidate findings that passed evidence checks so far. */
   candidates: number;
+  /** The model's display name, once it is selected. */
+  model?: string;
   /** Sent once the plan exists: every component with its file count. */
   components?: Array<{ component: string; files: number }>;
 }
@@ -187,6 +189,8 @@ export interface ReviewResult {
   coverage: ReviewCoverage;
   policyStatus: 'configured' | 'not_configured';
   modelId?: string;
+  /** The model's display name, as Copilot lists it (e.g. "GPT-4o"). */
+  modelName?: string;
   /** What the tool itself could not establish (policy, coverage, the advisory caveat). */
   limitations: string[];
   /** What the model could not see and someone should check, e.g. callers or CI settings outside the scope. */

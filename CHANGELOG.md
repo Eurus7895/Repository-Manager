@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.10.1] - Unreleased
 
+### Changed
+
+- A submodule detached at the commit the parent records is shown as **pinned** (grey) and counts as aligned, since that is how `git submodule update` leaves it. **detached** and **drift** now warn only when a repository is off the recorded commit or on another branch.
+- Repository badges and the review buttons explain themselves on hover; reviews say that uncommitted and untracked files are not reviewed, and the Review tab says so when the repository has uncommitted changes.
+- The review header names the model that reviewed (its exact id on hover), and the report shows both.
+
 ### Fixed
 
 - The package's repository link pointed to the project's old name; it now points to Eurus7895/Repository-Manager.
+- A long finding title widened its row past the panel and hid its file, line and status.
 
 ## [1.10.0] - 2026-10-06
 

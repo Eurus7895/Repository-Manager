@@ -455,9 +455,9 @@ async function main() {
       const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
       const finding = (id, severity, status, explanation) => ({ id, category: 'security', severity, confidence: 'high', status,
         explanation, impact: 'Untrusted input reaches a sensitive sink', suggestedAction: 'Validate the input first', evidence });
-      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1',
+      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1', modelName: 'Scripted model',
         findings: [finding('high-verified', 'high', 'verified', 'Changed line passes input to eval'),
-          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input')],
+          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input when `--env` values from the request reach the `docker run` call in the deploy script, which the workflow passes to the composite action with the mirror password')],
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
@@ -517,7 +517,9 @@ async function main() {
     assert.equal(await page.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
     // Labels name the tag and branch; the exact commits reviewed follow them.
     const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
-    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    // The model that reviewed is named after the commits, with its exact id in the tooltip.
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
+    assert.equal(await page.getAttribute('#reviewMeta', 'title'), 'Reviewed with Scripted model (scripted:1)');
     assert.equal(await page.getAttribute('.review-current-group [data-scope="branch"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
@@ -529,6 +531,19 @@ async function main() {
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);
     await snap(page, '10-review-results');
+    // However long a title is, the file:line and the status chip stay inside the row.
+    const wide = page.viewportSize();
+    await page.setViewportSize({ width: 900, height: wide.height });
+    const clipped = await page.evaluate(() => [...document.querySelectorAll('.review-finding:not(.open) .review-finding-head')].filter(head => {
+      // The row itself can grow past the panel, so measure against the scrolling panel.
+      const box = document.getElementById('reviewBody').getBoundingClientRect();
+      const title = head.querySelector('.review-finding-title').getBoundingClientRect();
+      const after = [...head.querySelectorAll('.review-finding-where, .review-badge')].map(item => item.getBoundingClientRect());
+      // Overlap (the title painted over them) or pushed out of the row both hide them.
+      return after.some(item => item.left < title.right - 1 || item.right > box.right + 1);
+    }).length);
+    await page.setViewportSize(wide);
+    assert.equal(clipped, 0, 'a finding row pushes its status out of view');
     // The Review tab drops the commit header and summary toolbar; Expand also hides the history.
     assert.equal(await page.isVisible('#dashboardCommitSummary'), false);
     const reviewHeight = () => page.evaluate(() => document.getElementById('reviewPanel').getBoundingClientRect().height);
@@ -575,6 +590,12 @@ async function main() {
     assert.equal(await page.locator('.review-dismissed').count(), 0, 'dismissed findings still move to their own section');
     assert.equal(await page.isVisible(`${finding('critical-hypothesis')} .review-finding-body`), false, 'a dismissed finding did not fold');
     assert.match(await page.textContent(`${finding('critical-hypothesis')} .review-triage-chip`), /^Dismissed · False positive$/);
+    // With the status, triage chip and Undo beside it, a narrow pane still shows the file and line.
+    const roomy = page.viewportSize();
+    await page.setViewportSize({ width: 760, height: roomy.height });
+    const whereWidth = await page.evaluate(() => document.querySelector('.review-finding[data-finding-id="critical-hypothesis"] .review-finding-where').getBoundingClientRect().width);
+    await page.setViewportSize(roomy);
+    assert.ok(whereWidth > 40, `the file and line shrank to ${whereWidth}px`);
     assert.match(await page.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     // The reason is chosen in the opened finding.
     await page.click(`${finding('critical-hypothesis')} [data-action="toggleFinding"]`);
@@ -741,7 +762,7 @@ async function main() {
     // Opening one restores its findings and triage; export works from the saved copy.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(6) [data-action="openStoredReview"]');
     await reopened.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
     assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(6) .review-history-commit'), `${releaseSha} → ${branchSha}`);
     assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(6)', 'aria-current'), 'true');
@@ -798,6 +819,14 @@ async function main() {
     assert.match(await page.textContent('.review-skills-applied'), /src.*secrets-crypto.*clean-code/s);
     await page.click('.review-quality [data-action="toggleFinding"]');
     await snap(page, '10e-review-clean-code');
+    // The uncommitted-changes note follows the repository: committing (or applying a fix) updates it.
+    const noteAfter = async dirty => page.evaluate(value => {
+      const list = window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: value }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      return Boolean(document.querySelector('.review-uncommitted-note'));
+    }, dirty);
+    assert.equal(await noteAfter(false), false, 'the note stayed after the changes were committed');
+    assert.equal(await noteAfter(true), true, 'the note did not appear for new uncommitted changes');
     // The choice is remembered for the next review.
     assert.equal(await page.isChecked('#reviewQualityToggle'), true);
     await page.uncheck('#reviewQualityToggle');
@@ -822,6 +851,30 @@ async function main() {
     });
     assert.equal(alignment.summary, '0/2 aligned');
     assert.match(alignment.libA, /unrecorded/);
+    // Detached at the recorded commit is how git submodule update leaves a submodule: pinned, aligned,
+    // not a warning. Detached anywhere else still warns.
+    const pinned = await page.evaluate(() => {
+      const list = window.__initialRepositories.map(repository => repository.path === 'lib-a'
+        ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: true })
+        : repository.path === 'lib-b' ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: false }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      const badges = path => [...document.querySelectorAll(`.sidebar-repository-item[data-path="${path}"] .repo-badge`)]
+        .map(badge => `${badge.textContent}:${badge.classList.contains('repo-badge-drift') ? 'warn' : 'muted'}`);
+      return { summary: document.getElementById('repositoryAlignment').textContent, libA: badges('lib-a'), libB: badges('lib-b'),
+        tooltip: document.querySelector('.sidebar-repository-item[data-path="lib-a"] .repo-badge').title };
+    });
+    assert.equal(pinned.summary, '1/2 aligned');
+    assert.deepEqual(pinned.libA, ['pinned:muted']);
+    assert.ok(pinned.libB.includes('detached:warn') && pinned.libB.includes('≠ recorded:warn'), pinned.libB.join(' '));
+    assert.match(pinned.tooltip, /git submodule update/);
+    // Detached with no recorded commit: only "unrecorded"; Align has nothing to restore, so no "detached" advice.
+    const unrecorded = await page.evaluate(() => {
+      const list = window.__initialRepositories.map(repository => repository.path === 'lib-a'
+        ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: undefined, recordedCommit: '' }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      return [...document.querySelectorAll('.sidebar-repository-item[data-path="lib-a"] .repo-badge')].map(badge => badge.textContent);
+    });
+    assert.deepEqual(unrecorded, ['unrecorded']);
 
     // If the active repository disappears from the list, the dashboard falls back to the parent.
     const fallback = await page.evaluate(() => {
