@@ -3,13 +3,14 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { carryTriage } = require('../../out/reviewTriageCarry.js');
+const { carryTriage, sameIssue } = require('../../out/reviewTriageCarry.js');
+const { trimReviewLog } = require('../../out/services/reviewLog.js');
 const { ReviewController } = require('../../out/reviewController.js');
 const { ReviewHistoryStore, compactResult, MAX_STORED_LOG, MAX_STORED_GAPS } = require('../../out/reviewHistory.js');
 const { normalizeTriage, renderReviewMarkdown } = require('../../out/services/reviewReport.js');
 
 const finding = (id, fingerprint, extra = {}) => ({ id, fingerprint, category: 'security', severity: 'high', confidence: 'high', status: 'verified',
-  explanation: `Finding ${id}`, impact: 'Impact', suggestedAction: 'Fix it',
+  explanation: 'Request input reaches eval without validation', impact: 'Impact', suggestedAction: 'Fix it',
   evidence: [{ revision: 'abc', path: 'app.js', side: 'target', startLine: 3, endLine: 3 }], ...extra });
 
 async function main() {
@@ -32,6 +33,25 @@ async function main() {
     [{ generatedAt: '2026-10-06T10:00:00.000Z', findings: now, triage: carried }]);
   assert.equal(third['x-a'].carried.at, '2026-10-05T10:00:00.000Z');
   assert.deepEqual(third['x-c'], { decision: 'fix', carried: { at: '2026-10-05T10:00:00.000Z', decision: 'fixed' } });
+  // Undo is a decision too: the newest review that has the finding wins, even with no decision,
+  // so an older dismissal does not come back.
+  const undone = carryTriage([finding('y-a', 'fp-a')], [
+    { generatedAt: '2026-10-07T10:00:00.000Z', findings: [finding('z-a', 'fp-a')], triage: {} },
+    { generatedAt: '2026-10-05T10:00:00.000Z', findings: [finding('old-a', 'fp-a')], triage: { 'old-a': { decision: 'dismiss', reason: 'accepted_risk' } } }]);
+  assert.deepEqual(undone, {}, 'an undone dismissal came back from an older review');
+  // Two issues on one line share a fingerprint: a dismissed secret does not dismiss an injection.
+  const secret = finding('s', 'fp-line', { explanation: 'Hard-coded API token is committed in the configuration' });
+  const injection = finding('i', 'fp-line', { explanation: 'Request input reaches eval without validation' });
+  assert.equal(sameIssue(secret, injection), false);
+  assert.deepEqual(carryTriage([injection], [{ generatedAt: 'x', findings: [secret], triage: { s: { decision: 'dismiss' } } }]), {});
+  // Reworded, the same issue still matches; a different skill does not.
+  assert.equal(sameIssue(injection, finding('j', 'fp-line', { explanation: 'eval() runs the validation-free request input' })), true);
+  assert.equal(sameIssue(finding('k', 'fp', { skill: 'python-security' }), finding('l', 'fp', { skill: 'secrets-crypto' })), false);
+  // Two earlier issues on the line that both match: too ambiguous to carry either.
+  const twice = carryTriage([finding('n', 'fp-two')], [{ generatedAt: 'x', findings: [finding('p', 'fp-two'), finding('q', 'fp-two')],
+    triage: { p: { decision: 'dismiss' }, q: { decision: 'fix' } } }]);
+  assert.deepEqual(twice, {});
+
   // Changing one decision keeps where the others came from.
   const kept = normalizeTriage({ findings: now }, { ...carried, 'new-b': { decision: 'dismiss', reason: 'false_positive' } });
   assert.deepEqual(kept['new-a'].carried, { at: '2026-10-05T10:00:00.000Z', decision: 'dismiss' });
@@ -46,6 +66,14 @@ async function main() {
   assert.equal(compact.log.length, MAX_STORED_LOG);
   assert.ok(compact.log.some(entry => /failed/.test(entry.message)), 'the failure fell out of the stored log');
   assert.equal(compact.log.at(-1).message, `step ${MAX_STORED_LOG + 99}`, 'the end of the log was not kept');
+
+  // A long log keeps every failure and its newest steps, in order.
+  const long = Array.from({ length: 1000 }, (_, i) => ({ at: i, message: i === 3 ? 'Component api failed: boom' : `step ${i}` }));
+  const trimmed = trimReviewLog(long, 400);
+  assert.equal(trimmed.length, 400);
+  assert.equal(trimmed[0].message, 'Component api failed: boom');
+  assert.equal(trimmed.at(-1).message, 'step 999');
+  assert.ok(trimmed.every((entry, i) => i === 0 || entry.at > trimmed[i - 1].at));
 
   // 3. Through the controller: the second review of the same code keeps the first one's decisions,
   //    and the report says why checks failed.
@@ -84,7 +112,7 @@ async function main() {
     await controller.handle({ type: 'setFindingTriage', payload: { requestId: 1, findingId: 'run1-eval', decision: 'dismiss', reason: 'accepted_risk' } });
 
     // Run again: the model words it differently (another id), the code is the same (same fingerprint).
-    next = { findings: [finding('run2-eval', 'fp-eval', { explanation: 'eval() runs request input' }), finding('run2-new', 'fp-new')],
+    next = { findings: [finding('run2-eval', 'fp-eval', { explanation: 'eval() runs the request input without validation' }), finding('run2-new', 'fp-new')],
       coverage: { surveyed: 3, analyzed: 3, skipped: [], failed: [], complete: true } };
     await start(2);
     const second = completed();

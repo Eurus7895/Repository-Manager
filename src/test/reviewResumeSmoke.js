@@ -57,16 +57,18 @@ async function main() {
         // "Cancel" pressed while this component is with the model.
         if (stopAt === packet.component) { token.isCancellationRequested = true; throw new Error('Cancelled'); }
         const line = broken === packet.component ? 9 : 1; // line 9 does not exist: ungrounded evidence
+        const copies = broken === packet.component ? 2 : 1; // two bad findings: still one failed check
         const response = { schemaVersion: 1, targetSha: target, policyResults: [],
-          findings: [{ category: 'security', severity: 'high', confidence: 'high', explanation: `${wording} in ${file}`,
+          findings: Array.from({ length: copies }, (_, copy) => ({ category: 'security', severity: 'high', confidence: 'high', explanation: `${wording} in ${file}${copy ? ' again' : ''}`,
             impact: 'Runs any command', suggestedAction: 'Do not exec input',
-            evidence: [{ revision: target, path: file, side: 'target', startLine: line, endLine: line }] }],
+            evidence: [{ revision: target, path: file, side: 'target', startLine: line, endLine: line }] })),
           limitations: [`Whether callers of ${file} pass untrusted input depends on code that was not supplied.`] };
         return { text: (async function* () { yield JSON.stringify(response); })() };
       } });
     let model = makeModel('1');
     const provider = new SecurityReviewProvider({ lm: { selectChatModels: async () => [model] }, LanguageModelChatMessage: { User: value => value } });
-    const cache = new ReviewUnitCache(memento());
+    const cacheState = memento();
+    const cache = new ReviewUnitCache(cacheState);
     const service = new SecurityReviewService(new GitCommandService(repo), provider, cache);
     const request = { repositoryPath: '.', targetSha: target, scope: 'branch', categories: ['security'] };
     const updates = [];
@@ -104,6 +106,13 @@ async function main() {
     asked.length = 0;
     const again = await review();
     assert.deepEqual(asked, []);
+    // Components saved before findings had fingerprints get them when reused, so decisions can carry.
+    const stored = cacheState.get('repositoryManager.reviewUnitCache');
+    for (const entry of stored) for (const item of entry.outcome.findings) delete item.fingerprint;
+    await cacheState.update('repositoryManager.reviewUnitCache', stored);
+    const backfilled = await review();
+    assert.deepEqual(asked, []);
+    assert.deepEqual(backfilled.findings.map(item => item.fingerprint).sort(), again.findings.map(item => item.fingerprint).sort());
     assert.deepEqual(again.findings.map(finding => finding.id).sort(), resumed.findings.map(finding => finding.id).sort());
 
     // 4. Another model (or model version) asks again; so would changed prompts.
@@ -124,6 +133,7 @@ async function main() {
     asked.length = 0;
     const failed = await review();
     assert.ok(failed.coverage.failed.some(item => item.path === 'gamma'));
+    assert.equal(failed.coverage.failed.filter(item => item.path === 'gamma').length, 1, 'two bad findings counted as two failed checks');
     // The log says which component failed and why, once, and keeps the steps before it.
     assert.ok(failed.log.some(entry => entry.message === 'Component gamma failed: AI finding had invalid or ungrounded evidence'), failed.log.map(entry => entry.message).join('\n'));
     assert.ok(failed.log[0].message.startsWith('Planning') && failed.log.every((entry, i, all) => i === 0 || entry.at >= all[i - 1].at));

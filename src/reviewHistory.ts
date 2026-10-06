@@ -4,6 +4,7 @@
  * repository root; the newest MAX_PER_REPOSITORY reviews of each repository are kept.
  */
 
+import { trimReviewLog } from './services/reviewLog';
 import { ReviewResult, ReviewTriage } from './types';
 import { MementoLike } from './reviewConsent';
 import { assessReadiness, normalizeTriage } from './services/reviewReport';
@@ -73,14 +74,8 @@ export const MAX_STORED_LOG = 150;
  * what to run again), with a count of what was dropped, and a long log keeps its failures and its end.
  */
 export function compactResult(result: ReviewResult): ReviewResult {
-  let compact = result;
   const log = result.log || [];
-  if (log.length > MAX_STORED_LOG) {
-    const failures = new Set(log.filter(entry => /\bfail|\berror/i.test(entry.message)));
-    const rest = log.filter(entry => !failures.has(entry)).slice(-Math.max(0, MAX_STORED_LOG - failures.size));
-    const kept = new Set([...failures, ...rest]);
-    compact = { ...compact, log: log.filter(entry => kept.has(entry)).slice(-MAX_STORED_LOG) };
-  }
+  const compact = log.length > MAX_STORED_LOG ? { ...result, log: trimReviewLog(log, MAX_STORED_LOG) } : result;
   const { skipped, failed } = result.coverage;
   if (skipped.length + failed.length <= MAX_STORED_GAPS) { return compact; }
   const keptFailed = failed.slice(0, MAX_STORED_GAPS);

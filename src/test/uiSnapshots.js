@@ -158,7 +158,7 @@ function startServer(workspace, otherFolder) {
       alwaysConfirm: () => false,
       isConsentRemembered: root => reviewProbe.remembered.has(root),
       rememberConsent: async root => { reviewProbe.remembered.add(root); },
-      createRunner: () => ({ review: (request, token, progress) => reviewProbe.runner(request, token, progress) }),
+      createRunner: () => ({ review: (request, token, progress, modelId) => reviewProbe.runner(request, token, progress, modelId) }),
       createCancellation: () => {
         const token = { isCancellationRequested: false };
         return { token, cancel() { token.isCancellationRequested = true; }, dispose() {} };
@@ -807,6 +807,7 @@ async function main() {
         findings: [{ id: 'quality-note', category: 'quality', skill: 'clean-code', severity: 'medium', confidence: 'high', status: 'verified',
           explanation: 'The same parsing is repeated in two places', impact: 'Fixes drift apart', suggestedAction: 'Extract one function', evidence }],
         skillsApplied: [{ component: 'src', skills: ['secrets-crypto', 'clean-code'] }],
+        modelId: 'scripted-large:1', modelName: 'Scripted large',
         log: [{ at: 0, message: 'Planning the review…' }, { at: 65000, message: 'Component api failed (2 files): Selected model cannot fit review context' }],
         coverage: { surveyed: 3, analyzed: 1, skipped: [], complete: false,
           failed: [{ path: 'api/a.js', reason: 'Selected model cannot fit review context' }, { path: 'api/b.js', reason: 'Selected model cannot fit review context' }] } };
@@ -842,17 +843,28 @@ async function main() {
     // the finding dismissed in the first review, on the same code: it stays dismissed.
     const before = runs.length;
     const retried = runs.at(-1);
-    reviewProbe.runner = async request => {
+    let retryModel;
+    reviewProbe.runner = async (request, token, progress, modelId) => {
       runs.push(request);
+      retryModel = modelId;
       const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
       return { request, policyResults: [], policyStatus: 'not_configured', limitations: [], modelId: 'scripted:1',
         findings: [{ id: 'reworded', fingerprint: 'fp-critical-hypothesis', category: 'security', severity: 'critical', confidence: 'high', status: 'hypothesis',
           explanation: 'Command injection through the request input', impact: 'Runs commands', suggestedAction: 'Pass arguments as an array', evidence }],
         coverage: { surveyed: 3, analyzed: 3, skipped: [], failed: [], complete: true } };
     };
+    // Retry repeats the reviewed repository and model, even after the dashboard moved to another one.
+    await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    await page.click('#detailTabReview');
     await page.click('.review-failed [data-action="continueReview"]');
     await page.locator('.review-finding[data-finding-id="reworded"]').waitFor();
     assert.equal(runs.length, before + 1);
+    assert.equal(runs.at(-1).repositoryPath, retried.repositoryPath, 'Retry reviewed the repository now on screen');
+    assert.equal(retryModel, 'scripted-large', 'Retry switched to the model now selected');
+    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
+    await page.click('#detailTabReview');
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).targetSha, runs.at(-1).categories], [retried.scope, retried.targetSha, retried.categories]);
     assert.equal(await page.locator('.review-failed').count(), 0);
     const chip = page.locator('.review-finding[data-finding-id="reworded"] .review-triage-chip');

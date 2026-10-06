@@ -771,9 +771,17 @@
       if (!result || !(result.partial || (result.coverage.failed || []).length)) return;
       const { request } = result;
       const context = reviewState.context || {};
-      // The same categories as the stopped run, so its saved components match.
+      // The repository path is relative to the workspace folder the review ran in.
+      if (reviewState.folder !== currentWorkspaceFolder()) {
+        const status = document.getElementById('reviewStatus');
+        if (status) status.textContent = 'Switch back to the workspace folder this review ran in to run it again.';
+        return;
+      }
+      // The same repository, model ("id:version" → id) and categories, so its saved components match.
+      const modelId = result.modelId ? result.modelId.slice(0, result.modelId.lastIndexOf(':') > 0 ? result.modelId.lastIndexOf(':') : undefined) : '';
       startReview({ scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
-        targetLabel: context.targetLabel, baseLabel: context.baseLabel, includeQuality: (request.categories || []).includes('quality') });
+        targetLabel: context.targetLabel, baseLabel: context.baseLabel, includeQuality: (request.categories || []).includes('quality'),
+        repositoryPath: reviewState.repositoryPath, modelId });
     },
     importReviewSkill: () => postMessage('importReviewSkill', {}),
     toggleReviewSkill: (el) => {
@@ -2763,20 +2771,23 @@
   // Starts at once with security and team policy, using the model chosen for AI summaries;
   // the extension asks for consent until it is allowed for the repository.
   function startReview(options) {
-    if (!activeDashboardRepository || reviewLocked()) return;
+    // A retry names the repository and model of the review it repeats; otherwise the dashboard's.
+    const repositoryPath = options.repositoryPath || activeDashboardRepository;
+    const modelId = options.modelId !== undefined ? options.modelId : selectedSummaryModelId;
+    if (!repositoryPath || reviewLocked()) return;
     const scope = options.scope;
     const kind = options.kind || 'review';
     reviewRequestId += 1;
-    const repository = getRepository(activeDashboardRepository);
-    reviewState = { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, folder: currentWorkspaceFolder(),
-      repositoryName: repository ? repository.name : activeDashboardRepository, scope, kind,
+    const repository = getRepository(repositoryPath);
+    reviewState = { requestId: reviewRequestId, repositoryPath, folder: currentWorkspaceFolder(),
+      repositoryName: repository ? repository.name : repositoryPath, scope, kind,
       baseLabel: scope === 'changes' ? (options.baseLabel || options.base || '') : '', targetLabel: options.targetLabel || options.target || '', status: 'running' };
     renderReviewPanel();
     showDetailTab('review');
-    postMessage('startReview', { requestId: reviewRequestId, repositoryPath: activeDashboardRepository, scope, kind,
+    postMessage('startReview', { requestId: reviewRequestId, repositoryPath, scope, kind,
       baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
       baseLabel: scope === 'changes' && options.base ? options.baseLabel || shortRevision(options.base) : undefined,
-      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: selectedSummaryModelId || undefined,
+      targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: modelId || undefined,
       includeQuality: options.includeQuality === undefined ? reviewQuality : options.includeQuality });
   }
 
@@ -3280,10 +3291,12 @@
     for (const item of coverage.failed || []) {
       let group = failedGroups.find(entry => entry.reason === item.reason);
       if (!group) failedGroups.push(group = { reason: item.reason, paths: [] });
-      group.paths.push(item.path);
+      // Older saved reviews list a component once per bad finding.
+      if (!group.paths.includes(item.path)) group.paths.push(item.path);
     }
+    const failedCount = failedGroups.reduce((sum, group) => sum + group.paths.length, 0);
     const failedSection = failedGroups.length
-      ? `<section class="review-failed"><h4>Failed checks <span class="review-count">${coverage.failed.length}</span></h4>
+      ? `<section class="review-failed"><h4>Failed checks <span class="review-count">${failedCount}</span></h4>
         <p class="review-gaps-note">These parts were not reviewed, or their findings were not checked. They are not a pass. <strong>Retry failed</strong> asks Copilot again for them only; components that passed are reused.</p>
         <ul class="review-gaps">${failedGroups.map(group => `<li><strong>${escapeHtml(group.reason)}</strong> — ${group.paths.length === 1 ? `<code>${escapeHtml(group.paths[0])}</code>` : `${group.paths.length} entries: ${group.paths.slice(0, 6).map(path => `<code>${escapeHtml(path)}</code>`).join(', ')}${group.paths.length > 6 ? ', …' : ''}`}<br><span class="review-failed-hint">${escapeHtml(failureHint(group.reason))}</span></li>`).join('')}</ul>
         ${result.partial ? '' : `<button type="button" class="btn" data-action="continueReview" title="Run this review again: components that passed are reused, only the failed ones are asked again">Retry failed</button>`}</section>` : '';
