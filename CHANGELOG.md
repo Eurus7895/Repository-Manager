@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coverage says what happened to the files: fully reviewed, partly reviewed (lockfiles, images, diagrams and test inputs counted apart), not reviewed, failed checks. Partly read files are no longer called skipped.
 - Limitations no longer repeat which files were in scope, that they contain no sinks, or that a file was not read. Each note stays whole instead of being cut into sentences, and file names keep their case.
 
+### Removed
+
+- The repository no longer carries a stale 1.1.0 VSIX; get the VSIX from the GitHub release.
+
 ### Fixed
 
 - Dismissing a finding that a proposed fix covered left an error box that could not be closed. Its files now leave the proposal and the rest can still be applied; when nothing is left, the proposal closes with a note you can close.
