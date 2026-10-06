@@ -2618,7 +2618,7 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-history-delete:hover { color: var(--text-primary); background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, .05)); }
 .compare-range.compare-error { color: var(--tone-warn); }
 
-.review-list { display: grid; gap: 8px; list-style: none; }
+.review-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; list-style: none; }
 .review-gaps-section .review-item { border-left-color: var(--border-strong); background: transparent; }
 .review-gaps-note { margin-bottom: 6px; color: var(--text-muted); font-size: 11px; }
 .review-advisory { margin-top: 18px; color: var(--text-muted); font-size: 11px; }
@@ -2637,9 +2637,9 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-finding-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 .review-finding-chevron::before { content: "▸"; display: inline-block; width: 10px; color: var(--text-muted); }
 .review-finding.open .review-finding-chevron::before { content: "▾"; }
-.review-finding-title { overflow: hidden; color: var(--text-strong); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.review-finding-title { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text-strong); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .review-finding.open .review-finding-title { white-space: normal; }
-.review-finding-where { flex: none; max-width: 40%; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.review-finding-where { flex: 0 1 auto; max-width: 40%; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .review-finding-body { display: none; margin: 4px 0 2px 18px; }
 .review-finding.open .review-finding-body { display: block; }
 .review-finding-meta { color: var(--text-secondary); font-size: 11px; }
@@ -2807,3 +2807,7 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .review-skill-switch[aria-pressed="true"] { color: var(--text-strong); background: var(--bg-sunken); font-weight: 600; }
 .review-skill-tag { padding: 0 5px; border-radius: 3px; color: var(--text-secondary); background: var(--bg-sunken); font-size: 10px; }
 .review-skill-kind { color: var(--text-muted); font-size: 11px; }
+
+/* The status and triage chips stay visible however long the title is. */
+.review-finding-head > .review-badge, .review-finding-head > .review-undo { flex: none; }
+.review-uncommitted-note { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--tone-warn); color: var(--text-primary); background: rgba(229, 165, 71, .08); font-size: 12px; }

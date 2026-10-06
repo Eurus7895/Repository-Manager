@@ -197,7 +197,12 @@ async function main() {
     const token = { isCancellationRequested: false };
     const request = categories => ({ repositoryPath: '.', targetSha: target, scope: 'branch', categories });
 
-    const security = await service.review(request(['security', 'compliance']), token, () => {});
+    const details = [];
+    const security = await service.review(request(['security', 'compliance']), token, (message, detail) => { if (detail) details.push(detail); });
+    // The model is named while it works and in the result and the report.
+    assert.equal(security.modelName, 'Mock');
+    assert.ok(details.some(detail => detail.model === 'Mock'), 'progress did not name the model');
+    assert.match(renderReviewMarkdown(security, { kind: 'review', repositoryName: 'r', targetLabel: 'main', generatedAt: new Date() }), /\| Model \| Mock \(mock:1\) \|/);
     assert.ok(sent.api.includes('python-security') && !sent.api.includes('javascript-security') && !sent.api.includes('clean-code'));
     assert.ok(sent.web.includes('javascript-security') && !sent.web.includes('python-security'));
     assert.ok(!security.findings.some(finding => finding.category === 'quality'), 'a quality finding was kept without the clean code review');

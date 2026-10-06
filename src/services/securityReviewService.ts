@@ -41,6 +41,7 @@ export class SecurityReviewService {
     }
     const model = await this.provider.selectModel(selectedModelId);
     const modelId = `${model.id}:${model.version}`;
+    state.model = model.name || model.id;
     progress(`Planned ${plan.units.length} component(s), ${state.filesTotal} file(s)`, { ...state,
       components: plan.units.map(unit => ({ component: unit.component, files: unit.paths.length })) });
     // Components already reviewed at these commits with this model and these prompts are reused.
@@ -141,7 +142,7 @@ export class SecurityReviewService {
     if (!coverage.complete) { limitations.push('Review coverage is incomplete; missing checks are not a pass.'); }
     limitations.push('Verified findings have source and diff citations and a second AI check; this does not prove absence of other vulnerabilities.');
     return { request: plan.request, findings: [...findings.values()], policyResults, coverage,
-      policyStatus: policy.status, modelId, limitations: [...new Set(limitations)].slice(0, 40),
+      policyStatus: policy.status, modelId, modelName: state.model, limitations: [...new Set(limitations)].slice(0, 40),
       toVerify: consolidated.toVerify.slice(0, 20),
       ...(skillsApplied.length ? { skillsApplied } : {}),
       ...(stopped ? { partial: { unitsDone, unitsTotal: plan.units.length } } : {}) };

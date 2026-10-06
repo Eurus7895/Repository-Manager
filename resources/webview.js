@@ -959,11 +959,13 @@
   }
 
   // Branch alignment: linked repositories should be on the parent repository's branch.
-  // Commit alignment (atRecordedCommit) is tracked separately.
+  // Commit alignment (atRecordedCommit) is tracked separately. A submodule checked out
+  // detached at the commit the parent records is the normal result of `git submodule update`:
+  // it is pinned, not a problem.
   function getRepositoryAlignment(repository, targetBranch) {
     if (repository.isParentRepo) return 'parent';
     if (repository.status === 'uninitialized') return 'uninitialized';
-    if (!repository.currentBranch) return 'detached';
+    if (!repository.currentBranch) return repository.atRecordedCommit === true ? 'pinned' : 'detached';
     return targetBranch && repository.currentBranch !== targetBranch ? 'drifted' : 'aligned';
   }
 
@@ -974,11 +976,12 @@
     const parent = repositoryData.find(repository => repository.isParentRepo) || repositoryData[0];
     const targetBranch = parent ? parent.currentBranch : '';
     const linked = repositoryData.filter(repository => repository !== parent);
-    const aligned = linked.filter(repository => getRepositoryAlignment(repository, targetBranch) === 'aligned'
+    const aligned = linked.filter(repository => ['aligned', 'pinned'].includes(getRepositoryAlignment(repository, targetBranch))
       && repository.atRecordedCommit === true).length;
     if (summary) {
       // The word is hidden in a narrow sidebar; the tooltip keeps the full meaning.
       summary.innerHTML = linked.length ? `${aligned}/${linked.length}<span class="alignment-word"> aligned</span>` : '';
+      summary.title = `${aligned} of ${linked.length} linked repositories are at the commit the parent records, on ${targetBranch || 'the parent branch'} or pinned there (detached)`;
       summary.classList.toggle('drifted', aligned < linked.length);
     }
 
@@ -988,18 +991,24 @@
       const unavailable = alignment === 'uninitialized';
       const branch = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`.trim();
       const badges = [
-        repository.behind > 0 ? `<span class="repo-badge" title="${repository.behind} behind upstream">↓${repository.behind}</span>` : '',
-        repository.ahead > 0 ? `<span class="repo-badge" title="${repository.ahead} ahead of upstream">↑${repository.ahead}</span>` : '',
-        alignment === 'drifted' || alignment === 'detached'
-          ? `<span class="repo-badge repo-badge-drift" title="Not on ${escapeHtml(targetBranch || 'the parent branch')}">${alignment === 'detached' ? 'detached' : 'drift'}</span>`
+        repository.behind > 0 ? `<span class="repo-badge" title="${repository.behind} commit(s) behind its upstream branch: Pull brings them in">↓${repository.behind}</span>` : '',
+        repository.ahead > 0 ? `<span class="repo-badge" title="${repository.ahead} commit(s) ahead of its upstream branch: Push sends them">↑${repository.ahead}</span>` : '',
+        alignment === 'pinned'
+          ? `<span class="repo-badge repo-badge-muted" title="Detached at the commit the parent records, as git submodule update leaves it. Nothing to fix; check out ${escapeHtml(targetBranch || 'a branch')} only to commit here">pinned</span>`
+          : '',
+        alignment === 'drifted'
+          ? `<span class="repo-badge repo-badge-drift" title="On ${escapeHtml(repository.currentBranch)}, not on the parent's branch ${escapeHtml(targetBranch)}. Checkout ${escapeHtml(targetBranch)} to align it">drift</span>`
+          : '',
+        alignment === 'detached'
+          ? `<span class="repo-badge repo-badge-drift" title="Detached at ${escapeHtml(repository.currentCommit || 'a commit')}, which is not the commit the parent records. Align restores the recorded commit">detached</span>`
           : '',
         repository.atRecordedCommit === false
-          ? `<span class="repo-badge repo-badge-drift" title="HEAD ${escapeHtml(repository.currentCommit)} differs from the commit ${escapeHtml(repository.recordedCommit)} recorded by the parent">≠ recorded</span>`
+          ? `<span class="repo-badge repo-badge-drift" title="HEAD ${escapeHtml(repository.currentCommit)} differs from the commit ${escapeHtml(repository.recordedCommit)} the parent records. Align (or Reset to recorded) checks out the recorded commit; committing the parent records this one instead">≠ recorded</span>`
           : '',
         !repository.isParentRepo && alignment !== 'uninitialized' && repository.atRecordedCommit === undefined
-          ? '<span class="repo-badge repo-badge-drift" title="The parent repository has no recorded commit for this repository yet (for example, it was added but not committed)">unrecorded</span>'
+          ? '<span class="repo-badge repo-badge-drift" title="The parent records no commit for this repository yet, for example a submodule added but not committed. Commit the parent to record one">unrecorded</span>'
           : '',
-        alignment === 'uninitialized' ? '<span class="repo-badge repo-badge-muted">not initialized</span>' : ''
+        alignment === 'uninitialized' ? '<span class="repo-badge repo-badge-muted" title="Declared in .gitmodules but not cloned. Initialize submodules to check it out">not initialized</span>' : ''
       ].join('');
       const title = unavailable
         ? `${repository.name} is not initialized`
@@ -3190,7 +3199,12 @@
     // The exact commits, unless the label already is them (a Base/Target selection of plain commits).
     const shas = request ? reviewedCommits(request.scope, request.baseSha, request.targetSha) : '';
     const commits = shas && !label.includes(shas) ? ` · ${request.baseSha ? '' : 'commit '}${shas}` : '';
-    meta.textContent = `${label}${commits}${reviewIsForActiveRepository() ? '' : ` · ${reviewState.repositoryName || reviewState.repositoryPath}`}`;
+    // Which model is reviewing (while it runs) or reviewed (a saved review keeps it).
+    const reviewed = reviewState.result;
+    const modelName = (reviewed && (reviewed.modelName || reviewed.modelId)) || (reviewState.detail && reviewState.detail.model) || '';
+    const model = modelName ? ` · ${modelName}` : '';
+    meta.textContent = `${label}${commits}${model}${reviewIsForActiveRepository() ? '' : ` · ${reviewState.repositoryName || reviewState.repositoryPath}`}`;
+    meta.title = reviewed && reviewed.modelId ? `Reviewed with ${reviewed.modelName || reviewed.modelId} (${reviewed.modelId})` : modelName ? `Reviewing with ${modelName}` : '';
     if (running) {
       // Visible from the Changes tab too, so progress can be followed while working elsewhere.
       if (badge) badge.textContent = reviewState.detail ? `${reviewProgressPercent()}%` : '…';
@@ -3209,7 +3223,8 @@
     const { result, readiness } = reviewState;
     const findings = result.findings || [];
     if (badge) badge.textContent = readiness.blocking.length ? String(readiness.blocking.length) : '';
-    status.textContent = result.modelId ? `Model ${result.modelId}` : '';
+    // The model is named in the header line (reviewMeta), with its exact id in the tooltip.
+    status.textContent = '';
     // Findings and review gaps are counted apart ("5 items" hid that 2 of them were not findings),
     // in a blocked result too.
     const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -3253,7 +3268,11 @@
     const skillsUsed = (result.skillsApplied || []).length
       ? `<details class="review-skills-applied"><summary>Review skills used <span class="review-count">${[...new Set(result.skillsApplied.flatMap(item => item.skills))].length}</span></summary><ul>${result.skillsApplied.map(item =>
         `<li><code>${escapeHtml(item.component)}</code> ${item.skills.map(id => `<span class="review-skill-tag">${escapeHtml(id)}</span>`).join(' ')}${(item.omitted || []).length ? ` <small>left out (too long): ${escapeHtml(item.omitted.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>` : '';
-    body.innerHTML = `<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
+    // Reviews read commits only; say so when there is work they did not see.
+    const reviewedRepository = getRepository(reviewState.repositoryPath);
+    const uncommitted = reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
+      ? '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed; commit them and review again to include them.</p>' : '';
+    body.innerHTML = `${uncommitted}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${stopped}
       ${triageBar}
       ${renderFixPanel()}

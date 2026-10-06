@@ -455,9 +455,9 @@ async function main() {
       const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
       const finding = (id, severity, status, explanation) => ({ id, category: 'security', severity, confidence: 'high', status,
         explanation, impact: 'Untrusted input reaches a sensitive sink', suggestedAction: 'Validate the input first', evidence });
-      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1',
+      return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1', modelName: 'Scripted model',
         findings: [finding('high-verified', 'high', 'verified', 'Changed line passes input to eval'),
-          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input')],
+          finding('critical-hypothesis', 'critical', 'hypothesis', 'Possible command injection through the same input when `--env` values from the request reach the `docker run` call in the deploy script, which the workflow passes to the composite action with the mirror password')],
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
@@ -517,7 +517,9 @@ async function main() {
     assert.equal(await page.textContent('.review-readiness strong'), 'Blocked: 1 blocking item · 1 other finding · 1 review gap');
     // Labels name the tag and branch; the exact commits reviewed follow them.
     const [releaseSha, branchSha] = ['1.0.0', 'feature/dashboard'].map(ref => git(parent, 'rev-parse', ref).trim().slice(0, 8));
-    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    // The model that reviewed is named after the commits, with its exact id in the tooltip.
+    assert.equal(await page.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
+    assert.equal(await page.getAttribute('#reviewMeta', 'title'), 'Reviewed with Scripted model (scripted:1)');
     assert.equal(await page.getAttribute('.review-current-group [data-scope="branch"]', 'aria-disabled'), null);
     const blocking = await page.locator('.review-body .review-blocking').textContent();
     const attention = await page.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
@@ -529,6 +531,19 @@ async function main() {
     assert.match(attention, /critical/i, 'the critical hypothesis should lead the attention list');
     assert.match(attention, /hypothesis/);
     await snap(page, '10-review-results');
+    // However long a title is, the file:line and the status chip stay inside the row.
+    const wide = page.viewportSize();
+    await page.setViewportSize({ width: 900, height: wide.height });
+    const clipped = await page.evaluate(() => [...document.querySelectorAll('.review-finding:not(.open) .review-finding-head')].filter(head => {
+      // The row itself can grow past the panel, so measure against the scrolling panel.
+      const box = document.getElementById('reviewBody').getBoundingClientRect();
+      const title = head.querySelector('.review-finding-title').getBoundingClientRect();
+      const after = [...head.querySelectorAll('.review-finding-where, .review-badge')].map(item => item.getBoundingClientRect());
+      // Overlap (the title painted over them) or pushed out of the row both hide them.
+      return after.some(item => item.left < title.right - 1 || item.right > box.right + 1);
+    }).length);
+    await page.setViewportSize(wide);
+    assert.equal(clipped, 0, 'a finding row pushes its status out of view');
     // The Review tab drops the commit header and summary toolbar; Expand also hides the history.
     assert.equal(await page.isVisible('#dashboardCommitSummary'), false);
     const reviewHeight = () => page.evaluate(() => document.getElementById('reviewPanel').getBoundingClientRect().height);
@@ -741,7 +756,7 @@ async function main() {
     // Opening one restores its findings and triage; export works from the saved copy.
     await reopened.click('#reviewHistoryList .review-history-item:nth-child(6) [data-action="openStoredReview"]');
     await reopened.locator('.review-readiness.readiness-blocked').waitFor();
-    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha}`);
+    assert.equal(await reopened.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
     assert.equal(await reopened.textContent('#reviewHistoryList .review-history-item:nth-child(6) .review-history-commit'), `${releaseSha} → ${branchSha}`);
     assert.match(await reopened.textContent('.review-triage-summary'), /1 to fix.*1 dismissed.*0 not triaged/);
     assert.equal(await reopened.getAttribute('#reviewHistoryList .review-history-item:nth-child(6)', 'aria-current'), 'true');
@@ -822,6 +837,22 @@ async function main() {
     });
     assert.equal(alignment.summary, '0/2 aligned');
     assert.match(alignment.libA, /unrecorded/);
+    // Detached at the recorded commit is how git submodule update leaves a submodule: pinned, aligned,
+    // not a warning. Detached anywhere else still warns.
+    const pinned = await page.evaluate(() => {
+      const list = window.__initialRepositories.map(repository => repository.path === 'lib-a'
+        ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: true })
+        : repository.path === 'lib-b' ? Object.assign({}, repository, { currentBranch: '', atRecordedCommit: false }) : repository);
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } }));
+      const badges = path => [...document.querySelectorAll(`.sidebar-repository-item[data-path="${path}"] .repo-badge`)]
+        .map(badge => `${badge.textContent}:${badge.classList.contains('repo-badge-drift') ? 'warn' : 'muted'}`);
+      return { summary: document.getElementById('repositoryAlignment').textContent, libA: badges('lib-a'), libB: badges('lib-b'),
+        tooltip: document.querySelector('.sidebar-repository-item[data-path="lib-a"] .repo-badge').title };
+    });
+    assert.equal(pinned.summary, '1/2 aligned');
+    assert.deepEqual(pinned.libA, ['pinned:muted']);
+    assert.ok(pinned.libB.includes('detached:warn') && pinned.libB.includes('≠ recorded:warn'), pinned.libB.join(' '));
+    assert.match(pinned.tooltip, /git submodule update/);
 
     // If the active repository disappears from the list, the dashboard falls back to the parent.
     const fallback = await page.evaluate(() => {

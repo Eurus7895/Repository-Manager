@@ -314,8 +314,8 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <button type="button" data-action="loadReleaseRange" title="Load the changes since the latest release tag on the current branch; summarize or review them below"><span class="review-entry-word">Load </span>range</button>
             </div>
             <div class="review-entry review-current-group" role="group" aria-label="Review the current branch with Copilot">
-              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds: the committed changes since it left the default branch (main or master), as a pull request shows them"><span class="review-entry-word">Review </span>branch</button>
-              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every committed file at the tip of the current branch; uncommitted changes are not included"><span class="review-entry-word">Review </span>all</button>
+              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds since it left the default branch (main or master), as a pull request shows it. Committed changes only: uncommitted and untracked files are not reviewed; commit them first to include them"><span class="review-entry-word">Review </span>branch</button>
+              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file as committed at the tip of the current branch. Committed changes only: uncommitted and untracked files are not reviewed; commit them first to include them"><span class="review-entry-word">Review </span>all</button>
               <label class="review-quality-toggle" title="Every review (commit, branch, all) also checks maintainability: complexity, duplication, naming, error handling, dead code, tests. These notes never block a review."><input type="checkbox" id="reviewQualityToggle"> Clean code</label>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
@@ -338,7 +338,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
             <div class="change-summary" id="changeSummary" hidden>
-              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model" title="The Copilot model for summaries, reviews and fixes; the list loads when you open it"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><button type="button" class="btn" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Security and compliance review of the selected commit against its parent, or of the loaded comparison">Review commit</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model" title="The Copilot model for summaries, reviews and fixes; the list loads when you open it"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><button type="button" class="btn" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Security and compliance review of the selected commit against its parent, or of the loaded comparison. Committed changes only: uncommitted and untracked files are not reviewed">Review commit</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
             <div class="detail-tabs" id="detailTabs" role="tablist" aria-label="Detail view" hidden>
@@ -453,8 +453,8 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <button type="button" role="menuitem" data-action="contextCopyHash">Copy Commit Hash</button>
     <button type="button" role="menuitem" data-action="contextCopySubject">Copy Commit Subject</button>
     <div class="history-context-separator" role="separator"></div>
-    <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent">Review changes in this commit</button>
-    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as of this commit">Review branch at this commit</button>
+    <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent (committed content only)">Review changes in this commit</button>
+    <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as committed at this commit; uncommitted changes are not included">Review branch at this commit</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>

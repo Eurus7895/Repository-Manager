@@ -250,7 +250,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     `| Range | ${range} |`,
     `| Categories | ${request.categories.join(', ')} |`,
     `| Policy | ${result.policyStatus === 'configured' ? `configured (${short(request.policyHash)})` : 'not configured'} |`,
-    `| Model | ${cell(result.modelId || 'n/a')} |`,
+    `| Model | ${cell(result.modelName && result.modelId ? `${result.modelName} (${result.modelId})` : result.modelId || 'n/a')} |`,
     `| Generated | ${context.generatedAt.toISOString()} |`,
     '',
     `**Readiness: ${readinessLabel(readiness.status)}** (${readiness.blocking.length} blocking, ${readiness.attention.length} needing attention, ${readiness.gaps.length} review gaps)`,
