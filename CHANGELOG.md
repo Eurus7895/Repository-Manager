@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Reviews continue where they stopped.** Each finished component is saved, so running the same review again asks Copilot only for the rest, after a Cancel, a closed VS Code or a model error. Cancel keeps what finished: the stopped review is shown and saved with how far it got, and **Continue review** picks it up. Saved results are reused only with the same model and review instructions, and kept for 30 days.
+- **Review skills**: checklists Copilot gets with the files they match, for injection, authentication and sessions, secrets and cryptography, CI/CD, cloud and infrastructure as code, Python, JavaScript/TypeScript, C and C++ and clean code, based on public standards (CWE Top 25, OWASP ASVS, Microsoft SDL, SEI CERT, OpenSSF Scorecard, the AWS Security Pillar, Google's code review guide). They turn on by file type, can be turned off, and you can import your own from a Markdown file. The report lists the skills each component got.
+- **Clean code** checkbox: reviews also report maintainability (complexity, duplication, naming, error handling, dead code, tests) in a **Code quality** section that never blocks a review.
 - **To verify**: what the model could not see from the reviewed files (callers, CI settings, external services), as a short list to check by hand.
 
 ### Changed

@@ -78,8 +78,8 @@ function inRuleScope(evidence: ReviewEvidence, rule: ReviewPolicyRule, plan: Rev
 }
 
 export async function validateReviewFinding(raw: unknown, plan: ReviewPlan, unit: ReviewWorkUnit): Promise<ReviewFinding | undefined> {
-  if (!record(raw) || !['security', 'compliance'].includes(String(raw.category)) ||
-      !plan.request.categories.includes(raw.category as 'security' | 'compliance') ||
+  if (!record(raw) || !['security', 'compliance', 'quality'].includes(String(raw.category)) ||
+      !plan.request.categories.includes(raw.category as 'security' | 'compliance' | 'quality') ||
       !['critical', 'high', 'medium', 'low'].includes(String(raw.severity)) ||
       !['high', 'medium', 'low'].includes(String(raw.confidence)) ||
       !Array.isArray(raw.evidence) || !raw.evidence.length || raw.evidence.length > 8) {
@@ -102,9 +102,12 @@ export async function validateReviewFinding(raw: unknown, plan: ReviewPlan, unit
     evidence.push(verified);
   }
   const id = createHash('sha256').update(JSON.stringify([raw.category, raw.ruleId, raw.explanation, evidence])).digest('hex').slice(0, 16);
+  // Clean-code findings are maintainability notes: never high or critical.
+  const severity = raw.category === 'quality' && (raw.severity === 'high' || raw.severity === 'critical') ? 'medium' : raw.severity;
+  const skill = typeof raw.skill === 'string' && /^[a-z0-9][a-z0-9-]{1,48}$/.test(raw.skill) ? raw.skill : undefined;
   return { id, category: raw.category as ReviewFinding['category'],
-    ruleId: raw.category === 'compliance' ? raw.ruleId as string : undefined,
-    severity: raw.severity as ReviewFinding['severity'], confidence: raw.confidence as ReviewFinding['confidence'],
+    ruleId: raw.category === 'compliance' ? raw.ruleId as string : undefined, ...(skill ? { skill } : {}),
+    severity: severity as ReviewFinding['severity'], confidence: raw.confidence as ReviewFinding['confidence'],
     explanation: (raw.explanation as string).trim(), impact: (raw.impact as string).trim(),
     suggestedAction: (raw.suggestedAction as string).trim(), evidence, status: 'candidate' };
 }

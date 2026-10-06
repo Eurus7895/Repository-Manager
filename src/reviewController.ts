@@ -11,6 +11,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
+import { ReviewSkillStore } from './reviewSkillStore';
 import { ReviewHistoryStore, summarize } from './reviewHistory';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
@@ -44,14 +45,19 @@ export interface ReviewControllerHost {
   workingTreeChanged(): void;
   /** Completed reviews, kept for checking later. */
   history: ReviewHistoryStore;
+  /** Review skills: the bundled ones and the user's imports, each of which can be turned off. */
+  skills?: ReviewSkillStore;
+  /** Asks for a Markdown file to import as a skill; resolves its text, or undefined when cancelled. */
+  pickSkillFile?(): Promise<string | undefined>;
 }
 
 const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview',
-  'deleteStoredReview']);
+  'deleteStoredReview', 'listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill', 'setReviewQuality']);
 const START = 'Start review';
 const ALWAYS = 'Always allow for this repository';
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
+type ReviewCategory = ReviewRequest['categories'][number];
 const MAX_OPEN_REVIEWS = 10;
 const FIX_STEP_MESSAGES: Record<FixStep, string> = {
   checking: 'Checking the cited files in your working tree…',
@@ -103,7 +109,44 @@ export class ReviewController {
       case 'listReviewHistory': return this.listHistory(payload);
       case 'openStoredReview': return this.openStored(payload);
       case 'deleteStoredReview': return this.deleteStored(payload);
+      case 'listReviewSkills': return this.postSkills();
+      case 'setReviewSkillEnabled': return this.setSkillEnabled(payload);
+      case 'importReviewSkill': return this.importSkill();
+      case 'removeReviewSkill': return this.removeSkill(payload);
+      case 'setReviewQuality': return this.host.skills?.setIncludeQuality(payload.enabled === true);
     }
+  }
+
+  private async postSkills(message?: string): Promise<void> {
+    await this.host.post({ type: 'reviewSkillsLoaded', payload: { skills: this.host.skills?.list() || [], message,
+      ...(this.host.skills ? { includeQuality: this.host.skills.includeQuality() } : {}) } });
+  }
+
+  private async setSkillEnabled(payload: Record<string, unknown>): Promise<void> {
+    const id = optionalString(payload.id);
+    if (!id || !this.host.skills) { return; }
+    await this.host.skills.setEnabled(id, payload.enabled === true);
+    await this.postSkills();
+  }
+
+  private async importSkill(): Promise<void> {
+    if (!this.host.skills || !this.host.pickSkillFile) { return; }
+    const text = await this.host.pickSkillFile();
+    if (text === undefined) { return; }
+    const skill = await this.host.skills.import(text);
+    if (typeof skill === 'string') {
+      this.host.notify(`Could not import the skill: ${skill}`, true);
+      await this.postSkills();
+      return;
+    }
+    await this.postSkills(`Imported "${skill.name}". It applies to ${skill.appliesTo.join(', ')} from the next review.`);
+  }
+
+  private async removeSkill(payload: Record<string, unknown>): Promise<void> {
+    const id = optionalString(payload.id);
+    if (!id || !this.host.skills) { return; }
+    await this.host.skills.remove(id);
+    await this.postSkills();
   }
 
   /** Stop a running review, e.g. when the panel closes or the workspace folder changes. */
@@ -226,7 +269,9 @@ export class ReviewController {
     }
     const cancellation = this.host.createCancellation();
     this.running = cancellation;
-    const request: ReviewRequest = { repositoryPath, targetSha, baseSha, scope, categories: [...CATEGORIES] };
+    // Clean code is asked for per review (the dashboard's "Clean code" box), on top of security and compliance.
+    const categories: ReviewCategory[] = payload.includeQuality === true ? [...CATEGORIES, 'quality'] : [...CATEGORIES];
+    const request: ReviewRequest = { repositoryPath, targetSha, baseSha, scope, categories };
     const context: ReviewReportContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: new Date() };
     try {
       const modelId = optionalString(payload.modelId);

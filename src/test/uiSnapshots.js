@@ -33,6 +33,7 @@ const { GitOperations } = require(path.join(root, 'out/gitOperations'));
 const { messageHandlers } = require(path.join(root, 'out/handlers/webviewMessageHandler'));
 const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
+const { ReviewSkillStore } = require(path.join(root, 'out/reviewSkillStore'));
 const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
 const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
 const { getHtmlForWebview, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
@@ -124,6 +125,10 @@ function startServer(workspace, otherFolder) {
   const historyState = new Map();
   const reviewHistory = new ReviewHistoryStore({ get: key => historyState.get(key),
     update: async (key, value) => { historyState.set(key, JSON.parse(JSON.stringify(value))); } });
+  // The bundled skills, with imports and the off list kept like VS Code's global state.
+  const skillState = new Map();
+  const reviewSkills = new ReviewSkillStore(path.join(__dirname, '..', '..', 'resources', 'review-skills'),
+    { get: key => skillState.get(key), update: async (key, value) => { skillState.set(key, JSON.parse(JSON.stringify(value))); } });
   const resource = uri => ({ scheme: 'http', toString: () => uri });
   // Same list the panel builds: parent repository first, then linked repositories.
   const listRepositories = async (gitOps = ops) => {
@@ -171,7 +176,9 @@ function startServer(workspace, otherFolder) {
       } }),
       isDirtyInEditor: () => false,
       workingTreeChanged: () => { reviewProbe.workingTreeChanged++; },
-      history: reviewHistory
+      history: reviewHistory,
+      skills: reviewSkills,
+      pickSkillFile: async () => reviewProbe.skillFile
     });
     await page.exposeFunction('__postToHost', async message => {
       hostBusy++;
@@ -330,6 +337,12 @@ async function main() {
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
     await snap(page, '01-dashboard');
+    // Before any review, the Review tab is there so its skills can be set up first.
+    await page.locator('#detailTabReview').waitFor({ state: 'visible' });
+    await page.click('#detailTabReview');
+    assert.match(await page.textContent('#reviewBody'), /No review yet/);
+    assert.equal(await page.isVisible('#reviewSkills > summary'), true, 'the skills are hidden before the first review');
+    await page.click('#detailTabChanges');
     await snap(side, '01a-sidebar');
     await libB.hover();
     await snap(side, '01b-reset-to-recorded');
@@ -747,6 +760,48 @@ async function main() {
     await reopened.waitForFunction(() => document.querySelectorAll('#reviewHistoryList .review-history-item').length === 5);
     await reopened.close();
 
+    // Review skills: the bundled ones are listed, can be turned off, and an imported one can be removed.
+    await page.click('#detailTabReview');
+    await page.click('#reviewSkills > summary');
+    await page.waitForFunction(() => document.querySelectorAll('#reviewSkillsList .review-skill').length === 9);
+    assert.equal(await page.textContent('#reviewSkillsCount'), '9/9');
+    await page.click('#reviewSkillsList [data-action="toggleReviewSkill"][data-skill-id="cloud-iac"]');
+    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
+    assert.equal(await page.getAttribute('#reviewSkillsList [data-skill-id="cloud-iac"]', 'aria-pressed'), 'false');
+    reviewProbe.skillFile = '---\nid: team-go\nname: Team Go\ncategory: security\nappliesTo: ["**/*.go"]\n---\n- Check every exec.Command.\n';
+    await page.click('[data-action="importReviewSkill"]');
+    await page.waitForFunction(() => /Imported "Team Go"/.test(document.getElementById('reviewSkillsStatus').textContent));
+    await snap(page, '13b-review-skills');
+    await page.click('#reviewSkillsList [data-action="removeReviewSkill"][data-skill-id="team-go"]');
+    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
+    await page.click('#reviewSkills > summary');
+
+    // Clean code: the checkbox adds the quality category; its notes have their own section and never block.
+    await page.check('#reviewQualityToggle');
+    reviewProbe.runner = async request => {
+      runs.push(request);
+      const sha = request.targetSha;
+      const evidence = [{ revision: sha, path: 'src/app.txt', side: 'target', startLine: 1, endLine: 1 }];
+      return { request, policyResults: [], policyStatus: 'not_configured', limitations: [],
+        findings: [{ id: 'quality-note', category: 'quality', skill: 'clean-code', severity: 'medium', confidence: 'high', status: 'verified',
+          explanation: 'The same parsing is repeated in two places', impact: 'Fixes drift apart', suggestedAction: 'Extract one function', evidence }],
+        skillsApplied: [{ component: 'src', skills: ['secrets-crypto', 'clean-code'] }],
+        coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
+    };
+    await page.click('#detailTabChanges');
+    await page.click('.review-current-group [data-scope="branch"]');
+    await page.locator('.review-quality .review-finding[data-finding-id="quality-note"]').waitFor();
+    assert.deepEqual(runs.at(-1).categories, ['security', 'compliance', 'quality']);
+    assert.equal(await page.locator('.review-blocking .review-finding, .review-attention .review-finding').count(), 0, 'a quality note was listed as a finding');
+    assert.match(await page.textContent('.review-readiness strong'), /1 code quality note/);
+    assert.match(await page.textContent('.review-quality .review-finding-meta'), /clean code.*skill clean-code/s);
+    assert.match(await page.textContent('.review-skills-applied'), /src.*secrets-crypto.*clean-code/s);
+    await page.click('.review-quality [data-action="toggleFinding"]');
+    await snap(page, '10e-review-clean-code');
+    // The choice is remembered for the next review.
+    assert.equal(await page.isChecked('#reviewQualityToggle'), true);
+    await page.uncheck('#reviewQualityToggle');
+
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
@@ -989,7 +1044,7 @@ async function main() {
           .map(selector => document.querySelector(selector).innerText.replace(/\s+/g, ' ').trim()).join(' | ')
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), '◈ range | branch all');
+      assert.equal(layout.releaseText.toLowerCase(), '◈ range | branch all clean code');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();

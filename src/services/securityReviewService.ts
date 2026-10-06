@@ -6,10 +6,12 @@ import { appliesToPath, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from '
 import { consolidateLimitations, TRUNCATION_NOTE } from './reviewLimitations';
 import { PROMPT_VERSION, ReviewChatModel, SecurityReviewProvider } from './securityReviewProvider';
 import { ReviewUnitCacheLike, ReviewUnitOutcome, reviewUnitKey } from '../reviewUnitCache';
+import { AppliedSkills, ReviewSkill, selectReviewSkills } from './reviewSkills';
 
 export class SecurityReviewService {
   private survey: ReviewSurveyService;
-  constructor(git: GitCommandService, private provider = new SecurityReviewProvider(), private cache?: ReviewUnitCacheLike) {
+  constructor(git: GitCommandService, private provider = new SecurityReviewProvider(), private cache?: ReviewUnitCacheLike,
+    private skills: () => { skills: ReviewSkill[]; disabled: ReadonlySet<string> } = () => ({ skills: [], disabled: new Set() })) {
     this.survey = new ReviewSurveyService(git);
   }
 
@@ -30,7 +32,8 @@ export class SecurityReviewService {
     const modelLimitations: string[] = [];
     if (plan.request.categories.includes('compliance') && policy.status === 'not_configured') {
       limitations.push('Compliance policy is not configured at the target revision.');
-      if (!plan.request.categories.includes('security')) {
+      // Nothing else to review: compliance was the only category asked for.
+      if (!plan.request.categories.some(category => category !== 'compliance')) {
         coverage.complete = false;
         return { request: plan.request, findings: [], policyResults: [], coverage,
           policyStatus: policy.status, limitations };
@@ -41,7 +44,12 @@ export class SecurityReviewService {
     progress(`Planned ${plan.units.length} component(s), ${state.filesTotal} file(s)`, { ...state,
       components: plan.units.map(unit => ({ component: unit.component, files: unit.paths.length })) });
     // Components already reviewed at these commits with this model and these prompts are reused.
-    const keyFor = (unit: ReviewWorkUnit) => reviewUnitKey({ modelId, promptVersion: PROMPT_VERSION, instructions: '',
+    // Skills are chosen per component by its paths; what was sent is part of the cache key.
+    const available = this.skills();
+    const skillsFor = (unit: ReviewWorkUnit): AppliedSkills =>
+      selectReviewSkills(available.skills, unit.paths, plan.request.categories, available.disabled);
+    const skillsApplied: NonNullable<ReviewResult['skillsApplied']> = [];
+    const keyFor = (unit: ReviewWorkUnit, applied: AppliedSkills) => reviewUnitKey({ modelId, promptVersion: PROMPT_VERSION, instructions: applied.hash,
       targetSha: plan.request.targetSha, baseSha: plan.request.baseSha, scope: plan.request.scope,
       categories: plan.request.categories, component: unit.component, paths: unit.paths, rules: unit.rules });
     let unitsDone = 0;
@@ -49,7 +57,8 @@ export class SecurityReviewService {
     for (const [index, unit] of plan.units.entries()) {
       if (token.isCancellationRequested) { stopped = true; break; }
       Object.assign(state, { phase: 'analyzing', unit: index + 1, component: unit.component });
-      const key = keyFor(unit);
+      const applied = skillsFor(unit);
+      const key = keyFor(unit, applied);
       let outcome = this.cache?.get(key);
       if (outcome) {
         report(`Reusing the saved result for component ${index + 1}/${plan.units.length}: ${unit.component}`);
@@ -57,7 +66,7 @@ export class SecurityReviewService {
         report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
         const failed: { path: string; reason: string }[] = [];
         try {
-          outcome = await this.reviewUnit(plan, unit, model, token, report, state, failed);
+          outcome = await this.reviewUnit(plan, unit, model, token, report, state, failed, applied);
         } catch (error) {
           if (token.isCancellationRequested) { stopped = true; break; }
           for (const path of unit.paths) {
@@ -67,6 +76,10 @@ export class SecurityReviewService {
         coverage.failed.push(...failed);
         // Only a clean result is kept: anything that failed is asked again next time.
         if (outcome && !failed.length) { await this.cache?.set(key, outcome).catch(() => undefined); }
+      }
+      if (outcome && (applied.skills.length || applied.omitted.length)) {
+        skillsApplied.push({ component: unit.component, skills: applied.skills.map(skill => skill.id),
+          ...(applied.omitted.length ? { omitted: applied.omitted } : {}) });
       }
       if (outcome) {
         state.candidates += outcome.candidates;
@@ -130,17 +143,28 @@ export class SecurityReviewService {
     return { request: plan.request, findings: [...findings.values()], policyResults, coverage,
       policyStatus: policy.status, modelId, limitations: [...new Set(limitations)].slice(0, 40),
       toVerify: consolidated.toVerify.slice(0, 20),
+      ...(skillsApplied.length ? { skillsApplied } : {}),
       ...(stopped ? { partial: { unitsDone, unitsTotal: plan.units.length } } : {}) };
   }
 
   /** Analyzes and verifies one component. Problems that leave it incomplete go into `failed`. */
   private async reviewUnit(plan: ReviewPlan, unit: ReviewWorkUnit, model: ReviewChatModel, token: vscode.CancellationToken,
-    report: (message: string) => void, state: ReviewProgressDetail, failed: { path: string; reason: string }[]): Promise<ReviewUnitOutcome> {
-    const raw = await this.provider.analyze(plan, unit, model, token, report);
+    report: (message: string) => void, state: ReviewProgressDetail, failed: { path: string; reason: string }[],
+    applied: AppliedSkills): Promise<ReviewUnitOutcome> {
+    const raw = await this.provider.analyze(plan, unit, model, token, report, applied.skills);
     const candidates: ReviewFinding[] = [];
     for (const item of raw.findings.slice(0, 20)) {
       const finding = await validateReviewFinding(item, plan, unit);
       if (finding) {
+        // Only a skill this component was given; the model may name one it was not. A finding from a
+        // clean code skill is a quality note whatever category the model gave it, so it cannot block.
+        const source = finding.skill ? applied.skills.find(skill => skill.id === finding.skill) : undefined;
+        if (finding.skill && !source) { delete finding.skill; }
+        if (source?.category === 'quality' && finding.category !== 'quality') {
+          finding.category = 'quality';
+          delete finding.ruleId;
+          if (finding.severity === 'critical' || finding.severity === 'high') { finding.severity = 'medium'; }
+        }
         if (finding.category === 'compliance') {
           finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
         }

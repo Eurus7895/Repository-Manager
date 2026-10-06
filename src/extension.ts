@@ -45,6 +45,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   // Register commands
+  RepositoryManagerPanel.globalState = context.globalState;
   registerBasicCommands(context, commandContext);
   registerCreateBranchCommand(context, gitOps, repositoryTreeProvider);
   registerReviewCommands(context, workspaceRoot);
