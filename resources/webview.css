@@ -2811,3 +2811,12 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 /* The status and triage chips stay visible however long the title is. */
 .review-finding-head > .review-badge, .review-finding-head > .review-undo { flex: none; }
 .review-uncommitted-note { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--tone-warn); color: var(--text-primary); background: rgba(229, 165, 71, .08); font-size: 12px; }
+.review-failed .btn { margin-top: 6px; }
+.review-failed-hint { color: var(--text-secondary); font-size: 11px; }
+.review-log { margin: 12px 0; }
+.review-log > summary { cursor: pointer; font-weight: 600; }
+.review-log ol { max-height: 240px; overflow: auto; margin: 6px 0; padding-left: 0; list-style: none; font-family: var(--vscode-editor-font-family), monospace; font-size: 11px; scrollbar-width: thin; }
+.review-log li { color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-log li time { color: var(--text-muted); }
+.review-log li.review-log-failed { color: var(--tone-warn); }
+.triage-chip-again { color: var(--tone-warn); }

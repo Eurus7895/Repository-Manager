@@ -124,6 +124,11 @@ export interface ReviewFinding {
   /** `quality`: maintainability (clean code); never blocks readiness. */
   category: 'security' | 'compliance' | 'quality';
   ruleId?: string;
+  /**
+   * Same issue in another review: a hash of the category, rule, file and the text of the first cited
+   * lines, not of the model's wording. A fixed line changes it; moved lines do not.
+   */
+  fingerprint?: string;
   /** The review skill the finding came from, when the model named one. */
   skill?: string;
   severity: 'critical' | 'high' | 'medium' | 'low';
@@ -159,6 +164,8 @@ export interface FindingTriage {
   /** `fixed`: an applied auto-fix addressed it, or the reviewer marked it fixed by hand. */
   decision: 'fix' | 'dismiss' | 'fixed';
   reason?: DismissReason;
+  /** Taken over from an earlier review of the same issue: that review's date and decision. */
+  carried?: { at: string; decision: 'fix' | 'dismiss' | 'fixed' };
 }
 /** Triage by finding id. */
 export type ReviewTriage = Record<string, FindingTriage>;
@@ -191,6 +198,8 @@ export interface ReviewResult {
   modelId?: string;
   /** The model's display name, as Copilot lists it (e.g. "GPT-4o"). */
   modelName?: string;
+  /** What the review did, in order: milliseconds since it started, and the step. */
+  log?: { at: number; message: string }[];
   /** What the tool itself could not establish (policy, coverage, the advisory caveat). */
   limitations: string[];
   /** What the model could not see and someone should check, e.g. callers or CI settings outside the scope. */

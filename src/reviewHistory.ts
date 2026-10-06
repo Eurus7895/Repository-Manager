@@ -4,6 +4,7 @@
  * repository root; the newest MAX_PER_REPOSITORY reviews of each repository are kept.
  */
 
+import { trimReviewLog } from './services/reviewLog';
 import { ReviewResult, ReviewTriage } from './types';
 import { MementoLike } from './reviewConsent';
 import { assessReadiness, normalizeTriage } from './services/reviewReport';
@@ -65,14 +66,22 @@ function isEntry(value: unknown): value is ReviewHistoryEntry {
     entry.result.request && entry.result.coverage);
 }
 
-/** Keeps a stored review small: long skipped/failed lists are cut, with a count of what was dropped. */
+/** Log lines kept in a stored review; failures are always kept. */
+export const MAX_STORED_LOG = 150;
+
+/**
+ * Keeps a stored review small: long skipped/failed lists are cut (failures first, since they explain
+ * what to run again), with a count of what was dropped, and a long log keeps its failures and its end.
+ */
 export function compactResult(result: ReviewResult): ReviewResult {
+  const log = result.log || [];
+  const compact = log.length > MAX_STORED_LOG ? { ...result, log: trimReviewLog(log, MAX_STORED_LOG) } : result;
   const { skipped, failed } = result.coverage;
-  if (skipped.length + failed.length <= MAX_STORED_GAPS) { return result; }
-  const keptSkipped = skipped.slice(0, MAX_STORED_GAPS);
-  const keptFailed = failed.slice(0, Math.max(0, MAX_STORED_GAPS - keptSkipped.length));
+  if (skipped.length + failed.length <= MAX_STORED_GAPS) { return compact; }
+  const keptFailed = failed.slice(0, MAX_STORED_GAPS);
+  const keptSkipped = skipped.slice(0, Math.max(0, MAX_STORED_GAPS - keptFailed.length));
   const dropped = skipped.length + failed.length - keptSkipped.length - keptFailed.length;
-  return { ...result,
+  return { ...compact,
     coverage: { ...result.coverage, skipped: keptSkipped, failed: keptFailed },
     limitations: [...result.limitations, `The saved review lists ${MAX_STORED_GAPS} skipped or failed files; ${dropped} more were left out to keep it small.`] };
 }

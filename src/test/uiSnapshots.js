@@ -158,7 +158,7 @@ function startServer(workspace, otherFolder) {
       alwaysConfirm: () => false,
       isConsentRemembered: root => reviewProbe.remembered.has(root),
       rememberConsent: async root => { reviewProbe.remembered.add(root); },
-      createRunner: () => ({ review: (request, token, progress) => reviewProbe.runner(request, token, progress) }),
+      createRunner: () => ({ review: (request, token, progress, modelId) => reviewProbe.runner(request, token, progress, modelId) }),
       createCancellation: () => {
         const token = { isCancellationRequested: false };
         return { token, cancel() { token.isCancellationRequested = true; }, dispose() {} };
@@ -453,7 +453,7 @@ async function main() {
       progress('Reading related code (1/6)…', step);
       await runnerGate;
       const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
-      const finding = (id, severity, status, explanation) => ({ id, category: 'security', severity, confidence: 'high', status,
+      const finding = (id, severity, status, explanation) => ({ id, fingerprint: `fp-${id}`, category: 'security', severity, confidence: 'high', status,
         explanation, impact: 'Untrusted input reaches a sensitive sink', suggestedAction: 'Validate the input first', evidence });
       return { request, policyResults: [], policyStatus: 'not_configured', modelId: 'scripted:1', modelName: 'Scripted model',
         findings: [finding('high-verified', 'high', 'verified', 'Changed line passes input to eval'),
@@ -807,7 +807,10 @@ async function main() {
         findings: [{ id: 'quality-note', category: 'quality', skill: 'clean-code', severity: 'medium', confidence: 'high', status: 'verified',
           explanation: 'The same parsing is repeated in two places', impact: 'Fixes drift apart', suggestedAction: 'Extract one function', evidence }],
         skillsApplied: [{ component: 'src', skills: ['secrets-crypto', 'clean-code'] }],
-        coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
+        modelId: 'scripted-large:1', modelName: 'Scripted large',
+        log: [{ at: 0, message: 'Planning the review…' }, { at: 65000, message: 'Component api failed (2 files): Selected model cannot fit review context' }],
+        coverage: { surveyed: 3, analyzed: 1, skipped: [], complete: false,
+          failed: [{ path: 'api/a.js', reason: 'Selected model cannot fit review context' }, { path: 'api/b.js', reason: 'Selected model cannot fit review context' }] } };
     };
     await page.click('#detailTabChanges');
     await page.click('.review-current-group [data-scope="branch"]');
@@ -827,6 +830,47 @@ async function main() {
     }, dirty);
     assert.equal(await noteAfter(false), false, 'the note stayed after the changes were committed');
     assert.equal(await noteAfter(true), true, 'the note did not appear for new uncommitted changes');
+
+    // Failed checks: once per reason, with what to do, the log, and Retry failed for only those.
+    const failedText = await page.textContent('.review-failed');
+    assert.match(failedText, /Selected model cannot fit review context — 2 entries: api\/a\.js, api\/b\.js/);
+    assert.match(failedText, /larger context/);
+    await page.click('.review-log > summary');
+    assert.match(await page.textContent('.review-log'), /1m 05s Component api failed/);
+    assert.equal(await page.locator('.review-log li.review-log-failed').count(), 1);
+    await snap(page, '10f-review-failed-checks');
+    // Retry runs the same review again (same commit, same categories); this time the model reports
+    // the finding dismissed in the first review, on the same code: it stays dismissed.
+    const before = runs.length;
+    const retried = runs.at(-1);
+    let retryModel;
+    reviewProbe.runner = async (request, token, progress, modelId) => {
+      runs.push(request);
+      retryModel = modelId;
+      const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 3, endLine: 3 }];
+      return { request, policyResults: [], policyStatus: 'not_configured', limitations: [], modelId: 'scripted:1',
+        findings: [{ id: 'reworded', fingerprint: 'fp-critical-hypothesis', category: 'security', severity: 'critical', confidence: 'high', status: 'hypothesis',
+          explanation: 'Command injection through the request input', impact: 'Runs commands', suggestedAction: 'Pass arguments as an array', evidence }],
+        coverage: { surveyed: 3, analyzed: 3, skipped: [], failed: [], complete: true } };
+    };
+    // Retry repeats the reviewed repository and model, even after the dashboard moved to another one.
+    await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    await page.click('#detailTabReview');
+    await page.click('.review-failed [data-action="continueReview"]');
+    await page.locator('.review-finding[data-finding-id="reworded"]').waitFor();
+    assert.equal(runs.length, before + 1);
+    assert.equal(runs.at(-1).repositoryPath, retried.repositoryPath, 'Retry reviewed the repository now on screen');
+    assert.equal(retryModel, 'scripted-large', 'Retry switched to the model now selected');
+    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
+    await page.click('#detailTabReview');
+    assert.deepEqual([runs.at(-1).scope, runs.at(-1).targetSha, runs.at(-1).categories], [retried.scope, retried.targetSha, retried.categories]);
+    assert.equal(await page.locator('.review-failed').count(), 0);
+    const chip = page.locator('.review-finding[data-finding-id="reworded"] .review-triage-chip');
+    assert.match(await chip.textContent(), /^Dismissed · Accepted risk · earlier review$/);
+    assert.match(await chip.getAttribute('title'), /Taken over from the review of/);
+    assert.match(await page.textContent('.review-triage-summary'), /1 dismissed.*0 not triaged/);
     // The choice is remembered for the next review.
     assert.equal(await page.isChecked('#reviewQualityToggle'), true);
     await page.uncheck('#reviewQualityToggle');

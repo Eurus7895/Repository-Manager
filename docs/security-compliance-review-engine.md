@@ -14,6 +14,20 @@ Model notes become `toVerify`: what someone should check by hand, such as caller
 
 Compliance rules with `verification: "manual"` or `"static"` are marked `insufficient_evidence` until their corresponding evidence or scanner exists. Missing policy is `not_configured`. A rule the model judges not applicable in every reviewed batch is `not_applicable`. A rule cannot pass when applicable files or checks fail or exceed the review budget. Security review does not require a policy. Dependency vulnerability databases and build/test execution are outside the engine.
 
+### Failed checks, the log, and running a review again
+
+A failed check is part of a review that did not complete. A component the model could not review (the files do not fit its context, the request failed) lists each of its files with the reason. A component whose answer did not pass a check lists the component once: a finding citing lines that are not in the reviewed files, more than 20 findings, a finding the second check gave no verdict for, a missing policy result. The result's `log` keeps progress steps with their time, plus one line per failed reason and component. It holds at most 400: every failure, then the newest steps (`trimReviewLog`). Several bad findings from one component count as one failed check. The Review tab groups failed checks by reason with what to do, and **Retry failed** runs the same review again. Components that passed come from `ReviewUnitCache`, so only the failed ones are asked again. A stored review keeps failures before skipped files, and the failures and the end of a long log (`MAX_STORED_LOG`).
+
+### Decisions carried from earlier reviews
+
+Each finding has a `fingerprint`: a hash of its category, rule, file and the text of its first cited lines. It is not a hash of the model's wording, so a re-run that phrases the finding differently gets the same fingerprint, while an edit to the cited code gives a new one. When a review completes, `carryTriage` (`reviewTriageCarry.ts`) looks up the repository's saved reviews, newest first:
+
+- a finding dismissed earlier is dismissed again, with the same reason;
+- one marked **Needs fix** stays so;
+- one marked **Fixed** and reported again on unchanged code becomes **Needs fix**, labelled "Reported again after Fixed".
+
+A fingerprint alone is not enough, because two issues can cite the same line (a secret and an injection). A decision carries only when `sameIssue` also holds: no differing skills, and the explanations share at least a quarter of their key words. It also requires that exactly one earlier finding matches. The newest saved review that contains the finding decides, so a decision undone there is not revived from an older review. Carried decisions record the earlier review's date in `carried`, and the dashboard labels them "earlier review". Components reused from the cache get fingerprints when they are reused, while reviews saved before fingerprints existed carry nothing. **Retry failed** repeats the reviewed repository, workspace folder and model, not the ones the dashboard shows now.
+
 ## Review skills and clean code
 
 A review skill is a short checklist sent to the model with the files it applies to. The extension ships nine in `resources/review-skills/`, written for this extension from public standards and naming them in `references`: injection and dangerous sinks (CWE Top 25, OWASP ASVS 5.0), authentication and sessions (ASVS), secrets and cryptography (Microsoft SDL, ASVS), CI/CD and supply chain (OpenSSF Scorecard, SLSA), cloud and infrastructure as code (AWS Well-Architected Security Pillar), Python and JavaScript/TypeScript (Amazon Q detector library categories, CWE), C and C++ (SEI CERT, C++ Core Guidelines, Microsoft SDL banned functions, CWE memory-safety entries), and clean code (Google's code review guide). A skill file is Markdown with a header between `---` lines: `id`, `name`, `category` (`security` or `quality`), `appliesTo` (a JSON array of globs) and optional `references`, then the guidance (`parseReviewSkill` in `services/reviewSkills.ts`).
