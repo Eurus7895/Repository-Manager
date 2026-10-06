@@ -11,6 +11,7 @@ import { parseReviewSkill, ReviewSkill } from './services/reviewSkills';
 
 const IMPORTED_KEY = 'repositoryManager.reviewSkills.imported';
 const DISABLED_KEY = 'repositoryManager.reviewSkills.disabled';
+const QUALITY_KEY = 'repositoryManager.review.includeQuality';
 const MAX_IMPORTED = 30;
 
 export interface ReviewSkillSummary {
@@ -81,6 +82,15 @@ export class ReviewSkillStore {
     if (others.length >= MAX_IMPORTED) { return `At most ${MAX_IMPORTED} imported skills; remove one first.`; }
     await this.memento?.update(IMPORTED_KEY, [...others, skill]);
     return skill;
+  }
+
+  /** Whether reviews also check clean code: the dashboard checkbox, kept across panels and sessions. */
+  includeQuality(): boolean {
+    return this.memento?.get<unknown>(QUALITY_KEY) === true;
+  }
+
+  async setIncludeQuality(enabled: boolean): Promise<void> {
+    await this.memento?.update(QUALITY_KEY, enabled);
   }
 
   async remove(id: string): Promise<void> {

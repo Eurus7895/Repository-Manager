@@ -32,7 +32,8 @@ export class SecurityReviewService {
     const modelLimitations: string[] = [];
     if (plan.request.categories.includes('compliance') && policy.status === 'not_configured') {
       limitations.push('Compliance policy is not configured at the target revision.');
-      if (!plan.request.categories.includes('security')) {
+      // Nothing else to review: compliance was the only category asked for.
+      if (!plan.request.categories.some(category => category !== 'compliance')) {
         coverage.complete = false;
         return { request: plan.request, findings: [], policyResults: [], coverage,
           policyStatus: policy.status, limitations };
@@ -155,8 +156,15 @@ export class SecurityReviewService {
     for (const item of raw.findings.slice(0, 20)) {
       const finding = await validateReviewFinding(item, plan, unit);
       if (finding) {
-        // Only a skill this component was given; the model may name one it was not.
-        if (finding.skill && !applied.skills.some(skill => skill.id === finding.skill)) { delete finding.skill; }
+        // Only a skill this component was given; the model may name one it was not. A finding from a
+        // clean code skill is a quality note whatever category the model gave it, so it cannot block.
+        const source = finding.skill ? applied.skills.find(skill => skill.id === finding.skill) : undefined;
+        if (finding.skill && !source) { delete finding.skill; }
+        if (source?.category === 'quality' && finding.category !== 'quality') {
+          finding.category = 'quality';
+          delete finding.ruleId;
+          if (finding.severity === 'critical' || finding.severity === 'high') { finding.severity = 'medium'; }
+        }
         if (finding.category === 'compliance') {
           finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
         }

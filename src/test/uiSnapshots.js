@@ -337,6 +337,12 @@ async function main() {
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
     await snap(page, '01-dashboard');
+    // Before any review, the Review tab is there so its skills can be set up first.
+    await page.locator('#detailTabReview').waitFor({ state: 'visible' });
+    await page.click('#detailTabReview');
+    assert.match(await page.textContent('#reviewBody'), /No review yet/);
+    assert.equal(await page.isVisible('#reviewSkills > summary'), true, 'the skills are hidden before the first review');
+    await page.click('#detailTabChanges');
     await snap(side, '01a-sidebar');
     await libB.hover();
     await snap(side, '01b-reset-to-recorded');

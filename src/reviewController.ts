@@ -53,7 +53,7 @@ export interface ReviewControllerHost {
 
 const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview',
-  'deleteStoredReview', 'listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill']);
+  'deleteStoredReview', 'listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill', 'setReviewQuality']);
 const START = 'Start review';
 const ALWAYS = 'Always allow for this repository';
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
@@ -113,11 +113,13 @@ export class ReviewController {
       case 'setReviewSkillEnabled': return this.setSkillEnabled(payload);
       case 'importReviewSkill': return this.importSkill();
       case 'removeReviewSkill': return this.removeSkill(payload);
+      case 'setReviewQuality': return this.host.skills?.setIncludeQuality(payload.enabled === true);
     }
   }
 
   private async postSkills(message?: string): Promise<void> {
-    await this.host.post({ type: 'reviewSkillsLoaded', payload: { skills: this.host.skills?.list() || [], message } });
+    await this.host.post({ type: 'reviewSkillsLoaded', payload: { skills: this.host.skills?.list() || [], message,
+      ...(this.host.skills ? { includeQuality: this.host.skills.includeQuality() } : {}) } });
   }
 
   private async setSkillEnabled(payload: Record<string, unknown>): Promise<void> {

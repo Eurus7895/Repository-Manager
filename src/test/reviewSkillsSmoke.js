@@ -12,7 +12,7 @@ Module._load = function (name, parent, isMain) {
 };
 const { parseReviewSkill, selectReviewSkills, MAX_SKILL_CHARS } = require('../../out/services/reviewSkills.js');
 const { ReviewSkillStore } = require('../../out/reviewSkillStore.js');
-const { SecurityReviewProvider } = require('../../out/services/securityReviewProvider.js');
+const { SecurityReviewProvider, INITIAL_UNIT_CHARS } = require('../../out/services/securityReviewProvider.js');
 const { SecurityReviewService } = require('../../out/services/securityReviewService.js');
 const { GitCommandService } = require('../../out/services/gitCommandService.js');
 const { ReviewUnitCache } = require('../../out/reviewUnitCache.js');
@@ -84,6 +84,9 @@ async function main() {
   const changed = parseReviewSkill(skillText('big-1', { guidance: 'z'.repeat(3000) }), 'bundled');
   assert.notEqual(selectReviewSkills([changed], ['a.py'], ['security'], new Set()).hash,
     selectReviewSkills([big(1)], ['a.py'], ['security'], new Set()).hash);
+  const renamed = { ...big(1), name: 'Another name' };
+  assert.notEqual(selectReviewSkills([renamed], ['a.py'], ['security'], new Set()).hash,
+    selectReviewSkills([big(1)], ['a.py'], ['security'], new Set()).hash, 'the name the model sees is not in the hash');
 
   // 4. The store: import (replacing a bundled id), turn off, remove; bounded.
   const state = memento();
@@ -104,6 +107,10 @@ async function main() {
   for (let i = 0; i < 30; i++) assert.equal(typeof await user.import(skillText(`team-${i}`)), 'object');
   assert.match(await user.import(skillText('team-30')), /At most 30/);
   assert.equal(typeof await user.import(skillText('team-3', { guidance: '- Updated.' })), 'object', 'replacing an import counted against the limit');
+  // The Clean code choice is kept by the host, so a new dashboard panel keeps it.
+  assert.equal(user.includeQuality(), false);
+  await user.setIncludeQuality(true);
+  assert.equal(new ReviewSkillStore(bundledDir, state).includeQuality(), true);
   // A missing folder is no skills, not a crash.
   assert.deepEqual(new ReviewSkillStore(path.join(bundledDir, 'missing')).list(), []);
 
@@ -117,10 +124,14 @@ async function main() {
     fs.mkdirSync(path.join(repo, 'web'));
     fs.writeFileSync(path.join(repo, 'api', 'run.py'), 'def run(a, b, c, d, e, f, g):\n    return eval(a)\n');
     fs.writeFileSync(path.join(repo, 'web', 'app.js'), 'document.body.innerHTML = location.hash;\n');
+    // A component as large as the first request allows: skills must not push it past the model's limit.
+    fs.mkdirSync(path.join(repo, 'big'));
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(repo, 'big', `m${i}.py`), `${'x = 1  # filler line of source code here...........\n'.repeat(300)}`);
     git('add', '-A');
     git('-c', 'user.name=T', '-c', 'user.email=t@example.org', 'commit', '-qm', 'two components');
     const target = git('rev-parse', 'HEAD');
     const sent = {};
+    const sizes = {};
     const model = { id: 'mock', version: '1', name: 'Mock', maxInputTokens: 100000,
       countTokens: async value => Math.ceil(value.length / 4),
       async sendRequest(messages) {
@@ -130,12 +141,16 @@ async function main() {
         }
         const packet = JSON.parse(messages[1]);
         sent[packet.component] = (packet.skills || []).map(skill => skill.id).sort();
+        sizes[packet.component] = packet.files.reduce((sum, item) => sum + item.content.length, 0) +
+          (packet.skills || []).reduce((sum, skill) => sum + skill.id.length + skill.name.length + skill.guidance.length, 0);
         const file = packet.files[0].path;
-        const findings = file.endsWith('.py') ? [
+        const findings = file.startsWith('api/') ? [
           { category: 'security', severity: 'critical', confidence: 'high', skill: 'python-security', explanation: 'eval of input',
             impact: 'Runs code', suggestedAction: 'Parse instead', evidence: [{ revision: target, path: file, side: 'target', startLine: 2, endLine: 2 }] },
           { category: 'quality', severity: 'critical', confidence: 'high', skill: 'clean-code', explanation: 'Seven positional parameters',
             impact: 'Hard to call correctly', suggestedAction: 'Group them', evidence: [{ revision: target, path: file, side: 'target', startLine: 1, endLine: 1 }] },
+          { category: 'security', severity: 'high', confidence: 'high', skill: 'clean-code', explanation: 'Long function mislabelled as security',
+            impact: 'Hard to read', suggestedAction: 'Split it', evidence: [{ revision: target, path: file, side: 'target', startLine: 1, endLine: 2 }] },
           { category: 'quality', severity: 'low', confidence: 'high', skill: 'not-a-skill', explanation: 'Unused parameters',
             impact: 'Noise', suggestedAction: 'Remove them', evidence: [{ revision: target, path: file, side: 'target', startLine: 1, endLine: 1 }] }
         ] : [];
@@ -153,22 +168,34 @@ async function main() {
     assert.ok(sent.web.includes('javascript-security') && !sent.web.includes('python-security'));
     assert.ok(!security.findings.some(finding => finding.category === 'quality'), 'a quality finding was kept without the clean code review');
     assert.equal(security.findings[0].skill, 'python-security');
-    assert.deepEqual(security.skillsApplied.map(item => item.component).sort(), ['api', 'web']);
+    assert.deepEqual(security.skillsApplied.map(item => item.component).sort(), ['api', 'big', 'web']);
+    assert.ok(sent.big.includes('python-security'));
+    assert.ok(sizes.big <= INITIAL_UNIT_CHARS, `skills pushed the first request to ${sizes.big} characters`);
 
     const quality = await service.review(request(['security', 'compliance', 'quality']), token, () => {});
     assert.ok(sent.api.includes('clean-code'), 'clean code did not reach the model');
     const notes = quality.findings.filter(finding => finding.category === 'quality');
-    assert.equal(notes.length, 2);
+    assert.equal(notes.length, 3);
+    const relabelled = notes.find(finding => finding.explanation.startsWith('Long function'));
+    assert.ok(relabelled, 'a clean code finding kept its security category');
+    assert.equal(relabelled.severity, 'medium', 'a clean code finding labelled security kept high severity');
     assert.ok(notes.every(finding => finding.severity === 'medium' || finding.severity === 'low'), 'a quality finding stayed critical');
     assert.equal(notes.find(finding => finding.explanation.startsWith('Seven')).skill, 'clean-code');
     assert.equal(notes.find(finding => finding.explanation.startsWith('Unused')).skill, undefined, 'an unknown skill id was kept');
     const readiness = assessReadiness(quality);
-    assert.equal(readiness.quality.length, 2);
+    assert.equal(readiness.quality.length, 3);
     assert.ok(![...readiness.blocking, ...readiness.attention].some(item => notes.some(note => note.id === item.findingId)), 'a quality note was counted as a finding to fix');
     const markdown = renderReviewMarkdown(quality, { kind: 'review', repositoryName: 'r', targetLabel: 'main', generatedAt: new Date() });
     assert.match(markdown, /## Code quality/);
     assert.match(markdown, /## Review skills[\s\S]*api[\s\S]*clean-code/);
     assert.doesNotMatch(renderReviewMarkdown(security, { kind: 'review', repositoryName: 'r', targetLabel: 'main', generatedAt: new Date() }), /## Code quality/);
+
+    // Compliance with no policy no longer ends a review that also asks for clean code.
+    for (const key of Object.keys(sent)) delete sent[key];
+    const withoutSecurity = await service.review(request(['compliance', 'quality']), token, () => {});
+    assert.deepEqual(sent.api, ['clean-code'], 'the clean code review did not run without security');
+    assert.ok(withoutSecurity.findings.some(finding => finding.category === 'quality'));
+    assert.equal(withoutSecurity.policyStatus, 'not_configured');
 
     // Turning a skill off sends different guidance, so the component is asked again rather than reused.
     for (const key of Object.keys(sent)) delete sent[key];
@@ -205,6 +232,11 @@ async function main() {
   for (const type of ['listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill']) assert.equal(controller.handles(type), true);
   await controller.handle({ type: 'listReviewSkills', payload: {} });
   assert.equal(last().skills.length, files.length);
+  assert.equal(last().includeQuality, false);
+  assert.equal(controller.handles('setReviewQuality'), true);
+  await controller.handle({ type: 'setReviewQuality', payload: { enabled: true } });
+  await controller.handle({ type: 'listReviewSkills', payload: {} });
+  assert.equal(last().includeQuality, true, 'the Clean code choice was not kept by the host');
   await controller.handle({ type: 'setReviewSkillEnabled', payload: { id: 'clean-code', enabled: false } });
   assert.equal(last().skills.find(skill => skill.id === 'clean-code').enabled, false);
   picked = undefined;

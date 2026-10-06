@@ -85,6 +85,6 @@ export function selectReviewSkills(skills: ReviewSkill[], paths: string[], categ
     chosen.push({ id: skill.id, name: skill.name, category: skill.category, guidance: skill.guidance });
   }
   const hash = chosen.length
-    ? createHash('sha256').update(JSON.stringify(chosen.map(skill => [skill.id, skill.guidance]))).digest('hex').slice(0, 16) : '';
+    ? createHash('sha256').update(JSON.stringify(chosen.map(skill => [skill.id, skill.name, skill.category, skill.guidance]))).digest('hex').slice(0, 16) : '';
   return { skills: chosen, omitted, hash };
 }

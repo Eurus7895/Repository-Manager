@@ -2142,6 +2142,8 @@
         case 'reviewSkillsLoaded':
           reviewSkills = Array.isArray(message.payload && message.payload.skills) ? message.payload.skills : [];
           renderReviewSkills(message.payload && message.payload.message);
+          if (message.payload && typeof message.payload.includeQuality === 'boolean') setReviewQuality(message.payload.includeQuality, false);
+          renderReviewPanel();
           break;
 
         case 'publishSidebar':
@@ -2762,6 +2764,15 @@
       includeQuality: options.includeQuality === undefined ? reviewQuality : options.includeQuality });
   }
 
+  // Clean code is remembered by the host (global state), so a new dashboard panel keeps it.
+  function setReviewQuality(value, save) {
+    reviewQuality = value;
+    const toggle = document.getElementById('reviewQualityToggle');
+    if (toggle) toggle.checked = value;
+    saveState();
+    if (save) postMessage('setReviewQuality', { enabled: value });
+  }
+
   function renderReviewSkills(message) {
     const list = document.getElementById('reviewSkillsList');
     const count = document.getElementById('reviewSkillsCount');
@@ -3145,17 +3156,20 @@
     const body = document.getElementById('reviewBody');
     if (!tabs || !body) return;
     const hasHistory = activeReviewHistory().length > 0;
-    tabs.hidden = !reviewState && !hasHistory;
+    // The Review tab is there before the first review too, so its skills can be set up first.
+    tabs.hidden = !reviewState && !hasHistory && !reviewSkills.length;
     renderReviewHistory(Boolean(reviewState));
     if (!reviewState) {
       applyReviewLock();
-      if (!hasHistory) { showDetailTab('changes'); return; }
+      if (tabs.hidden) { showDetailTab('changes'); return; }
       ['cancelReviewButton', 'copyReviewButton', 'saveReviewButton'].forEach(id => { document.getElementById(id).hidden = true; });
       if (badge) badge.textContent = '';
       title.textContent = 'Review';
       meta.textContent = '';
       status.textContent = '';
-      body.innerHTML = '<div class="dashboard-empty">No review is open. Open a past review, or start one from Release or a comparison.</div>';
+      body.innerHTML = hasHistory
+        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one from Release or a comparison.</div>'
+        : '<div class="dashboard-empty">No review yet. Start one with Review commit, Review branch or Review all; Review skills above sets what Copilot checks.</div>';
       return;
     }
     const running = reviewState.status === 'running';
@@ -3370,7 +3384,7 @@
   const qualityToggle = document.getElementById('reviewQualityToggle');
   if (qualityToggle) {
     qualityToggle.checked = reviewQuality;
-    qualityToggle.addEventListener('change', () => { reviewQuality = qualityToggle.checked; saveState(); });
+    qualityToggle.addEventListener('change', () => setReviewQuality(qualityToggle.checked, true));
   }
   postMessage('listReviewSkills', {});
 })();

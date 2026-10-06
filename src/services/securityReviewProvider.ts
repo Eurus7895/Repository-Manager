@@ -128,10 +128,13 @@ export class SecurityReviewProvider {
     const seen = new Map<string, Array<[number, number]>>();
     const totals = new Map<string, number>();
     const partialLines = new Map<string, number>();
-    let budget = INITIAL_UNIT_CHARS;
+    // Skill guidance shares the component's budget with the files, so a component that fit before
+    // skills still fits with them (the source sent shrinks instead).
+    const guidance = skills.reduce((total, skill) => total + skill.id.length + skill.name.length + skill.guidance.length, 0);
+    let budget = Math.max(INITIAL_UNIT_CHARS / 2, INITIAL_UNIT_CHARS - guidance);
     // Every file keeps a share of the component's budget, so early large files cannot crowd out the
-    // rest, and all of them together stay within INITIAL_UNIT_CHARS.
-    const floor = Math.min(4000, Math.floor(INITIAL_UNIT_CHARS / Math.max(1, unit.paths.length)));
+    // rest, and all of them together stay within that budget.
+    const floor = Math.min(4000, Math.floor(budget / Math.max(1, unit.paths.length)));
     for (const [index, path] of unit.paths.entries()) {
       const source = plan.snapshot.fileExists(path) ? plan.snapshot : plan.base;
       if (!source) { throw new Error(`File missing from both revisions: ${path}`); }
