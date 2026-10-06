@@ -15,6 +15,8 @@
   // Past reviews of the dashboard's repository, as listed by the extension.
   let reviewHistory = { repositoryPath: null, entries: [] };
   let reviewHistoryListId = 0;
+  // The folder the newest Past reviews request was made in.
+  let reviewHistoryFolder;
   let historyDateFormat = null;
 
   function postMessage(type, payload) {
@@ -108,7 +110,7 @@
       baseRevision: scope === 'changes' ? options.base : undefined, targetRevision: options.target,
       baseLabel: scope === 'changes' && options.base ? options.baseLabel || shortRevision(options.base) : undefined,
       targetLabel: options.target ? options.targetLabel || shortRevision(options.target) : undefined, modelId: options.modelId || undefined,
-      includeQuality: Boolean(options.includeQuality) });
+      includeQuality: Boolean(options.includeQuality), folder: reviewState.folder || undefined });
   }
 
   function renderReviewSkills(message) {
@@ -402,11 +404,13 @@
 
   function requestReviewHistory() {
     if (!context.repositoryPath) return;
+    reviewHistoryFolder = context.folder;
     postMessage('listReviewHistory', { repositoryPath: context.repositoryPath, listId: ++reviewHistoryListId });
   }
 
+  // Every folder's root is '.', so the list belongs to a folder as well as a repository path.
   function activeReviewHistory() {
-    return reviewHistory.repositoryPath === context.repositoryPath ? reviewHistory.entries : [];
+    return reviewHistory.repositoryPath === context.repositoryPath && reviewHistory.folder === context.folder ? reviewHistory.entries : [];
   }
 
   // The exact commits a review read: a label like a branch name moves on, these do not.
@@ -621,7 +625,9 @@
         repositoryName: repository ? repository.name : context.repositoryPath, scope: entry.scope, kind: entry.kind,
         baseLabel: entry.baseLabel || '', targetLabel: entry.targetLabel, status: 'opening', cancelled: true, message: 'Opening the saved review…' };
       renderReviewPanel();
-      postMessage('openStoredReview', { requestId: reviewRequestId, id: entry.id, repositoryPath: context.repositoryPath });
+      // The labels go along so that a tab opened again restores the review as it was (reviewRestore).
+      postMessage('openStoredReview', { requestId: reviewRequestId, id: entry.id, repositoryPath: context.repositoryPath, folder: context.folder,
+        scope: entry.scope, kind: entry.kind, baseLabel: entry.baseLabel || '', targetLabel: entry.targetLabel });
     },
     deleteStoredReview: (el) => {
       if (!context.repositoryPath || !el.dataset.historyId) return;
@@ -778,7 +784,7 @@
           reviewState = null;
           openFindings = new Set();
         }
-        if (moved || reviewHistory.repositoryPath !== context.repositoryPath) requestReviewHistory();
+        if (moved || reviewHistory.repositoryPath !== context.repositoryPath || reviewHistory.folder !== context.folder) requestReviewHistory();
         renderReviewPanel();
         break;
       }
@@ -795,12 +801,14 @@
           repositoryName: (getRepository(start.repositoryPath) || {}).name || start.repositoryPath, scope: start.scope, kind: start.kind || 'review',
           baseLabel: start.baseLabel || '', targetLabel: start.targetLabel || '', status: start.opening ? 'opening' : 'running', cancelled: Boolean(start.opening) };
         (payload.messages || []).forEach(item => applyReviewMessage(item.type, item.payload || {}));
+        // As when the tab stays open: the tab follows the dashboard, except while a review runs.
+        if (reviewState.status !== 'running' && !reviewIsForActiveRepository()) reviewState = null;
         renderReviewPanel();
         break;
       }
       case 'reviewHistoryLoaded':
         if (payload.listId !== reviewHistoryListId) break;
-        reviewHistory = { repositoryPath: payload.repositoryPath, entries: Array.isArray(payload.entries) ? payload.entries : [] };
+        reviewHistory = { repositoryPath: payload.repositoryPath, folder: reviewHistoryFolder, entries: Array.isArray(payload.entries) ? payload.entries : [] };
         renderReviewPanel();
         break;
       case 'reviewProgress':

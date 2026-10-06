@@ -85,6 +85,14 @@ async function main() {
     assert.match(questions.at(-1).message, /changes 1\.5\.0 → main/);
     answer = 'Start review';
 
+    // A review asked for in another workspace folder (the dashboard switched before the review tab
+    // started it) never runs in this one: its repository path means another repository here.
+    const ranBefore = runs.length;
+    await start(9, { folder: '/elsewhere' });
+    assert.equal(runs.length, ranBefore);
+    assert.match(of('reviewFailed').at(-1).payload.message, /workspace folder changed/);
+    assert.equal(questions.length, 1, 'asked for consent for a review in another folder');
+
     // A completed review reports progress, resolved commits, and readiness.
     const finding = { id: 'f1', category: 'security', severity: 'high', confidence: 'high', status: 'verified',
       explanation: 'Input reaches eval', impact: 'Code execution', suggestedAction: 'Remove eval',
@@ -95,7 +103,7 @@ async function main() {
         policyStatus: 'not_configured', modelId: 'deep:1', limitations: [],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    await start(2);
+    await start(2, { folder: repo });
     assert.equal(runs.at(-1).request.baseSha, release);
     assert.equal(runs.at(-1).request.targetSha, head);
     assert.deepEqual(runs.at(-1).request.categories, ['security', 'compliance']);

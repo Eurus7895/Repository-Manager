@@ -943,6 +943,31 @@ async function main() {
     const reopenedTab = await page.reviewTab();
     await reopenedTab.locator('.review-finding[data-finding-id="background"]').waitFor();
     assert.match(await reopenedTab.textContent('.review-readiness strong'), /^Blocked: 1 blocking item/);
+    // A saved review opened in the tab comes back as it was when the tab opens again: a diff, with its labels.
+    await reopenedTab.locator('#reviewHistory > summary').click();
+    await reopenedTab.locator('.review-history-item', { hasText: '1.0.0 → feature/dashboard' }).last().locator('[data-action="openStoredReview"]').click();
+    await reopenedTab.waitForFunction(() => /^Diff: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
+    const savedMeta = await reopenedTab.textContent('#reviewMeta');
+    await page.closeReviewTab();
+    await page.click('#openReviewTabButton');
+    const savedTab = await page.reviewTab();
+    await savedTab.locator('.review-readiness').waitFor();
+    assert.equal(await savedTab.textContent('#reviewMeta'), savedMeta, 'a saved review lost its kind or labels in the reopened tab');
+    // Past reviews belong to a folder: every folder's root is '.', so another folder's list is never shown as this one's.
+    assert.equal(await savedTab.evaluate(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboardContext', payload: { repositoryPath: '.', folder: '/another-folder', repositories: [] } } }));
+      return document.querySelectorAll('#reviewHistoryList .review-history-item').length;
+    }), 0, 'the previous folder\'s past reviews were listed for the new one');
+    await page.closeReviewTab();
+    // A finished review of another repository does not come back when the dashboard has moved on.
+    await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
+    await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
+    await page.click('#openReviewTabButton');
+    const movedTab = await page.reviewTab();
+    await movedTab.waitForFunction(() => /Review · lib-b/.test(document.getElementById('reviewTitle').textContent));
+    await movedTab.waitForFunction(() => /No review (yet|is open)/.test(document.getElementById('reviewBody').textContent));
+    await page.sidebar.click('.sidebar-repository-item[data-path="."]');
+    await page.locator('.history-row', { hasText: 'update app in two places' }).waitFor({ timeout: 5000 });
 
     // One click switches the dashboard to the selected repository; no Refresh needed.
     await libB.click();
