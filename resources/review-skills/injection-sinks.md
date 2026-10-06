@@ -2,7 +2,7 @@
 id: injection-sinks
 name: Injection and dangerous sinks
 category: security
-appliesTo: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.rb", "**/*.php", "**/*.rs", "**/*.c", "**/*.cc", "**/*.cpp", "**/*.h", "**/*.sh", "**/*.ps1", "**/*.sql"]
+appliesTo: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.rb", "**/*.php", "**/*.rs", "**/*.c", "**/*.cc", "**/*.cpp", "**/*.cxx", "**/*.h", "**/*.hh", "**/*.hpp", "**/*.hxx", "**/*.sh", "**/*.ps1", "**/*.sql"]
 references: CWE Top 25 (CWE-78, CWE-79, CWE-89, CWE-94, CWE-22, CWE-502, CWE-918, CWE-77, CWE-434, CWE-611); OWASP ASVS 5.0 encoding and sanitization
 ---
 Trace data from where it enters (request parameters, headers, files, environment, CLI arguments, messages, database rows written by users) to where it is used. Report only a path you can cite end to end.

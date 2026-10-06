@@ -69,6 +69,13 @@ async function main() {
   assert.ok(ids(['.github/workflows/ci.yml'], ['security']).includes('ci-supply-chain'));
   assert.ok(ids(['infra/main.tf'], ['security']).includes('cloud-iac'));
   assert.ok(ids(['web/app.ts'], ['security']).includes('javascript-security'));
+  for (const file of ['src/parser.cpp', 'include/parser.hpp', 'lib/io.c', 'core/buffer.hh']) {
+    const cpp = ids([file], ['security', 'quality']);
+    assert.ok(cpp.includes('cpp-security') && cpp.includes('injection-sinks') && cpp.includes('clean-code'), `${file}: ${cpp}`);
+  }
+  assert.ok(!ids(['app/views.py'], ['security']).includes('cpp-security'));
+  // A C++ component gets every matching skill: together they fit in one request.
+  assert.deepEqual(selectReviewSkills(bundled, ['src/parser.cpp'], ['security', 'quality'], new Set()).omitted, []);
   assert.ok(ids(['app/views.py'], ['security', 'quality']).includes('clean-code'), 'clean code was not added when asked');
   assert.deepEqual(ids(['app/views.py'], ['quality']), ['clean-code'], 'a security skill ran in a quality-only review');
   assert.ok(!ids(['app/views.py'], ['security'], new Set(['python-security'])).includes('python-security'), 'a disabled skill was applied');

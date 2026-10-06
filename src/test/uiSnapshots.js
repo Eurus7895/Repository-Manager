@@ -763,17 +763,17 @@ async function main() {
     // Review skills: the bundled ones are listed, can be turned off, and an imported one can be removed.
     await page.click('#detailTabReview');
     await page.click('#reviewSkills > summary');
-    await page.waitForFunction(() => document.querySelectorAll('#reviewSkillsList .review-skill').length === 8);
-    assert.equal(await page.textContent('#reviewSkillsCount'), '8/8');
+    await page.waitForFunction(() => document.querySelectorAll('#reviewSkillsList .review-skill').length === 9);
+    assert.equal(await page.textContent('#reviewSkillsCount'), '9/9');
     await page.click('#reviewSkillsList [data-action="toggleReviewSkill"][data-skill-id="cloud-iac"]');
-    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '7/8');
+    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
     assert.equal(await page.getAttribute('#reviewSkillsList [data-skill-id="cloud-iac"]', 'aria-pressed'), 'false');
     reviewProbe.skillFile = '---\nid: team-go\nname: Team Go\ncategory: security\nappliesTo: ["**/*.go"]\n---\n- Check every exec.Command.\n';
     await page.click('[data-action="importReviewSkill"]');
     await page.waitForFunction(() => /Imported "Team Go"/.test(document.getElementById('reviewSkillsStatus').textContent));
     await snap(page, '13b-review-skills');
     await page.click('#reviewSkillsList [data-action="removeReviewSkill"][data-skill-id="team-go"]');
-    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '7/8');
+    await page.waitForFunction(() => document.getElementById('reviewSkillsCount').textContent === '8/9');
     await page.click('#reviewSkills > summary');
 
     // Clean code: the checkbox adds the quality category; its notes have their own section and never block.
