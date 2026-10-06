@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { PolicyRuleResult, ReviewFinding, ReviewProgressCallback, ReviewProgressDetail, ReviewRequest, ReviewResult } from '../types';
 import { GitCommandService } from './gitCommandService';
-import { validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
+import { findingFingerprint, validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
 import { appliesToPath, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from './reviewSurveyService';
 import { consolidateLimitations, TRUNCATION_NOTE } from './reviewLimitations';
 import { PROMPT_VERSION, ReviewChatModel, SecurityReviewProvider } from './securityReviewProvider';
 import { ReviewUnitCacheLike, ReviewUnitOutcome, reviewUnitKey } from '../reviewUnitCache';
 import { AppliedSkills, ReviewSkill, selectReviewSkills } from './reviewSkills';
+
+/** Steps kept in a result's log; a long review keeps its first ones. */
+const MAX_LOG = 400;
 
 export class SecurityReviewService {
   private survey: ReviewSurveyService;
@@ -17,6 +20,14 @@ export class SecurityReviewService {
 
   async review(request: ReviewRequest, token: vscode.CancellationToken,
     progress: ReviewProgressCallback, selectedModelId?: string): Promise<ReviewResult> {
+    // Every step is also kept in the result, so a review that went wrong can be read afterwards.
+    const log: NonNullable<ReviewResult['log']> = [];
+    const started = Date.now();
+    const notify = progress;
+    progress = (message, detail) => {
+      if (log.length < MAX_LOG) { log.push({ at: Date.now() - started, message: message.slice(0, 300) }); }
+      notify(message, detail);
+    };
     const state: ReviewProgressDetail = { phase: 'planning', unit: 0, units: 0, filesDone: 0, filesTotal: 0, candidates: 0 };
     progress('Planning the review…', { ...state });
     const plan = await this.survey.plan(request);
@@ -75,6 +86,11 @@ export class SecurityReviewService {
           }
         }
         coverage.failed.push(...failed);
+        // One line per reason, not per file: a component that failed as a whole lists all its files.
+        for (const reason of new Set(failed.map(item => item.reason))) {
+          const files = failed.filter(item => item.reason === reason).length;
+          report(`Component ${unit.component} failed${files > 1 ? ` (${files} files)` : ''}: ${reason}`);
+        }
         // Only a clean result is kept: anything that failed is asked again next time.
         if (outcome && !failed.length) { await this.cache?.set(key, outcome).catch(() => undefined); }
       }
@@ -142,7 +158,7 @@ export class SecurityReviewService {
     if (!coverage.complete) { limitations.push('Review coverage is incomplete; missing checks are not a pass.'); }
     limitations.push('Verified findings have source and diff citations and a second AI check; this does not prove absence of other vulnerabilities.');
     return { request: plan.request, findings: [...findings.values()], policyResults, coverage,
-      policyStatus: policy.status, modelId, modelName: state.model, limitations: [...new Set(limitations)].slice(0, 40),
+      policyStatus: policy.status, modelId, modelName: state.model, log, limitations: [...new Set(limitations)].slice(0, 40),
       toVerify: consolidated.toVerify.slice(0, 20),
       ...(skillsApplied.length ? { skillsApplied } : {}),
       ...(stopped ? { partial: { unitsDone, unitsTotal: plan.units.length } } : {}) };
@@ -169,6 +185,8 @@ export class SecurityReviewService {
         if (finding.category === 'compliance') {
           finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
         }
+        const fingerprint = await findingFingerprint(finding, plan);
+        if (fingerprint) { finding.fingerprint = fingerprint; }
         candidates.push(finding);
       }
       else { failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' }); }

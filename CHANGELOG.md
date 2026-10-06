@@ -13,10 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository badges and the review buttons explain themselves on hover; reviews say that uncommitted and untracked files are not reviewed, and the Review tab says so when the repository has uncommitted changes.
 - The review header names the model that reviewed (its exact id on hover), and the report shows both.
 
+- **Failed checks** are listed once per reason, with what to do (for example, choose a model with a larger context), and **Retry failed** runs the review again for those parts only; parts that passed are reused. A **Review log** shows each step and failure with its time, and the report lists failed checks by reason.
+- A finding dismissed, or marked Needs fix, in an earlier review of the same repository keeps that decision when a new review reports it on the same code, even in other words, labelled **earlier review**. One marked Fixed and reported again on unchanged code is marked Needs fix, as **Reported again after Fixed**.
+
 ### Fixed
 
 - The package's repository link pointed to the project's old name; it now points to Eurus7895/Repository-Manager.
 - A long finding title widened its row past the panel and hid its file, line and status.
+- A saved review with many skipped files could lose its failed checks; they are now kept first.
 
 ## [1.10.0] - 2026-10-06
 

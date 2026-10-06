@@ -125,9 +125,12 @@ export function normalizeTriage(result: ReviewResult, triage: unknown): ReviewTr
   for (const [id, value] of Object.entries(triage as Record<string, unknown>)) {
     const entry = value as Partial<FindingTriage> | undefined;
     if (!ids.has(id) || !entry || (entry.decision !== 'fix' && entry.decision !== 'dismiss' && entry.decision !== 'fixed')) { continue; }
-    if (entry.decision === 'fix' || entry.decision === 'fixed') { normalized[id] = { decision: entry.decision }; continue; }
+    // Where a decision came from (an earlier review) stays with it.
+    const carried = entry.carried && typeof entry.carried.at === 'string' && ['fix', 'dismiss', 'fixed'].includes(entry.carried.decision)
+      ? { carried: { at: entry.carried.at, decision: entry.carried.decision } } : {};
+    if (entry.decision === 'fix' || entry.decision === 'fixed') { normalized[id] = { decision: entry.decision, ...carried }; continue; }
     const reason = entry.reason && entry.reason in DISMISS_REASONS ? entry.reason : 'false_positive';
-    normalized[id] = { decision: 'dismiss', reason };
+    normalized[id] = { decision: 'dismiss', reason, ...carried };
   }
   return normalized;
 }
@@ -286,6 +289,14 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
     lines.push('');
   }
   lines.push('## Coverage', '', `${coverageLine(readiness.coverage)}. Complete: ${coverage.complete ? 'yes' : 'no'}.`, '');
+  // Failed checks once per reason, so the cause is readable before the per-file list.
+  const reasons = new Map<string, number>();
+  for (const item of coverage.failed) { reasons.set(item.reason, (reasons.get(item.reason) || 0) + 1); }
+  if (reasons.size) {
+    lines.push('Failed checks by reason (run the review again to retry only these):', '');
+    for (const [reason, count] of reasons) { lines.push(`- ${text(reason)} (${count})`); }
+    lines.push('');
+  }
   const gaps = [...coverage.skipped.map(item => ({ ...item, kind: item.partial || /^Partly reviewed/.test(item.reason) ? 'partly reviewed' : 'skipped' })),
     ...coverage.failed.map(item => ({ ...item, kind: 'failed' }))];
   if (gaps.length) {

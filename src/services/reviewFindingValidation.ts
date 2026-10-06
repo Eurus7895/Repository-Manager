@@ -112,6 +112,23 @@ export async function validateReviewFinding(raw: unknown, plan: ReviewPlan, unit
     suggestedAction: (raw.suggestedAction as string).trim(), evidence, status: 'candidate' };
 }
 
+/** See ReviewFinding.fingerprint. Undefined when the cited lines cannot be read. */
+export async function findingFingerprint(finding: ReviewFinding, plan: ReviewPlan): Promise<string | undefined> {
+  const evidence = finding.evidence[0];
+  const source = evidence?.side === 'base' ? plan.base : plan.snapshot;
+  if (!evidence || !source) { return undefined; }
+  try {
+    const file = await source.readFile(evidence.path, evidence.startLine, evidence.endLine - evidence.startLine + 1);
+    const text = file.content.replace(/\s+/g, ' ').trim();
+    // A line like "}" is in many places: then the line number has to tell them apart.
+    const where = text.replace(/\W/g, '').length < 8 ? evidence.startLine : '';
+    return createHash('sha256').update(JSON.stringify([finding.category, finding.ruleId || '', evidence.path, text, where]))
+      .digest('hex').slice(0, 16);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function validatePolicyResult(raw: unknown, plan: ReviewPlan, unit: ReviewWorkUnit): Promise<PolicyRuleResult | undefined> {
   if (!record(raw) || typeof raw.ruleId !== 'string' || !unit.rules.some(rule => rule.id === raw.ruleId) ||
       !['pass', 'violation', 'insufficient_evidence', 'not_applicable'].includes(String(raw.status)) ||

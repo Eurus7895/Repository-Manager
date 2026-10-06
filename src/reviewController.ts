@@ -12,6 +12,7 @@ import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportCon
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
+import { carryTriage } from './reviewTriageCarry';
 import { ReviewHistoryStore, summarize } from './reviewHistory';
 
 export interface CancellationLike { readonly isCancellationRequested: boolean }
@@ -281,10 +282,13 @@ export class ReviewController {
       context.generatedAt = new Date();
       const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
       // Saving is best effort: a full or failing workspace state must not lose the result on screen.
-      const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage: {} })
+      // Issues already dismissed or known in an earlier review of this repository keep that decision.
+      const triage = carryTriage(result.findings, this.host.history.list(root)
+        .map(entry => ({ generatedAt: entry.context.generatedAt, findings: entry.result.findings, triage: entry.triage })));
+      const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage })
         .then(entry => entry.id, () => undefined);
-      this.remember(requestId, { result, context, triage: {}, workspaceRoot, historyId });
-      await reply('reviewCompleted', { result, readiness: assessReadiness(result), layout: assessReadiness(result), context: storedContext, historyId });
+      this.remember(requestId, { result, context, triage, workspaceRoot, historyId });
+      await reply('reviewCompleted', { result, readiness: assessReadiness(result, triage), layout: assessReadiness(result), context: storedContext, triage, historyId });
     } catch (error) {
       const cancelled = cancellation.token.isCancellationRequested;
       await reply('reviewFailed', { cancelled, message: cancelled

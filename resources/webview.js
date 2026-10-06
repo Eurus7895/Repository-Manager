@@ -764,10 +764,11 @@
       postMessage('applyReviewFix', { requestId: reviewState.requestId, paths });
     },
     discardReviewFix: () => { if (reviewState) postMessage('discardReviewFix', { requestId: reviewState.requestId }); },
-    // Runs the stopped review again at the same commits: finished components are reused.
+    // Runs the review again at the same commits: finished and clean components are reused, so only
+    // the rest (after a stop) or the components whose checks failed are asked again.
     continueReview: () => {
       const result = reviewState && reviewState.result;
-      if (!result || !result.partial) return;
+      if (!result || !(result.partial || (result.coverage.failed || []).length)) return;
       const { request } = result;
       const context = reviewState.context || {};
       // The same categories as the stopped run, so its saved components match.
@@ -3051,6 +3052,17 @@
 
   const TRIAGE_LABELS = { fix: 'Needs fix', dismiss: 'Dismissed', fixed: 'Fixed' };
 
+  // What to do about a failed check, from its reason (see SecurityReviewService).
+  function failureHint(reason) {
+    if (/cannot fit|context/i.test(reason)) return 'The files did not fit in the model\'s context. Choose a model with a larger context in Model, or review fewer files with Review commit.';
+    if (/ungrounded evidence/i.test(reason)) return 'The model cited lines that are not in the reviewed files (or not changed). Retrying usually clears it.';
+    if (/verification|verdict/i.test(reason)) return 'The second check did not answer for every finding, so they stay unconfirmed. Retry to check them again.';
+    if (/limit exceeded/i.test(reason)) return 'The model returned more results than one component allows. Review a smaller range with Review commit.';
+    if (/policy result/i.test(reason)) return 'The model did not answer for a policy rule. Retry, or check the rule by hand.';
+    if (/cancel/i.test(reason)) return 'Stopped before it finished. Retry to review it.';
+    return 'Retry; if it fails again with the same reason, try another model.';
+  }
+
   function renderReviewFinding(finding, index) {
     const rule = finding.ruleId ? ` <code>${escapeHtml(finding.ruleId)}</code>` : '';
     const triage = (reviewState.triage || {})[finding.id];
@@ -3061,7 +3073,15 @@
       ? `<code class="review-finding-where">${escapeHtml(finding.evidence[0].path)}:${finding.evidence[0].startLine}</code>` : '';
     // A dismissed or fixed finding stays where it was, collapsed, with a way back.
     const reason = triage && triage.decision === 'dismiss' && triage.reason ? ` · ${DISMISS_REASONS[triage.reason] || triage.reason}` : '';
-    const chip = triage ? `<span class="review-triage-chip triage-chip-${escapeHtml(triage.decision)}">${escapeHtml(TRIAGE_LABELS[triage.decision] || triage.decision)}${escapeHtml(reason)}</span>` : '';
+    // A decision taken over from an earlier review of the same issue says so.
+    const carried = triage && triage.carried;
+    const carriedDate = carried ? new Date(carried.at).toLocaleDateString() : '';
+    const chipText = carried && carried.decision === 'fixed' ? 'Reported again after Fixed'
+      : `${TRIAGE_LABELS[triage && triage.decision] || (triage && triage.decision) || ''}${reason}${carried ? ' · earlier review' : ''}`;
+    const chipTitle = carried ? (carried.decision === 'fixed'
+      ? `Marked Fixed in the review of ${carriedDate}, but the same code is reported again: the fix is not in this commit, or did not remove the issue`
+      : `Taken over from the review of ${carriedDate}: the same issue on the same code`) : '';
+    const chip = triage ? `<span class="review-triage-chip triage-chip-${escapeHtml(triage.decision)}${carried && carried.decision === 'fixed' ? ' triage-chip-again' : ''}"${chipTitle ? ` title="${escapeHtml(chipTitle)}"` : ''}>${escapeHtml(chipText)}</span>` : '';
     const undo = triage && triage.decision !== 'fix'
       ? `<button type="button" class="review-undo" data-action="triageFinding" data-finding-id="${id}" data-decision="${escapeHtml(triage.decision)}" title="Undo: back to not triaged">Undo</button>` : '';
     return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}${open ? ' open' : ''}" data-finding-id="${id}">
@@ -3255,6 +3275,21 @@
     const stopped = result.partial
       ? `<div class="review-stopped" role="status"><span>Stopped after <strong>${result.partial.unitsDone} of ${result.partial.unitsTotal}</strong> components. The rest was not reviewed.</span><button type="button" class="btn" data-action="continueReview">Continue review</button></div>`
       : '';
+    // Failed checks, once per reason: what failed, where, what to do, and a way to run them again.
+    const failedGroups = [];
+    for (const item of coverage.failed || []) {
+      let group = failedGroups.find(entry => entry.reason === item.reason);
+      if (!group) failedGroups.push(group = { reason: item.reason, paths: [] });
+      group.paths.push(item.path);
+    }
+    const failedSection = failedGroups.length
+      ? `<section class="review-failed"><h4>Failed checks <span class="review-count">${coverage.failed.length}</span></h4>
+        <p class="review-gaps-note">These parts were not reviewed, or their findings were not checked. They are not a pass. <strong>Retry failed</strong> asks Copilot again for them only; components that passed are reused.</p>
+        <ul class="review-gaps">${failedGroups.map(group => `<li><strong>${escapeHtml(group.reason)}</strong> — ${group.paths.length === 1 ? `<code>${escapeHtml(group.paths[0])}</code>` : `${group.paths.length} entries: ${group.paths.slice(0, 6).map(path => `<code>${escapeHtml(path)}</code>`).join(', ')}${group.paths.length > 6 ? ', …' : ''}`}<br><span class="review-failed-hint">${escapeHtml(failureHint(group.reason))}</span></li>`).join('')}</ul>
+        ${result.partial ? '' : `<button type="button" class="btn" data-action="continueReview" title="Run this review again: components that passed are reused, only the failed ones are asked again">Retry failed</button>`}</section>` : '';
+    const logSection = (result.log || []).length
+      ? `<details class="review-log"><summary>Review log <span class="review-count">${result.log.length}</span></summary><ol>${result.log.map(entry =>
+        `<li class="${/\bfail|\berror/i.test(entry.message) ? 'review-log-failed' : ''}"><time>${escapeHtml(formatElapsed(entry.at))}</time> ${escapeHtml(entry.message)}</li>`).join('')}</ol></details>` : '';
     const toVerify = (result.toVerify || []).length
       ? `<details class="review-to-verify"><summary>To verify <span class="review-count">${result.toVerify.length}</span></summary><p class="review-gaps-note">What the model could not see from the reviewed files: callers, CI settings, external services. Check these by hand.</p><ul>${result.toVerify.map(item => `<li>${richText(item)}</li>`).join('')}</ul></details>`
       : '';
@@ -3289,8 +3324,10 @@
       ${policy}
       ${toVerify}
       ${skillsUsed}
+      ${failedSection}
       <section><h4>Coverage</h4><p>${escapeHtml(coverageText)} · ${coverage.complete ? 'complete' : 'incomplete'}</p>${gaps.length
         ? `<details><summary>Partly reviewed, skipped and failed</summary><ul class="review-gaps">${gaps.slice(0, 200).map(([kind, item]) => `<li>${kind}: <code>${escapeHtml(item.path)}</code> — ${escapeHtml(item.reason)}</li>`).join('')}</ul></details>` : ''}</section>
+      ${logSection}
       ${(result.limitations || []).length ? `<section><h4>Limitations</h4><ul class="review-gaps">${result.limitations.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul></section>` : ''}
       <p class="review-advisory">Advisory: verified findings passed mechanical evidence checks and a second AI assessment. No findings does not mean no vulnerabilities.</p>`;
     tickFixClock();
