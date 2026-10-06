@@ -69,13 +69,22 @@ export function parseReviewSkill(text: string, source: ReviewSkill['source']): R
 }
 
 /**
- * The skills for one component: enabled ones whose globs match any of its paths, for the categories
- * reviewed, bundled before imported, within MAX_SKILL_CHARS.
+ * The skills for one component: enabled ones whose globs match any of its paths (ignoring case), for
+ * the categories reviewed, within MAX_SKILL_CHARS. When they do not all fit, security skills go before
+ * quality ones (clean code never blocks, so it is the first to give way), then the skills that match
+ * more of the component's files, then by id; a smaller skill later in that order can still fit.
  */
 export function selectReviewSkills(skills: ReviewSkill[], paths: string[], categories: string[], disabled: ReadonlySet<string>): AppliedSkills {
-  const wanted = skills.filter(skill => !disabled.has(skill.id) &&
-    (skill.category === 'quality' ? categories.includes('quality') : categories.includes('security')) &&
-    paths.some(path => skill.appliesTo.some(pattern => matchesReviewPattern(pattern, path))));
+  const matched = (skill: ReviewSkill) =>
+    paths.filter(path => skill.appliesTo.some(pattern => matchesReviewPattern(pattern, path, { ignoreCase: true }))).length;
+  const wanted = skills
+    .filter(skill => !disabled.has(skill.id) &&
+      (skill.category === 'quality' ? categories.includes('quality') : categories.includes('security')))
+    .map(skill => ({ skill, files: matched(skill) }))
+    .filter(entry => entry.files > 0)
+    .sort((a, b) => Number(a.skill.category === 'quality') - Number(b.skill.category === 'quality') ||
+      b.files - a.files || a.skill.id.localeCompare(b.skill.id))
+    .map(entry => entry.skill);
   const chosen: AppliedSkills['skills'] = [];
   const omitted: string[] = [];
   let used = 0;

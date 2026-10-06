@@ -11,6 +11,7 @@ Module._load = function (name, parent, isMain) {
   return originalLoad.call(this, name, parent, isMain);
 };
 const { parseReviewSkill, selectReviewSkills, MAX_SKILL_CHARS } = require('../../out/services/reviewSkills.js');
+const { matchesReviewPattern } = require('../../out/services/reviewSurveyService.js');
 const { ReviewSkillStore } = require('../../out/reviewSkillStore.js');
 const { SecurityReviewProvider, INITIAL_UNIT_CHARS } = require('../../out/services/securityReviewProvider.js');
 const { SecurityReviewService } = require('../../out/services/securityReviewService.js');
@@ -55,6 +56,8 @@ async function main() {
     assert.equal(typeof skill, 'object', `${name}: ${skill}`);
     assert.equal(`${skill.id}.md`, name, 'a bundled file is named after its id');
     assert.ok(skill.references, `${name} names no references`);
+    // The parser cuts references at 300 characters; a bundled skill must not lose any.
+    assert.ok(/^references: (.*)$/m.exec(fs.readFileSync(path.join(bundledDir, name), 'utf8'))[1].length <= 300, `${name} references are cut`);
   }
   const store = new ReviewSkillStore(bundledDir, memento());
   const bundled = store.snapshot().skills;
@@ -74,6 +77,30 @@ async function main() {
     assert.ok(cpp.includes('cpp-security') && cpp.includes('injection-sinks') && cpp.includes('clean-code'), `${file}: ${cpp}`);
   }
   assert.ok(!ids(['app/views.py'], ['security']).includes('cpp-security'));
+  // Globs ignore case for skills (Auth.java is an auth file), but policy scopes stay case-sensitive.
+  assert.ok(ids(['src/Auth.java'], ['security']).includes('web-auth-session'));
+  assert.ok(ids(['src/SessionManager.cs'], ['security']).includes('web-auth-session'));
+  assert.equal(matchesReviewPattern('**/*auth*.*', 'src/Auth.java'), false, 'policy matching became case-insensitive');
+  // Front-end views are not server handlers; SAM templates, manifests and C++ builds have their skills.
+  assert.ok(!ids(['web/src/views/Home.vue'], ['security']).includes('web-auth-session'));
+  assert.ok(ids(['web/src/views/Home.vue'], ['security', 'quality']).includes('injection-sinks'));
+  assert.ok(ids(['infra/template.yaml'], ['security']).includes('cloud-iac'));
+  assert.ok(ids(['deploy/manifests/api.yaml'], ['security']).includes('cloud-iac'));
+  assert.ok(ids(['CMakeLists.txt'], ['security']).includes('ci-supply-chain'));
+  // The general sink list names kinds of sink; the APIs are in one language skill each, so the
+  // same line is not reported twice in different words.
+  const guidanceOf = id => bundled.find(skill => skill.id === id).guidance;
+  for (const api of ['shell=True', 'pickle', 'yaml.load', 'innerHTML', 'dangerouslySetInnerHTML', 'os.system']) {
+    assert.ok(!guidanceOf('injection-sinks').includes(api), `injection-sinks still names ${api}`);
+  }
+  for (const id of ['python-security', 'javascript-security']) assert.ok(!/verify=False|rejectUnauthorized/.test(guidanceOf(id)), `${id} repeats TLS checks`);
+  assert.ok(!/bcrypt|Argon2/.test(guidanceOf('web-auth-session')), 'password hashing is in two skills');
+  // When skills do not all fit, security goes first and clean code gives way, never secrets or auth.
+  const mixed = selectReviewSkills(bundled, ['app.py', 'Dockerfile', 'package.json', 'server.js', '.github/workflows/ci.yml', 'main.tf'],
+    ['security', 'compliance', 'quality'], new Set());
+  assert.ok(mixed.omitted.length > 0, 'the mixed component no longer tests the cap');
+  for (const id of ['secrets-crypto', 'web-auth-session', 'injection-sinks']) assert.ok(mixed.skills.some(skill => skill.id === id), `${id} was left out`);
+  assert.ok(mixed.omitted.includes('clean-code'), 'clean code was kept over a security skill');
   // A C++ component gets every matching skill: together they fit in one request.
   assert.deepEqual(selectReviewSkills(bundled, ['src/parser.cpp'], ['security', 'quality'], new Set()).omitted, []);
   assert.ok(ids(['app/views.py'], ['security', 'quality']).includes('clean-code'), 'clean code was not added when asked');

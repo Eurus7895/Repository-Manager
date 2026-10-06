@@ -24,7 +24,8 @@ export interface ReviewPlan {
 }
 
 /** Only repository-relative glob patterns, with *, ** and ?. No filesystem access. */
-export function matchesReviewPattern(pattern: string, filePath: string): boolean {
+/** Policy scopes match case-sensitively, as Git paths do; review skills pass ignoreCase so `*auth*` finds Auth.java. */
+export function matchesReviewPattern(pattern: string, filePath: string, options: { ignoreCase?: boolean } = {}): boolean {
   let expression = '^';
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
@@ -39,7 +40,7 @@ export function matchesReviewPattern(pattern: string, filePath: string): boolean
       expression += /[\\^$+?.()|[\]{}]/.test(char) ? `\\${char}` : char;
     }
   }
-  return new RegExp(`${expression}$`).test(filePath);
+  return new RegExp(`${expression}$`, options.ignoreCase ? 'i' : '').test(filePath);
 }
 
 export function appliesToPath(rule: ReviewPolicyRule, filePath: string): boolean {

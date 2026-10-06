@@ -2,7 +2,7 @@
 id: clean-code
 name: Clean code
 category: quality
-appliesTo: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.rb", "**/*.php", "**/*.rs", "**/*.c", "**/*.cc", "**/*.cpp", "**/*.cxx", "**/*.h", "**/*.hh", "**/*.hpp", "**/*.hxx", "**/*.swift", "**/*.scala", "**/*.sh"]
+appliesTo: ["**/*.py", "**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.java", "**/*.kt", "**/*.cs", "**/*.go", "**/*.rb", "**/*.php", "**/*.rs", "**/*.c", "**/*.cc", "**/*.cpp", "**/*.cxx", "**/*.h", "**/*.hh", "**/*.hpp", "**/*.hxx", "**/*.swift", "**/*.scala", "**/*.sh", "**/*.ps1"]
 references: Google Engineering Practices, "What to look for in a code review" (design, functionality, complexity, tests, naming, comments, consistency)
 ---
 Report a maintainability problem only when a reviewer would ask for a change, and cite the lines. Use severity medium for problems likely to cause bugs and low for the rest; never high or critical.
