@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Findings are one line each (severity, title, file and line) and open to their details; **Expand all** opens every one. Their text and labels have stronger contrast, and `code` in them is shown as code.
 - A dismissed or fixed finding stays where it was, folded with its state and an **Undo**, instead of moving to the end of the list.
 - Coverage says what happened to the files: fully reviewed, partly reviewed (lockfiles, images, diagrams and test inputs counted apart), not reviewed, failed checks. Partly read files are no longer called skipped.
+- The README lists every setting, the test commands, where to download the VSIX, and how review skills and Clean code behave.
 - Limitations no longer repeat which files were in scope, that they contain no sinks, or that a file was not read. Each note stays whole instead of being cut into sentences, and file names keep their case.
 
 ### Removed

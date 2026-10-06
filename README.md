@@ -15,7 +15,7 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Resize the history, changed-files, and diff panes to suit the current review task.
 - Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
 - Filter history by branch, include remote refs, or search by author, hash, message, and ref; these filters are remembered per repository.
-- Review the active branch, current commit, working-tree state, and ahead/behind counts.
+- See the active branch, current commit, working-tree state, and ahead/behind counts.
 - Search repositories and branches in larger workspaces.
 - Compare two commits: Ctrl+click (Cmd+click on macOS) or Shift+click a second history row, or click the graph nodes. Scrolling to the end loads more history.
 - The dashboard follows your VS Code colour theme, light, dark or high contrast.
@@ -56,8 +56,8 @@ Its primary focus is repository and branch workflow management: inspect reposito
 - Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
 - A stopped review is not lost. Each finished component is saved, so running the same review again (or **Continue review** on a stopped one) asks Copilot only for the rest. Cancel keeps what finished: the stopped review is shown and saved with how far it got. A saved component is reused only with the same model and the same review instructions.
 - Completed reviews are saved under **Past reviews** in the Review tab, newest first: the last 20 per repository, with your triage and the exact commits each one reviewed. Open one later (also after restarting VS Code) to check its findings, export it, or fix it; delete the ones you no longer need. They are kept in VS Code's workspace state on this machine, never in the repository.
-- **Review skills** give Copilot a checklist for the files they match: injection, authentication and sessions, secrets and cryptography, CI/CD, cloud and infrastructure as code, Python, JavaScript/TypeScript, C and C++, and clean code, based on public standards (CWE Top 25, OWASP ASVS, Microsoft SDL, SEI CERT, OpenSSF Scorecard, the AWS Security Pillar, Google's code review guide). They turn on by file type; the report lists which ones each component got. Turn one off, or **Import skill…** from a Markdown file with an `id`, `name`, `category` and `appliesTo` header. Skills are kept in VS Code, never read from the repository.
-- **Clean code**, next to the review buttons, also reviews maintainability (complexity, duplication, naming, error handling, dead code, tests). Its notes are listed under **Code quality** and never block a review.
+- **Review skills** give Copilot a checklist for the files they match: injection, authentication and sessions, secrets and cryptography, CI/CD, cloud and infrastructure as code, Python, JavaScript/TypeScript, C and C++, and clean code, based on public standards (CWE Top 25, OWASP ASVS, Microsoft SDL, SEI CERT, OpenSSF Scorecard, the AWS Security Pillar, Google's code review guide). They turn on by file type (globs ignore case); when a component matches more than fits in one request, security skills come first. The report lists which ones each component got. Set them up in **Review skills** on the Review tab, also before your first review: turn one off, or **Import skill…** from a Markdown file with an `id`, `name`, `category` and `appliesTo` header. Skills are kept in VS Code, never read from the repository.
+- **Clean code**, next to the review buttons, makes every review also check maintainability (complexity, duplication, naming, error handling, dead code, tests). Its notes are listed under **Code quality**, are at most medium severity and never block a review. The choice is remembered.
 - Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
 
 ### Linked-repository synchronization
@@ -83,7 +83,7 @@ This is an intentional breaking identity change. VS Code treats it as a separate
 
 ### From a VSIX package
 
-1. Download the latest `.vsix` package from the project release artifacts.
+1. Download the latest `.vsix` package from [GitHub Releases](https://github.com/Eurus7895/Repository-Manager/releases).
 2. Open Extensions in VS Code (`Ctrl+Shift+X`).
 3. Select the `...` menu and choose **Install from VSIX...**.
 4. Select the downloaded package.
@@ -126,7 +126,9 @@ Open VS Code settings and search for **Repository Manager**.
 | Setting | Description | Default |
 |---|---|---|
 | `repositoryManager.defaultBranch` | Default branch used by branch workflows | `main` |
-| `repositoryManager.autoFetch` | Fetch updates when opening the panel | `true` |
+| `repositoryManager.autoFetch` | Fetch all repositories in the background while the dashboard is visible, so ahead/behind counts stay current. Never prunes and never prompts for credentials; a repository that needs them is skipped | `true` |
+| `repositoryManager.autoFetchInterval` | Minutes between background fetches | `5` |
+| `repositoryManager.review.confirmBeforeSending` | Ask before every review sends code to Copilot, even where you chose **Always allow for this repository** | `false` |
 | `repositoryManager.showNotifications` | Show notifications for Git operations | `true` |
 | `repositoryManager.githubToken` | Optional GitHub token for PR operations | `""` |
 
@@ -144,7 +146,7 @@ Use `Cmd` instead of `Ctrl` on macOS.
 - VS Code 1.74.0 or newer
 - Git 2.20.0 or newer
 - Node.js for development only
-- For security and compliance reviews: VS Code 1.91 or newer and GitHub Copilot
+- For AI summaries, reviews and fixes: VS Code 1.91 or newer and GitHub Copilot
 
 ## Development
 
@@ -152,17 +154,19 @@ Use `Cmd` instead of `Ctrl` on macOS.
 npm ci
 npm run compile
 npm run lint
+npm test          # compiles, lints, then runs the test suites
+npm run test:ui   # Playwright screenshots of the dashboard and Side Bar into ui-snapshots/
 npm run package
 ```
 
-The package command creates a `.vsix` file in the repository root.
+The package command creates a `.vsix` file in the repository root; `.vsix` files are not committed. `npm run test:ui` uses Chromium; set `PLAYWRIGHT_CHROMIUM_PATH` if Playwright does not find it. Pull requests run all three checks in CI.
 
 ## Contributing
 
 1. Create a focused branch.
 2. Make and document the change.
-3. Run compile and lint checks.
-4. Package the extension when the change affects the shipped artifact.
+3. Run `npm test`, `npm run test:ui` and `npm run package`, as CI does.
+4. Add a `CHANGELOG.md` entry under the upcoming version.
 5. Open a pull request with the validation results.
 
 ## License
