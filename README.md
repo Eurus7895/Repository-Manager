@@ -1,174 +1,55 @@
 # Repository Manager
 
-Repository Manager is a VS Code extension for coordinating Git workflows across a parent repository and its linked repositories from one place.
+A VS Code extension for Git workflows across a parent repository and its linked repositories (Git submodules), from one dashboard.
 
-Its primary focus is repository and branch workflow management: inspect repository state, create consistent branches, switch branches, synchronize versions, and move changes toward review. Git submodules remain supported as the current linked-repository mechanism, but they are not the product's main purpose.
+## Features
 
-## What it helps with
+- **Overview:** every repository in one dashboard, with drift from the target branch, a commit graph, changed files and diffs. Compare any two commits or branches, and filter or search history.
+- **Branches across repositories:** create, switch and delete branches in the repositories you pick, with naming rules for `main`, `dev`, `feature`, `task` and `release`.
+- **Everyday Git:** checkout, fetch, pull, push, open a pull request, rebase, reset or drop commits (with a backup branch), and align linked repositories to their recorded commits.
+- **AI review with Copilot:**
+  - **Review commit**, **Review branch** (changes since the default branch) or **Review all** (every file);
+  - findings cite exact lines and can be triaged and fixed with Copilot;
+  - stopped reviews continue where they left off, and past reviews are saved;
+  - review skills (security checklists by file type) turn on automatically, and **Clean code** adds maintainability notes that never block.
 
-### Unified repository overview
+  Results are advisory. See [docs/security-compliance-review-engine.md](docs/security-compliance-review-engine.md) for how a review works.
 
-- See the parent repository and linked repositories in one dashboard.
-- Check workspace alignment at a glance and identify repositories that have drifted from the active target branch.
-- Browse the active repository's commit graph, Git Graph style: the checked-out branch stays in the first column, and each branch keeps its own column and colour, with tag, remote, and stash context. The Side Bar lists repositories and branches, the branches as a folder tree (`feature/…`, `release/…`).
-- Inspect commit metadata, changed files, and syntax-colored patches without leaving the panel.
-- Resize the history, changed-files, and diff panes to suit the current review task.
-- Select up to two circular graph nodes, marked Base and Target, to compare distant commits; local and remote branches can also be compared directly.
-- Filter history by branch, include remote refs, or search by author, hash, message, and ref; these filters are remembered per repository.
-- See the active branch, current commit, working-tree state, and ahead/behind counts.
-- Search repositories and branches in larger workspaces.
-- Compare two commits: Ctrl+click (Cmd+click on macOS) or Shift+click a second history row, or click the graph nodes. Scrolling to the end loads more history.
-- The dashboard follows your VS Code colour theme, light, dark or high contrast.
-- Filter history from the dashboard branch list or selector; both controls stay synchronized and highlight the selected branch.
-- Expand tags, remotes, and stashes to inspect hashes, timestamps, subjects, and remote URLs; tags and stashes can open their history directly.
-- Switch between workspace folders in multi-root VS Code workspaces.
+## Install
 
-### Coordinated branch workflows
+Download the `.vsix` from [GitHub Releases](https://github.com/Eurus7895/Repository-Manager/releases). In VS Code, open Extensions, choose **… › Install from VSIX…**, and select the file.
 
-- Create a branch across selected repositories with one guided workflow.
-- Apply branch hierarchy rules for `main`, `dev`, `feature`, `task`, and `release` workflows.
-- Generate consistent branch names from an optional ticket ID and task title.
-- Select a base branch with search, local/remote indicators, and current-branch highlighting.
-- Delete branches locally or from both local and remote repositories with confirmation.
+## Use
 
-### Everyday Git operations
+Open it from the Activity Bar icon, the command **Repository Manager: Open Repository Manager**, or `Ctrl+Shift+G M` (`Cmd+Shift+G M` on macOS). `Ctrl+Shift+G R` refreshes the repository list.
 
-- Checkout, fetch, pull, and push without leaving the dashboard.
-- Open a repository in Explorer.
-- Open GitHub's pull-request creation flow.
-- Restore a linked repository to the commit recorded by the parent repository.
-- Inspect merge and release commits against their first parent, including their changed files and per-file patches.
-- Right-click a history commit to rebase the current local branch onto it, reset to it (soft, mixed, or hard), or drop a commit from the current branch. Confirm the affected commits before running; hard reset and drop create a local backup branch.
-- Resolve a paused rebase in Source Control, then choose **Continue rebase** or **Abort rebase** from the history context menu; these items appear only while a rebase is paused. Rebase and drop currently require a linear range; dropping a commit reachable from a remote branch is blocked.
+## Settings
 
-### Security and compliance review
-
-- Three reviews, by what they cover:
-  - **Review commit**, in the toolbar above the changed files, reviews what the dashboard shows: the selected commit against its parent, or a Base/Target selection, branch comparison or the release range. **Summarize changes** sits next to it.
-  - **Review branch**, at the top, reviews what the current branch adds: the committed changes since it left the default branch (`origin/HEAD`, else `main` or `master`), as a pull request shows them.
-  - **Review all**, next to it, reviews every committed file at the tip of the current branch.
-  - Reviews read commits only, never uncommitted changes. The history right-click menu reviews any commit, or every file at it.
-- **◈ Release › Load range** loads the changes since the latest release tag (`1.5.0` or `v1.5.0`) on the current branch into the dashboard; then summarize or review them from the toolbar.
-- One click starts the review, checking security and team policy with the model chosen for AI summaries. The first review in a repository asks before sending code to Copilot; **Always allow for this repository** skips the question from then on. **Repository Manager: Forget Review Permissions** in the Command Palette undoes that for the repositories you choose, and `repositoryManager.review.confirmBeforeSending` asks every time.
-- A progress view shows the component being reviewed, files done and elapsed time. The review runs in the background: switch repository, folder or tab while it continues, and follow its percentage on the Review tab.
-- Results are classified as blocked, needs attention, or no blocking findings; what the review could not establish (no policy, an unresolved rule, incomplete coverage) is listed apart as **Review gaps**. **Expand** gives the Review tab the whole dashboard. Each finding is one line (severity, title, file and line) that opens to its details; **Expand all** opens every one. Mark each finding **Needs fix**, **Dismiss** with a reason, or **Fixed**: a dismissed or fixed finding stays where it was, folded with its state and an **Undo**, and no longer counts toward readiness. **To verify** lists what the model could not see from the reviewed files (callers, CI settings, external services), to check by hand.
-- **Fix with Copilot** proposes edits for the findings marked Needs fix, showing each step while it works (checking the files, what is sent, how much of the reply has arrived). You see the diff of each file first, with the findings it fixes; **Apply all** writes every file, or untick files and **Apply selected**, which leaves the rest proposed. Nothing is staged or committed. Findings whose edits were all applied move to **Fixed**. It needs the reviewed commit checked out and the cited files unchanged.
-- Findings cite exact lines; click one to open it in the diff. Team rules come from `.repository-manager/review-policy.json` in the reviewed commit.
-- A stopped review is not lost. Each finished component is saved, so running the same review again (or **Continue review** on a stopped one) asks Copilot only for the rest. Cancel keeps what finished: the stopped review is shown and saved with how far it got. A saved component is reused only with the same model and the same review instructions.
-- Completed reviews are saved under **Past reviews** in the Review tab, newest first: the last 20 per repository, with your triage and the exact commits each one reviewed. Open one later (also after restarting VS Code) to check its findings, export it, or fix it; delete the ones you no longer need. They are kept in VS Code's workspace state on this machine, never in the repository.
-- **Review skills** give Copilot a checklist for the files they match: injection, authentication and sessions, secrets and cryptography, CI/CD, cloud and infrastructure as code, Python, JavaScript/TypeScript, C and C++, and clean code, based on public standards (CWE Top 25, OWASP ASVS, Microsoft SDL, SEI CERT, OpenSSF Scorecard, the AWS Security Pillar, Google's code review guide). They turn on by file type (globs ignore case); when a component matches more than fits in one request, security skills come first. The report lists which ones each component got. Set them up in **Review skills** on the Review tab, also before your first review: turn one off, or **Import skill…** from a Markdown file with an `id`, `name`, `category` and `appliesTo` header. Skills are kept in VS Code, never read from the repository.
-- **Clean code**, next to the review buttons, makes every review also check maintainability (complexity, duplication, naming, error handling, dead code, tests). Its notes are listed under **Code quality**, are at most medium severity and never block a review. The choice is remembered.
-- Copy or save the report as Markdown for a release or pull request. Results are advisory: verified means checked evidence plus a second AI assessment, not proof.
-
-### Linked-repository synchronization
-
-- Initialize and update Git submodules when the workspace uses them.
-- Synchronize all linked repositories to their recorded commits, or reset one repository from its row in the Repositories list.
-- Stage updated repository pointers in the parent repository.
-
-## Repository model
-
-Repository Manager works with:
-
-- the workspace's parent Git repository; and
-- linked repositories declared through `.gitmodules`.
-
-The parent repository participates in branch creation, deletion, checkout, pull, and push workflows. Submodule-specific actions such as initialization and pointer staging are available when applicable.
-
-Version 1.1.0 completes the rename to Repository Manager. Its extension ID, commands, settings, view IDs, and package artifact now use the `repository-manager` or `repositoryManager.*` namespaces.
-
-This is an intentional breaking identity change. VS Code treats it as a separate extension instead of an in-place update from the former Submodule Manager package.
-
-## Installation
-
-### From a VSIX package
-
-1. Download the latest `.vsix` package from [GitHub Releases](https://github.com/Eurus7895/Repository-Manager/releases).
-2. Open Extensions in VS Code (`Ctrl+Shift+X`).
-3. Select the `...` menu and choose **Install from VSIX...**.
-4. Select the downloaded package.
-
-### From source
-
-```bash
-npm ci
-npm run compile
-```
-
-Press `F5` in VS Code to launch an Extension Development Host.
-
-## Usage
-
-### Open Repository Manager
-
-- Command Palette: **Repository Manager: Open Repository Manager**
-- Keyboard: `Ctrl+Shift+G M` (`Cmd+Shift+G M` on macOS)
-- Activity Bar: select the Repository Manager icon to show repositories, branches, tags, remotes and stashes in the Side Bar; it opens the editor dashboard next to it. Choosing a repository or branch there acts on the dashboard; hiding the Side Bar leaves the dashboard the whole editor.
-
-### Create a branch across repositories
-
-1. Open Repository Manager.
-2. Select **Create Branch**.
-3. Choose the parent and linked repositories that should receive the branch.
-4. Select a base branch.
-5. Select an allowed branch prefix.
-6. Enter the ticket and branch details.
-7. Review the result and optionally push successful branches.
-
-### Synchronize recorded versions
-
-Select **Align** to restore linked repositories to the commits recorded by the parent repository. To reset one repository, use **Reset to recorded** on its row in the Repositories list.
-
-## Configuration
-
-Open VS Code settings and search for **Repository Manager**.
-
-| Setting | Description | Default |
+| Setting | Default | Description |
 |---|---|---|
-| `repositoryManager.defaultBranch` | Default branch used by branch workflows | `main` |
-| `repositoryManager.autoFetch` | Fetch all repositories in the background while the dashboard is visible, so ahead/behind counts stay current. Never prunes and never prompts for credentials; a repository that needs them is skipped | `true` |
-| `repositoryManager.autoFetchInterval` | Minutes between background fetches | `5` |
-| `repositoryManager.review.confirmBeforeSending` | Ask before every review sends code to Copilot, even where you chose **Always allow for this repository** | `false` |
-| `repositoryManager.showNotifications` | Show notifications for Git operations | `true` |
-| `repositoryManager.githubToken` | Optional GitHub token for PR operations | `""` |
-
-## Keyboard shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Shift+G M` | Open Repository Manager |
-| `Ctrl+Shift+G R` | Refresh repositories |
-
-Use `Cmd` instead of `Ctrl` on macOS.
+| `repositoryManager.defaultBranch` | `main` | Default branch for branch workflows |
+| `repositoryManager.autoFetch` | `true` | Fetch in the background while the dashboard is visible; never prunes and never prompts for credentials |
+| `repositoryManager.autoFetchInterval` | `5` | Minutes between background fetches |
+| `repositoryManager.review.confirmBeforeSending` | `false` | Ask before every review sends code to Copilot |
+| `repositoryManager.showNotifications` | `true` | Show notifications for Git operations |
+| `repositoryManager.githubToken` | `""` | Optional GitHub token for pull request operations |
 
 ## Requirements
 
-- VS Code 1.74.0 or newer
-- Git 2.20.0 or newer
-- Node.js for development only
-- For AI summaries, reviews and fixes: VS Code 1.91 or newer and GitHub Copilot
+- VS Code 1.74 or newer and Git 2.20 or newer.
+- AI summaries, reviews and fixes need VS Code 1.91 or newer and GitHub Copilot.
 
 ## Development
 
 ```bash
 npm ci
-npm run compile
-npm run lint
-npm test          # compiles, lints, then runs the test suites
-npm run test:ui   # Playwright screenshots of the dashboard and Side Bar into ui-snapshots/
-npm run package
+npm test          # compile, lint and test suites
+npm run test:ui   # Playwright screenshots into ui-snapshots/
+npm run package   # builds the .vsix
 ```
 
-The package command creates a `.vsix` file in the repository root; `.vsix` files are not committed. `npm run test:ui` uses Chromium; set `PLAYWRIGHT_CHROMIUM_PATH` if Playwright does not find it. Pull requests run all three checks in CI.
-
-## Contributing
-
-1. Create a focused branch.
-2. Make and document the change.
-3. Run `npm test`, `npm run test:ui` and `npm run package`, as CI does.
-4. Add a `CHANGELOG.md` entry under the upcoming version.
-5. Open a pull request with the validation results.
+Press `F5` to launch an Extension Development Host. Pull requests run the same checks in CI. Add a `CHANGELOG.md` entry with each change.
 
 ## License
 
-Repository Manager is available under the [MIT License](LICENSE).
+[MIT](LICENSE)
