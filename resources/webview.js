@@ -71,11 +71,8 @@
   let reviewStatus = { state: 'idle' };
   let historyDateFormat = null; // shared by every history row (see formatHistoryDate)
   let repositoryDataAt = Date.now(); // when the repository list was last received (the page starts with it)
-  // Release › Load range: the request resolving the range since the latest release tag.
-  let releaseRange = null; // { requestId, repositoryPath }
   // Names for the ends of the loaded comparison (e.g. a release tag and a branch), for reviews of it.
   let comparisonLabels = null;
-  let releaseRangeRequestId = 0;
   const changeSummaries = new Map();
   let activeChangeSummaryKey = null;
   let historyContextTarget = null;
@@ -364,7 +361,7 @@
       if (summaryModelsState === 'loading') return;
       summaryModelsState = 'loading';
       const select = document.getElementById('summaryModelSelect');
-      if (select && select.options && select.options[0]) select.options[0].textContent = 'Default Copilot model (loading list…)';
+      if (select && select.options && select.options[0]) select.options[0].textContent = 'Default (loading list…)';
       postMessage('loadSummaryModels', {});
     },
     summarizeChanges: () => {
@@ -515,16 +512,20 @@
     compareBranches: () => {
       const base = document.getElementById('compareBaseBranch');
       const target = document.getElementById('compareTargetBranch');
+      const hint = document.getElementById('branchCompareHint');
       if (!base || !target || !base.value || !target.value || base.value === target.value) {
-        alert('Select two different branches to compare.');
+        // Webviews cannot show alert(): say it in the dialog.
+        if (hint) { hint.hidden = false; hint.textContent = 'Select two different branches or tags to compare.'; }
         return;
       }
+      if (hint) hint.hidden = true;
       const modal = document.getElementById('branchCompareModal');
       if (modal) modal.classList.remove('active');
       commitCompareSelection = [];
       comparisonRepository = activeDashboardRepository;
       // The picked names label the comparison and any review of it (not the resolved hashes).
-      loadComparison(base.value, target.value, 'branches', { base: base.value, target: target.value });
+      const label = select => (select.selectedOptions[0] && select.selectedOptions[0].dataset.label) || select.value;
+      loadComparison(base.value, target.value, 'branches', { base: label(base), target: label(target) });
     },
 
     clearCommitComparison: () => clearCommitComparison(true),
@@ -757,14 +758,8 @@
     // Local changes: HEAD → a snapshot of the working tree the extension takes when the review starts.
     // Whether there is anything to review is decided when the snapshot is taken, not from the last refresh.
     reviewLocal: () => startReview({ kind: 'local', scope: 'changes' }),
-    loadReleaseRange: () => {
-      if (!activeDashboardRepository) return;
-      releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
-      showReleaseStatus('Release: finding the latest release tag…');
-      postMessage('resolveReleaseRange', { requestId: releaseRange.requestId, repositoryPath: activeDashboardRepository });
-    },
     // Review the changes the detail pane shows: the selected commit against its parent, or the
-    // loaded comparison from Base to Target. Every file is reviewed from Release › Review branch.
+    // loaded comparison from Base to Target. Every file at the branch tip is reviewed from Review all.
     reviewSelection: () => {
       if (!changeSummarySelection) return;
       const { baseSha, targetSha } = changeSummarySelection;
@@ -1182,7 +1177,6 @@
   }
 
   function clearCommitComparison(restoreParent) {
-    releaseRange = null;
     const shouldRestoreParent = Boolean(restoreParent && comparisonSource && selectedDashboardCommit);
     commitCompareSelection = [];
     comparisonRepository = activeDashboardRepository;
@@ -1211,15 +1205,7 @@
     }
   }
 
-  function showReleaseStatus(text, isError) {
-    const status = document.getElementById('commitCompareStatus');
-    if (!status) return;
-    status.hidden = false;
-    status.innerHTML = `<span class="compare-range${isError ? ' compare-error' : ''}" title="${escapeHtml(text)}">${escapeHtml(text)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear">×</button>`;
-  }
-
   function loadComparison(baseRevision, targetRevision, source, labels) {
-    if (source !== 'release') releaseRange = null;
     comparisonLabels = labels || null;
     resetChangeSummary();
     selectedDashboardCommit = targetRevision;
@@ -1233,7 +1219,7 @@
     const status = document.getElementById('commitCompareStatus');
     if (status) {
       status.hidden = false;
-      const kind = { branches: 'Branches', review: 'Review', release: 'Release' }[source] || 'Commits';
+      const kind = { branches: 'Compare', review: 'Review' }[source] || 'Commits';
       const base = labels && labels.base ? labels.base : shortRevision(baseRevision);
       const target = labels && labels.target ? labels.target : shortRevision(targetRevision);
       status.innerHTML = `<span class="compare-range" title="${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
@@ -1250,16 +1236,40 @@
   function populateBranchCompareSelects(baseSelect, targetSelect) {
     if (!baseSelect || !targetSelect) return;
     const branches = repositoryRefs.branches || [];
-    const options = branches.map(branch => {
+    const branchOptions = branches.map(branch => {
       const revision = branch.isRemote ? `origin/${branch.name}` : branch.name;
-      return `<option value="${escapeHtml(revision)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`;
+      return `<option value="${escapeHtml(revision)}" data-label="${escapeHtml(revision)}">${escapeHtml(branch.name)}${branch.isRemote ? ' (remote)' : ''}</option>`;
     }).join('');
-    baseSelect.innerHTML = options || '<option value="">No branches available</option>';
-    targetSelect.innerHTML = options || '<option value="">No branches available</option>';
+    // Tags too, newest version first, so a release (1.12.0 → main) is two picks. refs/tags/ keeps a
+    // tag apart from a branch of the same name; the label is the tag's own name.
+    const tagOptions = sortTagsByVersion(repositoryRefs.tags || []).map(tag =>
+      `<option value="refs/tags/${escapeHtml(tag.name)}" data-label="${escapeHtml(tag.name)}">${escapeHtml(tag.name)}</option>`).join('');
+    const options = (branchOptions ? `<optgroup label="Branches">${branchOptions}</optgroup>` : '') +
+      (tagOptions ? `<optgroup label="Tags">${tagOptions}</optgroup>` : '');
+    baseSelect.innerHTML = options || '<option value="">No branches or tags</option>';
+    targetSelect.innerHTML = options || '<option value="">No branches or tags</option>';
     const current = branches.find(branch => branch.isCurrent);
     const alternative = branches.find(branch => !branch.isCurrent && !branch.isRemote) || branches.find(branch => !branch.isCurrent);
     if (current) baseSelect.value = current.name;
     if (alternative) targetSelect.value = alternative.isRemote ? `origin/${alternative.name}` : alternative.name;
+  }
+
+  // Version tags (1.12.0, v2.0.0) newest first, compared number by number; other tags after, by name.
+  function sortTagsByVersion(tags) {
+    const version = name => { const match = /^v?(\d+(?:\.\d+)*)$/.exec(name); return match ? match[1].split('.').map(Number) : null; };
+    return tags.slice().sort((a, b) => {
+      const left = version(a.name);
+      const right = version(b.name);
+      if (left && right) {
+        for (let i = 0; i < Math.max(left.length, right.length); i++) {
+          const difference = (right[i] || 0) - (left[i] || 0);
+          if (difference) return difference;
+        }
+        return 0;
+      }
+      if (left || right) return left ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   }
 
   function getDashboardFilters(repositoryPath) {
@@ -1326,7 +1336,6 @@
     applyDashboardFilters(repositoryPath);
     dashboardActivated = true;
     updateCommitCompareUI();
-    releaseRange = null;
     // The review tab follows the repository the dashboard shows.
     publishReviewContext();
     const behindCount = document.getElementById('dashboardBehindCount');
@@ -2043,7 +2052,7 @@
         case 'summaryModelsLoaded': {
           const select = document.getElementById('summaryModelSelect');
           const models = Array.isArray(message.payload?.models) ? message.payload.models : [];
-          select.innerHTML = '<option value="">Default Copilot model</option>' + models
+          select.innerHTML = '<option value="">Default</option>' + models
             .filter(model => typeof model.id === 'string' && typeof model.name === 'string')
             .map(model => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name)}</option>`).join('');
           if (selectedSummaryModelId && !models.some(model => model.id === selectedSummaryModelId)) {
@@ -2061,7 +2070,7 @@
           // Opening the menu again retries.
           summaryModelsState = 'idle';
           const select = document.getElementById('summaryModelSelect');
-          if (select && select.options && select.options[0]) select.options[0].textContent = 'Default Copilot model';
+          if (select && select.options && select.options[0]) select.options[0].textContent = 'Default';
           document.getElementById('changeSummaryStatus').textContent = message.payload?.message || 'Unable to load models.';
           break;
         }
@@ -2175,21 +2184,6 @@
             if (draft) draft.value = '';
             document.getElementById('commitChangesModal').classList.remove('active');
           }
-          break;
-        }
-
-        case 'releaseRangeResolved': {
-          const payload = message.payload || {};
-          if (!releaseRange || payload.requestId !== releaseRange.requestId ||
-              payload.repositoryPath !== activeDashboardRepository) break;
-          if (!payload.baseSha) {
-            releaseRange = null;
-            showReleaseStatus(payload.message || 'No release range.', true);
-            break;
-          }
-          releaseRange = null;
-          commitCompareSelection = [];
-          loadComparison(payload.baseSha, payload.targetSha, 'release', { base: payload.baseLabel, target: payload.targetLabel });
           break;
         }
 
