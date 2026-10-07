@@ -5,6 +5,17 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - Unreleased
+
+### Changed
+
+- The **Model** list moved into the dashboard toolbar, next to the review buttons, so you can choose the Copilot model for reviews, summaries, commit messages and fixes from any view, including Uncommitted changes.
+- **Compare branches** also lists tags, newest version first, so the changes since a release (for example `1.12.0` → `main`) are two picks, labelled with the tag's name. Picking the same branch or tag twice says so in the dialog instead of a pop-up.
+
+### Removed
+
+- The **◈ Release › Load range** button. Compare a release tag with the branch from **Compare branches** instead.
+
 ## [2.0.0] - 2026-10-07
 
 ### Added

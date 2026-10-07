@@ -36,8 +36,6 @@ const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
 const { ReviewSkillStore } = require(path.join(root, 'out/reviewSkillStore'));
 const { ReviewBridge } = require(path.join(root, 'out/reviewBridge'));
 const { CommitMessageController } = require(path.join(root, 'out/commitMessageController'));
-const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
-const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
 const { getHtmlForWebview, getReviewHtml, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
 Module._load = originalLoad;
 const outputDir = path.join(root, 'ui-snapshots');
@@ -236,15 +234,6 @@ function startServer(workspace, otherFolder) {
         currentRoot = message.payload.folderPath;
         ops = new GitOperations(message.payload.folderPath);
         await post({ type: 'workspaceFolderChanged', payload: { repositories: await listRepositories() } });
-      } else if (message.type === 'resolveReleaseRange') {
-        // Same as RepositoryManagerPanel._resolveReleaseRange.
-        const { requestId, repositoryPath } = message.payload;
-        const service = new GitCommandService(currentRoot);
-        const range = await resolveReleaseRange(service, service.resolveRepositoryPath(repositoryPath));
-        await post({ type: 'releaseRangeResolved', payload: range.latestReleaseTag
-          ? { requestId, repositoryPath, baseSha: await service.resolveRevision(repositoryPath, range.latestReleaseTag),
-            targetSha: await service.resolveRevision(repositoryPath, range.currentBranch), baseLabel: range.latestReleaseTag, targetLabel: range.currentBranch }
-          : { requestId, repositoryPath, message: `No release tag like 1.5.0 or v1.5.0 is reachable from ${range.currentBranch}.` } });
       } else if (commitMessages.handles(message.type)) {
         await commitMessages.handle(message);
       } else if (message.type === 'summarizeChanges') {
@@ -657,13 +646,29 @@ async function main() {
     assert.match(await changeBadge.textContent(), /^[SMUC]\d+$/);
     assert.match(await changeBadge.getAttribute('title'), /^\d+ files? (staged|modified, not staged|untracked|with conflicts)$/);
 
-    // Release › Load range loads the changes since the latest release tag, and only loads them.
-    assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Load range']);
+    // The toolbar has no Release group: the Copilot model sits next to the reviews it runs.
+    assert.equal(await page.locator('[data-action="loadReleaseRange"]').count(), 0, 'Load range is still there');
+    assert.equal(await page.locator('.history-controls .toolbar-model #summaryModelSelect').isVisible(), true, 'the model select is not in the toolbar');
+    assert.equal(await page.locator('.change-summary-toolbar select').count(), 0, 'the summary bar still has a model select');
     assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review changes', 'Review commit', 'Review branch', 'Review all', 'Review ↗']);
-    await page.click('.review-release-group [data-action="loadReleaseRange"]');
-    await page.waitForFunction(() => /Release: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
+    // Compare lists tags after the branches, newest version first: the release 1.0.0 → feature/dashboard
+    // is two picks, labelled with the tag's name, and only loads the comparison.
+    await page.click('[data-action="openBranchCompareModal"]');
+    await page.locator('#branchCompareModal.active').waitFor();
+    assert.deepEqual(await page.locator('#compareBaseBranch optgroup').evaluateAll(groups => groups.map(group => group.label)), ['Branches', 'Tags']);
+    assert.deepEqual(await page.locator('#compareBaseBranch optgroup[label="Tags"] option').allTextContents(), ['1.0.0']);
+    // The same ref on both sides is refused in the dialog, not with alert() (webviews have none).
+    await page.selectOption('#compareBaseBranch', 'main');
+    await page.selectOption('#compareTargetBranch', 'main');
+    await page.click('#branchCompareModal [data-action="compareBranches"]');
+    assert.equal(await page.textContent('#branchCompareHint'), 'Select two different branches or tags to compare.');
+    assert.equal(await page.locator('#branchCompareModal.active').count(), 1);
+    await page.selectOption('#compareBaseBranch', 'refs/tags/1.0.0');
+    await page.selectOption('#compareTargetBranch', 'feature/dashboard');
+    await page.click('#branchCompareModal [data-action="compareBranches"]');
+    await page.waitForFunction(() => /Compare: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
     await page.locator('#dashboardChangedFiles [data-action]').first().waitFor();
-    assert.equal(reviewProbe.summaries.length, 0, 'loading the range started a summary');
+    assert.equal(reviewProbe.summaries.length, 0, 'loading the comparison started a summary');
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
     assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
@@ -696,7 +701,7 @@ async function main() {
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    // Reviews start with one click, without a dialog: Review commit, Review branch, Review all, next to Load range.
+    // Reviews start with one click, without a dialog: Review commit, Review branch, Review all, next to the model.
     assert.deepEqual(await page.locator('.review-current-group button').evaluateAll(items => items.map(item => item.dataset.action)),
       ['reviewLocal', 'reviewSelection', 'reviewRelease', 'reviewRelease', 'openReviewTab']);
     assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
@@ -939,7 +944,7 @@ async function main() {
     await page.selectOption('#compareBaseBranch', 'main');
     await page.selectOption('#compareTargetBranch', 'feature/dashboard');
     await page.click('#branchCompareModal [data-action="compareBranches"]');
-    await page.waitForFunction(() => /Branches: main → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
+    await page.waitForFunction(() => /Compare: main → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
     await page.waitForFunction(() => document.getElementById('reviewSelectionChangesButton').getAttribute('aria-disabled') === null);
     await page.click('#reviewSelectionChangesButton');
     await rv.waitForFunction(() => /^Diff: main → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent));
@@ -1253,12 +1258,6 @@ async function main() {
     await snap(page, '03b-other-workspace-folder');
     // Saved reviews belong to their repository: this folder lists none.
     assert.equal(await page.isHidden('#reviewHistory'), true);
-    // Without a release tag, Release › Load range says so and loads nothing.
-    const summariesBefore = reviewProbe.summaries.length;
-    await page.click('.review-release-group [data-action="loadReleaseRange"]');
-    await page.waitForFunction(() => /No release tag .* reachable from main/.test(document.getElementById('commitCompareStatus').textContent));
-    assert.equal(reviewProbe.summaries.length, summariesBefore);
-    await page.click('#commitCompareStatus [data-action="clearCommitComparison"]');
 
     // Continue/Abort rebase are offered only while a rebase is paused.
     const rebaseItems = page.locator('#historyContextMenu [data-requires-operation="rebase"]');
@@ -1452,11 +1451,12 @@ async function main() {
         // The review buttons must be fully on screen (the controls row clips, it does not scroll).
         releaseRight: document.querySelector('.review-current-group').getBoundingClientRect().right,
         controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right,
-        releaseText: ['.review-release-group', '.review-current-group']
-          .map(selector => document.querySelector(selector).innerText.replace(/\s+/g, ' ').trim()).join(' | ')
+        modelRight: document.querySelector('.toolbar-model').getBoundingClientRect().right,
+        releaseText: document.querySelector('.review-current-group').innerText.replace(/\s+/g, ' ').trim()
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), '◈ range | changes commit branch all clean code review ↗');
+      assert.ok(layout.modelRight <= layout.controlsRight, `${width}px: the model select is cut off`);
+      assert.equal(layout.releaseText.toLowerCase(), 'changes commit branch all clean code review ↗');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();
@@ -1468,7 +1468,7 @@ async function main() {
           controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right
         }));
         assert.ok(pill.right <= pill.statusRight && pill.statusRight <= pill.controlsRight, `${width}px: the comparison status is cut off`);
-        assert.equal(await narrow.locator('.review-release-group').isVisible(), true, `${width}px: the release group is hidden`);
+        assert.equal(await narrow.locator('.toolbar-model').isVisible(), true, `${width}px: the model select is hidden`);
         await snap(narrow, `${name}-compare`);
         await narrow.click('[data-action="clearCommitComparison"]');
       }

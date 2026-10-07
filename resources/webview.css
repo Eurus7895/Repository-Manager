@@ -2454,7 +2454,6 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 }
 .change-summary[hidden], .change-summary button[hidden] { display: none; }
 .change-summary-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.change-summary-toolbar select { max-width: min(260px, 100%); min-width: 150px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border, var(--border)); padding: 5px; }
 /* Reviews of the same selection, set apart from the summary and its Cancel. */
 #reviewLocalChangesButton { position: relative; margin-left: 11px; }
 #reviewLocalChangesButton::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: -11px; border-left: 1px solid var(--border); }
@@ -2712,12 +2711,23 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-entry button { padding: 0 8px; color: var(--text-secondary); background: var(--bg-tertiary); font: inherit; cursor: pointer; }
 .review-entry button:hover { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
 .review-entry button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.review-release-group, .review-current-group { align-items: stretch; height: 30px; font-size: 12px; }
-.review-release-group > *, .review-current-group > * { display: block; line-height: 28px; }
+.review-current-group { align-items: stretch; height: 30px; font-size: 12px; }
+.review-current-group > * { display: block; line-height: 28px; }
+/* The Copilot model, next to the reviews it runs: one choice for reviews, summaries and commit messages. */
+.toolbar-model { display: inline-flex; flex: none; align-items: stretch; height: 30px; font-size: 12px; vertical-align: middle; white-space: nowrap; }
+.toolbar-model > span { display: flex; align-items: center; padding: 0 8px; color: var(--text-muted); border: 1px solid var(--border-strong); border-right: 0; border-radius: 6px 0 0 6px; background: var(--bg-tertiary); }
+.history-controls .toolbar-model select { max-width: 200px; min-width: 96px; width: 100%; height: 30px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); border: 1px solid var(--border-strong); border-radius: 0 6px 6px 0; padding: 0 6px; font: inherit; }
+.toolbar-model select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .review-entry-label { padding: 0 8px; color: var(--text-muted); }
 /* Compact: "◈ | Changes | Whole"; the buttons' titles still say what each one reviews. */
 @media (max-width: 1100px) {
   .review-entry-word { display: none; }
+  .history-controls .toolbar-model select { max-width: 120px; }
+}
+/* Narrower: the select alone; its tooltip says what it is. */
+@media (max-width: 850px) {
+  .toolbar-model > span { display: none; }
+  .history-controls .toolbar-model select { border-radius: 6px; min-width: 84px; max-width: 90px; }
   .review-entry button::first-letter { text-transform: uppercase; }
   .history-controls { gap: 6px; }
   .compare-branches-button { padding: 0 7px; font-size: 0; }
@@ -2905,3 +2915,6 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .working-diff-modes button { padding: 1px 7px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 .working-diff-modes button.active { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 .working-diff-modes button:disabled { opacity: .45; cursor: default; }
+
+/* Why Compare did not run, in the dialog's footer (webviews have no alert()). */
+.compare-hint { margin-right: auto; color: var(--vscode-errorForeground); font-size: 12px; align-self: center; }

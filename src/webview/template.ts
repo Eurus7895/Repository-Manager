@@ -216,23 +216,24 @@ function renderModals(repositories: RepositoryInfo[]): string {
     <div class="modal-overlay" id="branchCompareModal">
       <div class="modal branch-compare-modal" role="dialog" aria-modal="true" aria-labelledby="branchCompareModalTitle">
         <div class="modal-header">
-          <div class="modal-heading"><span class="modal-title" id="branchCompareModalTitle">Compare branches</span><span>Show the changes required to move from the base branch to the target branch.</span></div>
+          <div class="modal-heading"><span class="modal-title" id="branchCompareModalTitle">Compare branches</span><span>Show the changes from a base branch or tag to a target branch or tag, such as a release tag to main.</span></div>
           <button class="modal-close" aria-label="Close" data-action="closeModal" data-modal="branchCompareModal">&times;</button>
         </div>
         <div class="modal-body branch-compare-fields">
           <div class="form-group">
-            <label class="form-label" for="compareBaseBranch">Base branch</label>
+            <label class="form-label" for="compareBaseBranch">Base</label>
             <select class="form-select" id="compareBaseBranch"><option value="">Loading branches...</option></select>
           </div>
           <span class="compare-direction" aria-hidden="true">→</span>
           <div class="form-group">
-            <label class="form-label" for="compareTargetBranch">Target branch</label>
+            <label class="form-label" for="compareTargetBranch">Target</label>
             <select class="form-select" id="compareTargetBranch"><option value="">Loading branches...</option></select>
           </div>
         </div>
         <div class="modal-footer">
+          <span class="form-hint compare-hint" id="branchCompareHint" role="alert" hidden></span>
           <button class="btn" data-action="closeModal" data-modal="branchCompareModal">Cancel</button>
-          <button class="btn btn-primary" data-action="compareBranches">Compare branches</button>
+          <button class="btn btn-primary" data-action="compareBranches">Compare</button>
         </div>
       </div>
     </div>
@@ -319,13 +320,10 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
           <div class="history-controls">
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
-            <div class="review-entry review-release-group" role="group" aria-label="The release, with Copilot">
-              <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
-              <button type="button" data-action="loadReleaseRange" title="Load the changes since the latest release tag on the current branch; summarize or review them below"><span class="review-entry-word">Load </span>range</button>
-            </div>
+            <label class="toolbar-model" for="summaryModelSelect" title="The Copilot model for reviews, summaries, commit messages and fixes; the list loads when you open it"><span>Model</span><select id="summaryModelSelect" aria-label="Copilot model"><option value="">Default</option></select></label>
             <div class="review-entry review-current-group" role="group" aria-label="Review with Copilot">
               <button type="button" data-action="reviewLocal" id="reviewLocalChangesButton" title="Review your local changes before committing: staged and unstaged changes and new files (not those .gitignore excludes), as they are now. Nothing is committed or staged"><span class="review-entry-word">Review </span>changes</button>
-              <button type="button" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Review the selected commit against its parent, or the loaded comparison (Base/Target, branches, release range). Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>commit</button>
+              <button type="button" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Review the selected commit against its parent, or the loaded comparison (Base/Target or a branch comparison). Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>commit</button>
               <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds since it left the default branch (main or master), as a pull request shows it. Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>branch</button>
               <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file as committed at the tip of the current branch. Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>all</button>
               <label class="review-quality-toggle" title="Every review (commit, branch, all) also checks maintainability: complexity, duplication, naming, error handling, dead code, tests. These notes never block a review."><input type="checkbox" id="reviewQualityToggle"> Clean code</label>
@@ -351,7 +349,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
             <div class="change-summary" id="changeSummary" hidden>
-              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model" title="The Copilot model for summaries, reviews and fixes; the list loads when you open it"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-toolbar"><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
             </div>
             <div class="commit-content" id="commitContent">
