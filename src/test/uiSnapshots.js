@@ -58,6 +58,19 @@ const lightThemeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-
 --vscode-list-hoverBackground:#f2f2f2;--vscode-toolbar-hoverBackground:rgba(184,184,184,.31);--vscode-focusBorder:#005fb8;--vscode-dropdown-background:#ffffff;--vscode-dropdown-foreground:#3b3b3b;--vscode-dropdown-border:#cecece;--vscode-menu-background:#ffffff;--vscode-menu-foreground:#3b3b3b;--vscode-menu-border:#cecece}`;
 
 function git(cwd, ...args) {
+  // The dashboard runs `git status` in the background, which holds the index lock for a moment;
+  // a test command that writes the index then fails with "index.lock: File exists". Wait for it.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return runGit(cwd, args);
+    } catch (error) {
+      if (attempt >= 40 || !/index\.lock': File exists/.test(String(error.stderr || ''))) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
+function runGit(cwd, args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
     encoding: 'utf8',
