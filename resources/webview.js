@@ -167,6 +167,9 @@
   }
 
   function restoreChangeSummary() {
+    // Commit… and Review changes sit in the summary bar for uncommitted changes, before Summarize.
+    const workingActions = document.getElementById('workingTreeActions');
+    if (workingActions) workingActions.hidden = !(changeSummarySelection && changeSummarySelection.local);
     if (!changeSummarySelection) return;
     const record = changeSummaries.get(changeSummaryKey(changeSummarySelection));
     document.getElementById('changeSummary').hidden = false;
@@ -375,9 +378,10 @@
       activeChangeSummaryKey = key;
       document.getElementById('changeSummaryResult').innerHTML = '';
       restoreChangeSummary();
+      // Local changes: the extension summarizes HEAD → a snapshot of the working tree it takes now.
       postMessage('summarizeChanges', { repositoryPath: activeDashboardRepository,
         baseSha: changeSummarySelection.baseSha, targetSha: changeSummarySelection.targetSha,
-        requestId, modelId: selectedSummaryModelId });
+        local: changeSummarySelection.local === true || undefined, requestId, modelId: selectedSummaryModelId });
     },
     cancelChangeSummary: () => {
       cancelPendingChangeSummary();
@@ -761,7 +765,7 @@
     // Review the changes the detail pane shows: the selected commit against its parent, or the
     // loaded comparison from Base to Target. Every file at the branch tip is reviewed from Review all.
     reviewSelection: () => {
-      if (!changeSummarySelection) return;
+      if (!changeSummarySelection || changeSummarySelection.local) return;
       const { baseSha, targetSha } = changeSummarySelection;
       const labels = comparisonLabels || {};
       startReview({ scope: 'changes', base: comparisonSource ? baseSha || undefined : undefined, target: targetSha,
@@ -1716,12 +1720,28 @@
     const summary = document.getElementById('dashboardCommitSummary');
     const files = document.getElementById('dashboardChangedFiles');
     const count = document.getElementById('changedFileCount');
+    // Laid out like a commit: avatar, title, what and where, the "hash" (*), then its actions.
+    // Summarize changes below works on the same snapshot of the working tree a review uses.
+    // A summary is of the changes as they were: when the files or their state change, it goes.
+    const signature = JSON.stringify(changes.map(change => [change.path, change.staged, change.unstaged, change.untracked, change.conflicted]));
+    if (changeSummarySelection && changeSummarySelection.local && changeSummarySelection.signature !== signature) {
+      const key = changeSummaryKey(changeSummarySelection);
+      if (!(changeSummaries.get(key) || {}).pending) changeSummaries.delete(key);
+      changeSummarySelection.signature = signature;
+      restoreChangeSummary();
+    }
+    if (!changeSummarySelection || !changeSummarySelection.local) {
+      changeSummarySelection = { local: true, baseSha: null, targetSha: WORKING_TREE, files: [], signature };
+      restoreChangeSummary();
+    }
     if (summary) {
-      summary.innerHTML = `<div class="commit-avatar uncommitted-avatar" aria-hidden="true">✎</div><div class="commit-summary-copy"><strong>Uncommitted changes</strong><span>${escapeHtml(workingTreeCountText(changes))} · not committed yet</span></div>` +
-        '<div class="uncommitted-actions"><button type="button" class="btn" data-action="openCommitChangesModal">Commit…</button><button type="button" class="btn" data-action="reviewLocal">Review changes</button></div>';
+      const repository = getRepository(activeDashboardRepository);
+      const where = repository && repository.currentBranch ? `on ${repository.currentBranch}` : 'detached HEAD';
+      const head = repository && repository.currentCommit ? ` · HEAD ${shortRevision(repository.currentCommit)} → working tree` : '';
+      summary.innerHTML = `<div class="commit-avatar uncommitted-avatar" aria-hidden="true">*</div><div class="commit-summary-copy"><strong>Uncommitted changes</strong><span>${escapeHtml(workingTreeCountText(changes))} · ${escapeHtml(where)}${escapeHtml(head)}</span></div><code title="Not committed yet">*</code>`;
     }
     if (count) count.textContent = String(changes.length);
-    // The new Review changes button follows the review lock; Review commit has nothing to review here.
+    // Review changes follows the review lock; Review commit has no commit to review here.
     applyReviewLock();
     if (!files) return;
     files.innerHTML = changes.map(change => {
@@ -2996,7 +3016,7 @@
     const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], [data-action="reviewLocal"], ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
-      const nothingSelected = element.dataset.action === 'reviewSelection' && !changeSummarySelection;
+      const nothingSelected = element.dataset.action === 'reviewSelection' && (!changeSummarySelection || changeSummarySelection.local);
       if (locked || nothingSelected) {
         element.setAttribute('aria-disabled', 'true');
         if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';

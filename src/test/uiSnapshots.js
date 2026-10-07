@@ -412,6 +412,22 @@ async function main() {
     await page.locator('#uncommittedRow.active').waitFor();
     assert.match(await page.textContent('#uncommittedRow'), /Uncommitted changes\s*1 modified/);
     assert.match(await page.textContent('#dashboardCommitSummary'), /Uncommitted changes/);
+    // Laid out like a commit: title, counts and where (branch, HEAD → working tree), * for the hash,
+    // and the summary bar; the toolbar's model applies, and Review commit has no commit to review.
+    assert.match(await page.textContent('#dashboardCommitSummary .commit-summary-copy span'), /^1 modified · on feature\/dashboard · HEAD [0-9a-f]{7,8} → working tree$/);
+    assert.equal(await page.textContent('#dashboardCommitSummary > code'), '*');
+    assert.equal(await page.isVisible('#changeSummary'), true, 'the summary bar is hidden for uncommitted changes');
+    assert.deepEqual(await page.locator('.change-summary-toolbar button:visible').allTextContents(), ['Commit…', 'Review changes', 'Summarize changes']);
+    assert.equal(await page.getAttribute('#reviewSelectionChangesButton', 'aria-disabled'), 'true');
+    const summariesBeforeLocal = reviewProbe.summaries.length;
+    await page.selectOption('#summaryModelSelect', '');
+    await page.click('#summarizeChangesButton');
+    for (let i = 0; i < 100 && reviewProbe.summaries.length === summariesBeforeLocal; i++) await page.waitForTimeout(20);
+    const localSummary = reviewProbe.summaries.at(-1);
+    assert.deepEqual([localSummary.local, localSummary.repositoryPath], [true, '.'], 'Summarize did not ask for the local changes');
+    await page.waitForFunction(() => document.getElementById('changeSummaryStatus').textContent === 'Waiting for confirmation…');
+    await page.click('#cancelChangeSummaryButton');
+    reviewProbe.summaries.length = 0; // later steps count the summaries they start
     assert.deepEqual(await page.locator('#dashboardChangedFiles .changed-file-item').evaluateAll(items => items.map(item => item.dataset.path)), ['lib-b']);
     await page.locator('#dashboardDiff .diff-addition').first().waitFor();
     assert.deepEqual(await page.locator('#workingDiffModes button').evaluateAll(buttons => buttons.map(button => [button.dataset.mode, button.disabled, button.classList.contains('active')])),
@@ -671,7 +687,7 @@ async function main() {
     assert.equal(reviewProbe.summaries.length, 0, 'loading the comparison started a summary');
     // The comparison status only names the range; its actions sit in one toolbar below.
     assert.equal(await page.locator('#commitCompareStatus button').count(), 1, 'the comparison status has more than its clear button');
-    assert.deepEqual(await page.locator('.change-summary-toolbar button:not([hidden])').allTextContents(),
+    assert.deepEqual(await page.locator('.change-summary-toolbar button:visible').allTextContents(),
       ['Summarize changes']);
     await page.click('#summarizeChangesButton');
     for (let i = 0; i < 100 && !reviewProbe.summaries.length; i++) await page.waitForTimeout(20);
