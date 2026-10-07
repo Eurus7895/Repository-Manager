@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
 import { countChanges } from '../services/submoduleService';
+import { buildCommitMessagePrompt, cleanCommitMessage, collectCommitDiff, commitSections, DEFAULT_CONVENTION, findCommitConvention, MAX_COMMIT_DIFF_BYTES } from '../services/commitMessage';
 import { snapshotLocalChanges } from '../services/localChangesSnapshot';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
@@ -813,6 +814,61 @@ async function testLocalChangesSnapshot(): Promise<void> {
   }
 }
 
+async function testCommitMessageInputs(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-message-'));
+  const git = new GitCommandService(root);
+  const write = (file: string, content: string) => writeFileSync(path.join(root, file), content);
+  try {
+    // No convention anywhere: Conventional Commits.
+    assert.deepEqual(findCommitConvention(root), { sources: [], text: DEFAULT_CONVENTION });
+    // Only the parts of AGENTS.md about commits, with their headings.
+    write('AGENTS.md', '# Agents\n\nBe nice.\n\n## Style\n\nUse tabs.\n\n## Branches and Commits\n\n- Use gitmoji in every commit subject.\n- Sign nothing.\n');
+    const fromAgents = findCommitConvention(root);
+    assert.deepEqual(fromAgents.sources, ['AGENTS.md']);
+    assert.match(fromAgents.text, /## Branches and Commits\n- Use gitmoji in every commit subject\.\n- Sign nothing\./);
+    assert.doesNotMatch(fromAgents.text, /Use tabs|Be nice/);
+    // A commitlint config is passed as it is, alongside.
+    write('.commitlintrc.json', '{ "extends": ["@commitlint/config-conventional"] }\n');
+    assert.deepEqual(findCommitConvention(root).sources, ['AGENTS.md', '.commitlintrc.json']);
+    assert.equal(commitSections('# Readme\n\nNothing here.\n'), '');
+
+    // The model's reply becomes a plain message: no fence, no attribution lines.
+    assert.equal(cleanCommitMessage('```\nfeat: add x\n\nWhy it matters.\nCo-authored-by: Bot <b@x>\n```'), 'feat: add x\n\nWhy it matters.');
+    assert.equal(cleanCommitMessage('"fix: quote"'), 'fix: quote');
+    assert.equal(cleanCommitMessage('  \n '), '');
+
+    // The diff is what the commit would record: the staged part when that is the choice.
+    await git.execGit(['init', '-q', '-b', 'main']);
+    await git.execGit(['config', 'user.name', 'Message Test']);
+    await git.execGit(['config', 'user.email', 'message@example.com']);
+    write('a.txt', 'one\n');
+    await git.execGit(['add', 'a.txt']);
+    await git.execGit(['commit', '-qm', 'base']);
+    write('a.txt', 'staged line\n');
+    await git.execGit(['add', 'a.txt']);
+    write('a.txt', 'staged line\nlater line\n');
+    write('new.txt', 'brand new\n');
+    const whole = await collectCommitDiff(git, '.', ['a.txt', 'new.txt'], 'whole');
+    assert.deepEqual(whole.files, ['a.txt', 'new.txt']);
+    assert.match(whole.diff, /\+later line/);
+    assert.match(whole.diff, /\+brand new/);
+    const stagedPart = await collectCommitDiff(git, '.', ['a.txt'], 'staged');
+    assert.match(stagedPart.diff, /\+staged line/);
+    assert.doesNotMatch(stagedPart.diff, /later line/);
+    // A file that does not fit is named, not cut.
+    write('big.txt', 'x'.repeat(MAX_COMMIT_DIFF_BYTES + 10) + '\n');
+    const big = await collectCommitDiff(git, '.', ['a.txt', 'big.txt', 'missing.txt'], 'whole');
+    assert.deepEqual([big.files, big.omitted], [['a.txt'], ['big.txt', 'missing.txt']]);
+    const prompt = buildCommitMessagePrompt(fromAgents, big);
+    assert.match(prompt, /Follow this repository's commit convention, taken from AGENTS\.md/);
+    assert.match(prompt, /their diff is not shown: big\.txt, missing\.txt/);
+    assert.match(prompt, /Do not add co-author/);
+    assert.match(buildCommitMessagePrompt({ sources: [], text: DEFAULT_CONVENTION }, whole), /states no commit convention\. Use:\n\nConventional Commits 1\.0\.0/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -956,6 +1012,7 @@ async function main(): Promise<void> {
   testHistoryGraph();
   testDashboardToolbarHierarchy();
   await testWorkingTreePreview();
+  await testCommitMessageInputs();
   await testCommitSelectedFiles();
   testCountChanges();
   await testLocalChangesSnapshot();

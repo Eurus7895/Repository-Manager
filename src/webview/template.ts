@@ -190,7 +190,11 @@ function renderModals(repositories: RepositoryInfo[]): string {
             </div>
           </div>
           <div class="form-group commit-message-group">
-            <label class="form-label" for="commitMessage">Commit message</label>
+            <div class="commit-message-heading">
+              <label class="form-label" for="commitMessage">Commit message</label>
+              <button type="button" class="btn commit-message-generate" id="commitMessageGenerate" data-action="generateCommitMessage" title="Copilot writes a message for the selected files, following this repository's commit convention (AGENTS.md, CONTRIBUTING.md, commitlint), or Conventional Commits when it has none. You review and edit it before committing">Write with Copilot</button>
+            </div>
+            <div class="commit-message-status" id="commitMessageStatus" role="status" aria-live="polite"></div>
             <textarea class="form-input commit-message-input" id="commitMessage" data-initial-focus rows="3" placeholder="Describe the changes"></textarea>
           </div>
           <fieldset class="commit-partial" id="commitPartialChoice" hidden>
