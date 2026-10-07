@@ -555,12 +555,26 @@ async function main() {
     await page.evaluate(() => window.__restorePost());
     await page.check('.commit-change-checkbox[data-path="partly.txt"]');
     await page.fill('#commitMessage', 'my own draft');
+    // A partly staged file needs the choice first: the message describes what will be committed.
+    await page.evaluate(() => document.querySelectorAll('input[name="commitPartial"]').forEach(radio => { radio.checked = false; }));
+    const promptsBefore = reviewProbe.messagePrompts.length;
+    await page.click('#commitMessageGenerate');
+    assert.match(await page.textContent('#commitMessageStatus'), /Choose how to commit the partly staged files first/);
+    assert.equal(reviewProbe.messagePrompts.length, promptsBefore);
+    await page.check('input[name="commitPartial"][value="staged"]');
     await page.click('#commitMessageGenerate');
     await page.waitForFunction(() => document.getElementById('commitMessage').value.startsWith('feat(app): add the partly file'));
     assert.match(reviewProbe.messagePrompts.at(-1).prompt, /\+staged/);
     assert.doesNotMatch(reviewProbe.messagePrompts.at(-1).prompt, /\+later/, 'the staged-part choice was not used for the message');
     assert.match(await page.textContent('#commitMessageStatus'), /Written by scripted:1, following (AGENTS\.md|Conventional Commits)/);
     await snap(page, '07c-commit-message-written');
+    // Changing the choice afterwards says the message no longer matches.
+    await page.check('input[name="commitPartial"][value="whole"]');
+    assert.match(await page.textContent('#commitMessageStatus'), /written for the staged part only/);
+    await page.check('input[name="commitPartial"][value="staged"]');
+    await page.fill('#commitMessage', 'my own draft');
+    await page.click('#commitMessageGenerate');
+    await page.waitForFunction(() => /Written by/.test(document.getElementById('commitMessageStatus').textContent));
     await page.click('#commitMessageStatus [data-action="undoCommitMessage"]');
     assert.equal(await page.inputValue('#commitMessage'), 'my own draft');
     // A failure is said in place, and the button is usable again.

@@ -566,7 +566,13 @@
         return;
       }
       const partialChoice = document.querySelector('input[name="commitPartial"]:checked');
+      // The message describes what will be committed: for a partly staged file that depends on the choice.
+      if (selectedPartlyStaged().length && !partialChoice) {
+        setCommitMessageStatus('Choose how to commit the partly staged files first: the message describes that.');
+        return;
+      }
       commitMessageRequest = ++commitMessageRequestId;
+      commitMessagePendingPartial = partialChoice ? partialChoice.value : null;
       const button = document.getElementById('commitMessageGenerate');
       if (button) button.textContent = 'Cancel';
       setCommitMessageStatus('Reading the selected changes…');
@@ -762,6 +768,9 @@
 
   let commitMessageRequestId = 0;
   let commitMessageRequest = 0;
+  // The partly staged choice the last written message describes.
+  let commitMessagePartial = null;
+  let commitMessagePendingPartial = null;
   let previousCommitMessage = null;
 
   function setCommitMessageStatus(html, isHtml) {
@@ -1922,11 +1931,16 @@
 
         case 'commitMessageGenerated': {
           const payload = message.payload;
-          if (payload.requestId !== commitMessageRequest) break;
+          // Only into the dialog it was asked from, still open on the same repository.
+          const dialog = document.getElementById('commitChangesModal');
+          const dialogRepository = document.getElementById('commitChangesRepositoryPath');
+          if (payload.requestId !== commitMessageRequest || !dialog || !dialog.classList.contains('active')
+            || !dialogRepository || dialogRepository.value !== payload.repositoryPath) break;
           const draft = document.getElementById('commitMessage');
           // Your own draft is kept for Undo, not lost.
           previousCommitMessage = draft && draft.value.trim() ? draft.value : null;
           if (draft) draft.value = payload.message;
+          commitMessagePartial = commitMessagePendingPartial;
           endCommitMessageRequest();
           const convention = (payload.convention || []).length ? payload.convention.join(', ') : 'Conventional Commits (no convention found)';
           const omitted = (payload.omitted || []).length ? ` ${payload.omitted.length} file(s) were too large to show it.` : '';
@@ -1943,6 +1957,9 @@
           if (result) result.textContent = message.payload.message || '';
           if (commitButton) commitButton.disabled = false;
           if (message.payload.success) {
+            // A message still being written was for the changes just committed.
+            if (commitMessageRequest) { postMessage('cancelCommitMessage', {}); endCommitMessageRequest(''); }
+            commitMessagePartial = null;
             const draft = document.getElementById('commitMessage');
             if (draft) draft.value = '';
             document.getElementById('commitChangesModal').classList.remove('active');
@@ -2460,6 +2477,17 @@
         checkbox.checked = commitSelectAll.checked;
       });
       updateCommitSelectionCount();
+    });
+  }
+
+  // A written message describes one choice for partly staged files: changing it says so.
+  const commitPartialChoice = document.getElementById('commitPartialChoice');
+  if (commitPartialChoice) {
+    commitPartialChoice.addEventListener('change', function () {
+      const choice = document.querySelector('input[name="commitPartial"]:checked');
+      if (commitMessagePartial && choice && choice.value !== commitMessagePartial) {
+        setCommitMessageStatus(`The message was written for ${commitMessagePartial === 'staged' ? 'the staged part only' : 'the whole files'}: write it again to match this choice.`);
+      }
     });
   }
 

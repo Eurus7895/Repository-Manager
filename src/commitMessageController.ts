@@ -72,8 +72,10 @@ export class CommitMessageController {
       }
       const git = new GitCommandService(this.host.workspaceRoot());
       const root = git.resolveRepositoryPath(repositoryPath);
-      const commitDiff = await collectCommitDiff(git, repositoryPath, files, partial);
-      if (!commitDiff.files.length) {
+      const commitDiff = await collectCommitDiff(git, repositoryPath, files, partial, () => !current());
+      if (!current()) { return; }
+      // Files too large to show are still in the commit: the message can name them.
+      if (!commitDiff.files.length && !commitDiff.tooLarge.length) {
         await reply('commitMessageFailed', { message: 'None of the selected files has a diff to describe.' });
         return;
       }
@@ -82,7 +84,7 @@ export class CommitMessageController {
         await reply('commitMessageProgress', { message: 'Waiting for confirmation…' });
         const actions = this.host.alwaysConfirm() ? [WRITE] : [WRITE, ALWAYS];
         const answer = await this.host.ask(
-          `Write a commit message for ${commitDiff.files.length} file${commitDiff.files.length === 1 ? '' : 's'} with Copilot?`,
+          `Write a commit message for ${commitDiff.files.length + commitDiff.tooLarge.length} file${commitDiff.files.length + commitDiff.tooLarge.length === 1 ? '' : 's'} with Copilot?`,
           `The diff of the selected files (up to 60 KB) and the repository's commit convention ` +
             `(${convention.sources.length ? convention.sources.join(', ') : 'none found: Conventional Commits'}) are sent to the selected Copilot model. ` +
             'Nothing is committed: the message goes into the dialog for you to read and edit.' +

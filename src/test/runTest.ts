@@ -1,6 +1,6 @@
 import * as assert from 'assert/strict';
 import * as path from 'path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
 import { countChanges } from '../services/submoduleService';
@@ -831,6 +831,19 @@ async function testCommitMessageInputs(): Promise<void> {
     write('.commitlintrc.json', '{ "extends": ["@commitlint/config-conventional"] }\n');
     assert.deepEqual(findCommitConvention(root).sources, ['AGENTS.md', '.commitlintrc.json']);
     assert.equal(commitSections('# Readme\n\nNothing here.\n'), '');
+    // A commit section keeps its subsections (the format and examples), not the next sibling section.
+    assert.equal(commitSections('## Commit messages\n\nRead this.\n\n### Format\n\n`type: subject`\n\n### Examples\n\nfix: x\n\n## Testing\n\nRun npm test.\n'),
+      '## Commit messages\nRead this.\n### Format\n`type: subject`\n### Examples\nfix: x');
+    // A convention file that is a symlink out of the repository is never read.
+    const outside = mkdtempSync(path.join(tmpdir(), 'repository-manager-outside-'));
+    writeFileSync(path.join(outside, 'secret.txt'), 'TOKEN=abc\n');
+    rmSync(path.join(root, '.commitlintrc.json'));
+    symlinkSync(path.join(outside, 'secret.txt'), path.join(root, 'commitlint.config.js'));
+    assert.deepEqual(findCommitConvention(root).sources, ['AGENTS.md']);
+    assert.doesNotMatch(findCommitConvention(root).text, /TOKEN/);
+    rmSync(path.join(root, 'commitlint.config.js'));
+    rmSync(outside, { recursive: true, force: true });
+    write('.commitlintrc.json', '{ "extends": ["@commitlint/config-conventional"] }\n');
 
     // The model's reply becomes a plain message: no fence, no attribution lines.
     assert.equal(cleanCommitMessage('```\nfeat: add x\n\nWhy it matters.\nCo-authored-by: Bot <b@x>\n```'), 'feat: add x\n\nWhy it matters.');
@@ -855,15 +868,41 @@ async function testCommitMessageInputs(): Promise<void> {
     const stagedPart = await collectCommitDiff(git, '.', ['a.txt'], 'staged');
     assert.match(stagedPart.diff, /\+staged line/);
     assert.doesNotMatch(stagedPart.diff, /later line/);
-    // A file that does not fit is named, not cut.
-    write('big.txt', 'x'.repeat(MAX_COMMIT_DIFF_BYTES + 10) + '\n');
+    // A file that does not fit is named, not cut; the limit is in bytes (é is two).
+    write('big.txt', 'é'.repeat(Math.ceil(MAX_COMMIT_DIFF_BYTES * 0.6)) + '\n');
+    assert.ok('é'.repeat(Math.ceil(MAX_COMMIT_DIFF_BYTES * 0.6)).length < MAX_COMMIT_DIFF_BYTES);
     const big = await collectCommitDiff(git, '.', ['a.txt', 'big.txt', 'missing.txt'], 'whole');
-    assert.deepEqual([big.files, big.omitted], [['a.txt'], ['big.txt', 'missing.txt']]);
+    assert.deepEqual([big.files, big.omitted, big.tooLarge], [['a.txt'], ['big.txt', 'missing.txt'], ['big.txt']]);
+    assert.ok(Buffer.byteLength(big.diff, 'utf8') <= MAX_COMMIT_DIFF_BYTES);
+    // An untracked nested repository is described as the gitlink the commit adds.
+    const nested = path.join(root, 'nested');
+    mkdirSync(nested);
+    const nestedGit = new GitCommandService(nested);
+    await nestedGit.execGit(['init', '-q']);
+    await nestedGit.execGit(['-c', 'user.name=N', '-c', 'user.email=n@x', 'commit', '-q', '--allow-empty', '-m', 'n']);
+    const nestedDiff = await collectCommitDiff(git, '.', ['nested/'], 'whole');
+    assert.deepEqual(nestedDiff.files, ['nested/']);
+    assert.match(nestedDiff.diff, /\+Subproject commit [0-9a-f]{40}/);
+    rmSync(nested, { recursive: true, force: true });
+    // Cancelled: no file is read.
+    assert.deepEqual((await collectCommitDiff(git, '.', ['a.txt'], 'whole', () => true)).files, []);
     const prompt = buildCommitMessagePrompt(fromAgents, big);
     assert.match(prompt, /Follow this repository's commit convention, taken from AGENTS\.md/);
     assert.match(prompt, /their diff is not shown: big\.txt, missing\.txt/);
     assert.match(prompt, /Do not add co-author/);
     assert.match(buildCommitMessagePrompt({ sources: [], text: DEFAULT_CONVENTION }, whole), /states no commit convention\. Use:\n\nConventional Commits 1\.0\.0/);
+    // Before the first commit, the staged part is what the index holds, not the working tree.
+    const fresh = mkdtempSync(path.join(tmpdir(), 'repository-manager-message-fresh-'));
+    const freshGit = new GitCommandService(fresh);
+    await freshGit.execGit(['init', '-q']);
+    writeFileSync(path.join(fresh, 'f.txt'), 'staged\n');
+    await freshGit.execGit(['add', 'f.txt']);
+    writeFileSync(path.join(fresh, 'f.txt'), 'staged\nlater\n');
+    const freshStaged = await collectCommitDiff(freshGit, '.', ['f.txt'], 'staged');
+    assert.match(freshStaged.diff, /\+staged/);
+    assert.doesNotMatch(freshStaged.diff, /later/);
+    assert.match((await collectCommitDiff(freshGit, '.', ['f.txt'], 'whole')).diff, /\+later/);
+    rmSync(fresh, { recursive: true, force: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

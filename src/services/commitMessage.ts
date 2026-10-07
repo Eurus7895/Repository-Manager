@@ -11,9 +11,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { GitCommandService } from './gitCommandService';
 import { PartialStagedChoice } from '../types';
-import { isPartlyStaged, parseWorkingTreeStatus } from './commitService';
+import { CommitService, isPartlyStaged, parseWorkingTreeStatus } from './commitService';
 
-/** At most this much diff goes to the model; the rest is named, so the message can say less about it. */
+/** At most this many bytes of diff go to the model; larger files are named instead, so the message can say less about them. */
 export const MAX_COMMIT_DIFF_BYTES = 60 * 1024;
 /** At most this much of the repository's convention text. */
 export const MAX_CONVENTION_BYTES = 6 * 1024;
@@ -21,37 +21,58 @@ export const MAX_CONVENTION_BYTES = 6 * 1024;
 export interface CommitDiff {
   diff: string;
   files: string[];
-  /** Files whose diff did not fit, or could not be read. */
+  /** Files in the commit whose diff is not sent: too large, or could not be read. */
   omitted: string[];
+  /** The part of `omitted` left out only for size: the commit has them, so the message can still name them. */
+  tooLarge: string[];
 }
 
 /**
  * The diff the commit would record for each selected file: HEAD → working tree, or HEAD → index for
- * a partly staged file committed by its staged part (the commit dialog's choice).
+ * a partly staged file committed by its staged part (the commit dialog's choice). An untracked nested
+ * repository is shown as the gitlink the commit adds, as the commit dialog's preview shows it.
+ * `cancelled` is checked between files, so an abandoned request stops starting Git processes.
  */
 export async function collectCommitDiff(git: GitCommandService, repositoryPath: string, files: string[],
-  partial?: PartialStagedChoice): Promise<CommitDiff> {
+  partial?: PartialStagedChoice, cancelled: () => boolean = () => false): Promise<CommitDiff> {
   const root = git.resolveRepositoryPath(repositoryPath);
   const changes = parseWorkingTreeStatus(await git.execGitRaw(['status', '--porcelain=v1', '-z', '--untracked-files=all'], root, 10000));
   const byPath = new Map(changes.map(change => [change.path, change]));
   const hasHead = await git.execGit(['rev-parse', '--verify', '--quiet', 'HEAD'], root).then(() => true, () => false);
+  const preview = new CommitService(git);
   let diff = '';
+  let bytes = 0;
   const included: string[] = [];
   const omitted: string[] = [];
+  const tooLarge: string[] = [];
   for (const file of files.map(item => git.resolveFilePath(item))) {
+    if (cancelled()) { break; }
     const change = byPath.get(file);
     if (!change || change.conflicted) { omitted.push(file); continue; }
     const paths = [change.path, ...(change.originalPath ? [change.originalPath] : [])];
-    const args = change.untracked || !hasHead
-      ? ['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--', '/dev/null', change.path]
-      : ['diff', ...(partial === 'staged' && isPartlyStaged(change) ? ['--cached'] : ['HEAD']),
-        '--no-ext-diff', '--no-textconv', '--find-renames', '--', ...paths];
-    const patch = await git.execGitRaw(args, root, 15000, true).catch(() => '');
-    if (!patch || diff.length + patch.length > MAX_COMMIT_DIFF_BYTES) { omitted.push(file); continue; }
+    const stagedPart = partial === 'staged' && isPartlyStaged(change);
+    let patch = '';
+    if (change.untracked) {
+      patch = (await preview.getWorkingTreePreview(repositoryPath, change.path, 'unstaged', 0).catch(() => undefined))?.patch || '';
+    } else {
+      // Without a first commit there is no HEAD to compare with: the index is compared with the empty tree.
+      const args = stagedPart || !hasHead
+        ? ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--find-renames', '--', ...paths]
+        : ['diff', 'HEAD', '--no-ext-diff', '--no-textconv', '--find-renames', '--', ...paths];
+      patch = await git.execGitRaw(args, root, 15000, true).catch(() => '');
+      if (!hasHead && !stagedPart) {
+        // The whole file, as it is in the working tree, for a file staged before the first commit.
+        patch += await git.execGitRaw(['diff', '--no-ext-diff', '--no-textconv', '--', ...paths], root, 15000, true).catch(() => '');
+      }
+    }
+    if (!patch) { omitted.push(file); continue; }
+    const size = Buffer.byteLength(patch, 'utf8');
+    if (bytes + size > MAX_COMMIT_DIFF_BYTES) { omitted.push(file); tooLarge.push(file); continue; }
     diff += patch;
+    bytes += size;
     included.push(file);
   }
-  return { diff, files: included, omitted };
+  return { diff, files: included, omitted, tooLarge };
 }
 
 const CONVENTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', '.github/CONTRIBUTING.md', 'docs/CONTRIBUTING.md'];
@@ -70,25 +91,30 @@ export const DEFAULT_CONVENTION = 'Conventional Commits 1.0.0: `<type>(<optional
 
 /**
  * The parts of a Markdown file about commits: each section whose heading, or any line, mentions
- * commits, as the section's heading and its lines.
+ * commits, with the subsections under it (a "## Commit messages" keeps its "### Format" and
+ * "### Examples"). A long section keeps its heading and only its lines about commits.
  */
 export function commitSections(markdown: string): string {
-  const sections: string[][] = [];
-  let current: string[] = [];
+  const sections: { level: number; lines: string[] }[] = [{ level: 0, lines: [] }];
   for (const line of markdown.split(/\r?\n/)) {
-    if (/^#{1,6}\s/.test(line)) { sections.push(current); current = [line]; } else { current.push(line); }
+    const heading = /^(#{1,6})\s/.exec(line);
+    if (heading) { sections.push({ level: heading[1].length, lines: [line] }); } else { sections[sections.length - 1].lines.push(line); }
   }
-  sections.push(current);
-  return sections
-    .filter(section => section.some(line => /\bcommit/i.test(line)))
-    .map(section => {
-      const heading = /^#{1,6}\s/.test(section[0] || '') ? section[0] : '';
-      // A long section keeps its heading and the lines about commits (and their list continuations).
-      const lines = section.join('\n').length > 2000 ? section.filter(line => /\bcommit/i.test(line)) : section.slice(heading ? 1 : 0);
-      return [heading, ...lines].filter(Boolean).join('\n').trim();
-    })
-    .filter(Boolean)
-    .join('\n\n');
+  const mentions = (section: { lines: string[] }) => section.lines.some(line => /\bcommit/i.test(line));
+  const kept: string[] = [];
+  for (let index = 0; index < sections.length; index++) {
+    const section = sections[index];
+    if (!mentions(section)) { continue; }
+    // The section and its subsections: everything until the next heading at its level or above.
+    const block = [section];
+    while (section.level > 0 && index + 1 < sections.length && sections[index + 1].level > section.level) { block.push(sections[++index]); }
+    const text = block.map(part => part.lines.join('\n')).join('\n');
+    const lines = text.length > 2000
+      ? [section.lines[0], ...block.flatMap(part => part.lines.filter(line => /^#{1,6}\s/.test(line) || /\bcommit/i.test(line))).slice(1)]
+      : text.split('\n');
+    kept.push(lines.filter(line => line.trim()).join('\n'));
+  }
+  return kept.filter(Boolean).join('\n\n');
 }
 
 /** The commit convention of the repository at `root`, or the Conventional Commits default. */
@@ -97,8 +123,14 @@ export function findCommitConvention(root: string): CommitConvention {
   const parts: string[] = [];
   const read = (file: string) => {
     try {
+      // Only a regular file inside the repository: a symlink could point anywhere, such as a credentials file.
       const full = path.join(root, file);
-      return fs.statSync(full).isFile() && fs.statSync(full).size < 512 * 1024 ? fs.readFileSync(full, 'utf8') : '';
+      const stat = fs.lstatSync(full);
+      if (!stat.isFile() || stat.size >= 512 * 1024) { return ''; }
+      const real = fs.realpathSync(full);
+      const relative = path.relative(fs.realpathSync(root), real);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) { return ''; }
+      return fs.readFileSync(real, 'utf8');
     } catch {
       return '';
     }

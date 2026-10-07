@@ -87,6 +87,14 @@ async function main() {
     assert.deepEqual(questions.at(-1).actions, ['Write message']);
     alwaysConfirm = false;
 
+    // A commit of only a file too large to show still gets a message, which names it.
+    fs.writeFileSync(path.join(repo, 'huge.txt'), 'x'.repeat(70 * 1024) + '\n');
+    reply = async () => ({ text: 'chore: add huge.txt', model: 'scripted:1' });
+    await generate(70, { files: ['huge.txt'] });
+    assert.match(prompts.at(-1).prompt, /their diff is not shown: huge\.txt/);
+    assert.equal(last('commitMessageGenerated').payload.message, 'chore: add huge.txt');
+    fs.rmSync(path.join(repo, 'huge.txt'));
+
     // An empty or failing reply says so.
     reply = async () => ({ text: '  ', model: 'scripted:1' });
     await generate(8);
