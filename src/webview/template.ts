@@ -180,9 +180,9 @@ function renderModals(repositories: RepositoryInfo[]): string {
             <div class="commit-preview-panel">
               <div class="commit-preview-heading">
                 <span id="commitPreviewPath">Select a file to preview its changes</span>
-                <div class="commit-preview-modes" id="commitPreviewModes" hidden>
-                  <button type="button" data-action="previewWorkingTreeMode" data-mode="staged">Staged</button>
-                  <button type="button" data-action="previewWorkingTreeMode" data-mode="unstaged">Unstaged</button>
+                <div class="commit-preview-modes" id="commitPreviewModes" role="group" aria-label="Which changes the preview shows" hidden>
+                  <button type="button" data-action="previewWorkingTreeMode" data-mode="staged" title="Show the changes already staged (the index)">Staged diff</button>
+                  <button type="button" data-action="previewWorkingTreeMode" data-mode="unstaged" title="Show the changes not staged yet (the working tree)">Unstaged diff</button>
                 </div>
               </div>
               <pre class="diff-viewer commit-preview-diff" id="commitPreviewDiff"><span class="diff-placeholder">Select a file to preview its changes.</span></pre>
@@ -193,9 +193,15 @@ function renderModals(repositories: RepositoryInfo[]): string {
             <label class="form-label" for="commitMessage">Commit message</label>
             <textarea class="form-input commit-message-input" id="commitMessage" data-initial-focus rows="3" placeholder="Describe the changes"></textarea>
           </div>
+          <fieldset class="commit-partial" id="commitPartialChoice" hidden>
+            <legend id="commitPartialLegend">Some selected files are partly staged</legend>
+            <label><input type="radio" name="commitPartial" value="staged"> Commit only the staged part <small>(later changes stay unstaged)</small></label>
+            <label><input type="radio" name="commitPartial" value="whole"> Commit the whole file <small>(as it is in the working tree)</small></label>
+          </fieldset>
           <div class="commit-result" id="commitChangesResult" role="status" aria-live="polite"></div>
         </div>
         <div class="modal-footer">
+          <label class="commit-push-option" title="Push the current branch once the commit is created. Remembered for this repository"><input type="checkbox" id="commitPushAfter"> Push after commit</label>
           <button class="btn" data-action="closeModal" data-modal="commitChangesModal">Cancel</button>
           <button class="btn btn-primary" id="commitSelectedFilesButton" data-action="commitSelectedChanges">Commit selected</button>
         </div>

@@ -94,6 +94,8 @@ export class RepositoryManagerPanel {
     );
   }
 
+  private readonly _workspaceState?: vscode.Memento;
+
   private constructor(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
@@ -103,6 +105,7 @@ export class RepositoryManagerPanel {
     this._panel = panel;
     this._extensionUri = extensionUri;
     this._workspaceRoot = workspaceRoot;
+    this._workspaceState = workspaceState;
     this._gitOps = new GitOperations(workspaceRoot);
     this._prManager = new PRManager(workspaceRoot);
 
@@ -345,7 +348,8 @@ export class RepositoryManagerPanel {
       prManager: this._prManager,
       workspaceRoot: this._workspaceRoot,
       refresh: () => this.refresh(),
-      reloadDashboardHistory: (repositoryPaths) => this.reloadDashboardHistory(repositoryPaths)
+      reloadDashboardHistory: (repositoryPaths) => this.reloadDashboardHistory(repositoryPaths),
+      workspaceState: this._workspaceState
     };
   }
 

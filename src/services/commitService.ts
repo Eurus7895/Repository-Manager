@@ -4,9 +4,9 @@
  */
 
 import * as path from 'path';
-import { realpathSync } from 'fs';
+import { realpathSync, rmSync } from 'fs';
 import { GitCommandService } from './gitCommandService';
-import { CommitInfo, RemoteInfo, CommandResult, WorkingTreeChange, WorkingTreePreview } from '../types';
+import { CommitInfo, RemoteInfo, CommandResult, PartialStagedChoice, WorkingTreeChange, WorkingTreePreview } from '../types';
 
 const CONFLICT_STATUSES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 const MAX_PREVIEW_LENGTH = 1024 * 1024;
@@ -45,6 +45,13 @@ export function parseWorkingTreeStatus(output: string): WorkingTreeChange[] {
 
   return changes;
 }
+
+/** Staged, then changed again in the working tree. */
+export function isPartlyStaged(change: WorkingTreeChange): boolean {
+  return change.staged && change.unstaged && !change.untracked && !change.conflicted;
+}
+
+const unique = (items: string[]) => Array.from(new Set(items));
 
 export class CommitService {
   constructor(private gitCmd: GitCommandService) {}
@@ -156,7 +163,15 @@ export class CommitService {
     };
   }
 
-  async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {
+  /**
+   * Commits the selected files, and only them. The commit is built in a temporary index, so the
+   * real index (what you staged) is not touched unless the commit succeeds, and other staged files
+   * stay staged. A selected file that is partly staged (staged, then changed again) needs `partial`:
+   * 'staged' commits the staged version and leaves the later changes; 'whole' commits the file as
+   * it is in the working tree.
+   */
+  async commitFiles(repositoryPath: string, filePaths: string[], message: string,
+    partial?: PartialStagedChoice): Promise<CommandResult> {
     const repositoryRoot = this.gitCmd.resolveRepositoryPath(repositoryPath);
     const commitMessage = message.trim();
     if (!commitMessage || commitMessage.includes('\0')) {
@@ -168,6 +183,7 @@ export class CommitService {
       return { success: false, message: 'Select at least one changed file' };
     }
 
+    let temporaryIndex: string | undefined;
     try {
       const changes = await this.getWorkingTreeChanges(repositoryPath);
       const changesByPath = new Map(changes.map(change => [change.path, change]));
@@ -179,22 +195,48 @@ export class CommitService {
       if (selectedChanges.some(change => change?.conflicted)) {
         return { success: false, message: 'Resolve conflicted files before committing' };
       }
+      const selected = selectedChanges as WorkingTreeChange[];
+      if (selected.some(isPartlyStaged) && partial !== 'staged' && partial !== 'whole') {
+        return { success: false, message: 'Choose whether to commit only the staged part of partly staged files, or the whole files' };
+      }
 
-      const pathspecs = Array.from(new Set(selectedChanges.flatMap(change => {
-        if (!change) {
-          return [];
-        }
-        return [change.path, ...(change.originalPath ? [change.originalPath] : [])]
-          .map(filePath => this.gitCmd.resolveFilePath(filePath));
-      })));
+      const pathsOf = (change: WorkingTreeChange) => [change.path, ...(change.originalPath ? [change.originalPath] : [])]
+        .map(filePath => this.gitCmd.resolveFilePath(filePath));
+      const stagedOnly = partial === 'staged' ? selected.filter(isPartlyStaged) : [];
+      const wholePaths = unique(selected.filter(change => !stagedOnly.includes(change)).flatMap(pathsOf));
+      const stagedPaths = unique(stagedOnly.flatMap(pathsOf));
 
-      await this.gitCmd.execGit(['add', '-A', '--', ...pathspecs], repositoryRoot);
-      await this.gitCmd.execGit(['commit', '--only', '-m', commitMessage, '--', ...pathspecs], repositoryRoot, 60000);
+      // The temporary index starts from HEAD, so files that were not selected are committed as they are in HEAD.
+      const indexPath = path.resolve(repositoryRoot, await this.gitCmd.execGit(['rev-parse', '--git-path', 'index'], repositoryRoot));
+      temporaryIndex = `${indexPath}.repository-manager-${process.pid}-${Date.now()}`;
+      // Git reads the index named by this variable, so the real one stays as it is.
+      const temporary: NodeJS.ProcessEnv = { ...process.env };
+      temporary['GIT_INDEX_FILE'] = temporaryIndex;
+      const hasHead = await this.gitCmd.execGit(['rev-parse', '--verify', '--quiet', 'HEAD'], repositoryRoot).then(() => true, () => false);
+      await this.gitCmd.execGitRaw(['read-tree', ...(hasHead ? ['HEAD'] : ['--empty'])], repositoryRoot, 30000, false, temporary);
+      if (wholePaths.length) {
+        await this.gitCmd.execGitRaw(['add', '-A', '--', ...wholePaths], repositoryRoot, 30000, false, temporary);
+      }
+      for (const filePath of stagedPaths) {
+        // The staged version: the real index entry, or none when the file was staged as deleted (or renamed away).
+        const entry = (await this.gitCmd.execGitRaw(['ls-files', '-s', '-z', '--', filePath], repositoryRoot)).split('\0')[0];
+        const match = /^(\d+) ([0-9a-f]+) 0\t/.exec(entry || '');
+        await this.gitCmd.execGitRaw(match
+          ? ['update-index', '--add', '--cacheinfo', `${match[1]},${match[2]},${filePath}`]
+          : ['update-index', '--force-remove', '--', filePath], repositoryRoot, 30000, false, temporary);
+      }
+      await this.gitCmd.execGitRaw(['commit', '-m', commitMessage], repositoryRoot, 60000, false, temporary);
+
+      // The commit exists: the selected files' index entries now match it. A whole file is then clean;
+      // a file committed by its staged part keeps its later changes, unstaged.
+      await this.gitCmd.execGit(['reset', '-q', '--', ...wholePaths, ...stagedPaths], repositoryRoot);
       const shortHash = await this.gitCmd.execGit(['rev-parse', '--short', 'HEAD'], repositoryRoot);
       return { success: true, message: `Created commit ${shortHash}` };
     } catch (error: unknown) {
       const err = error as Error;
       return { success: false, message: `Failed to commit: ${err.message}` };
+    } finally {
+      if (temporaryIndex) { rmSync(temporaryIndex, { force: true }); }
     }
   }
 

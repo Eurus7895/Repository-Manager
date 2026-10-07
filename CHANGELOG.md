@@ -5,6 +5,23 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - Unreleased
+
+### Added
+
+- **Push after commit**: a checkbox in the commit dialog pushes the branch once the commit is created, and is remembered per repository. A failed push keeps the commit and says only the push failed.
+- Each repository in the sidebar shows its local changes by kind: **S** staged, **M** modified, **U** untracked, **C** conflicted, with the counts spelled out on hover.
+
+### Changed
+
+- A selected file that was staged and then changed again asks whether to commit **only the staged part** or **the whole file**, instead of always committing the whole file.
+- The commit preview's toggle is now **Staged diff / Unstaged diff**, with both always shown; it switches the preview and never stages or unstages anything.
+- Push uses the branch's own remote, and on a detached HEAD says to check out a branch instead of showing a Git error.
+
+### Fixed
+
+- A commit that failed (for example, rejected by a hook) left the selected files staged; your staging is now left exactly as it was.
+
 ## [1.11.0] - 2026-10-07
 
 ### Changed

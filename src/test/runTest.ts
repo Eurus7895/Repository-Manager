@@ -3,6 +3,7 @@ import * as path from 'path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
+import { countChanges } from '../services/submoduleService';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
@@ -629,6 +630,114 @@ async function testHistoryRewriteSha256(): Promise<void> {
   }
 }
 
+function testCountChanges(): void {
+  const lines = [
+    '# branch.oid abc', '# branch.head main',
+    '1 M. N... 100644 100644 100644 a a staged.txt',
+    '1 .M N... 100644 100644 100644 a a modified.txt',
+    '1 MM N... 100644 100644 100644 a a both.txt',
+    '2 R. N... 100644 100644 100644 a a R100 new.txt\told.txt',
+    'u UU N... 100644 100644 100644 100644 a a a conflict.txt',
+    '? new file.txt', '? other.txt', '! ignored.txt', ''
+  ];
+  assert.deepEqual(countChanges(lines), { staged: 3, modified: 2, untracked: 2, conflicted: 1 });
+  assert.deepEqual(countChanges(['# branch.oid abc']), { staged: 0, modified: 0, untracked: 0, conflicted: 0 });
+}
+
+async function testCommitSelectedFiles(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-commit-'));
+  const git = new GitCommandService(root);
+  const write = (file: string, content: string) => writeFileSync(path.join(root, file), content);
+  const status = () => git.execGitRaw(['status', '--porcelain=v1'], root);
+  const show = (spec: string) => git.execGit(['show', spec], root);
+  try {
+    await git.execGit(['init', '-q', '-b', 'main']);
+    await git.execGit(['config', 'user.name', 'Commit Test']);
+    await git.execGit(['config', 'user.email', 'commit@example.com']);
+    const service = new CommitService(git);
+
+    // A first commit, in a repository with no HEAD yet.
+    write('a.txt', 'a1\n');
+    write('b.txt', 'b1\n');
+    write('old.txt', 'moved\n');
+    let result = await service.commitFiles('.', ['a.txt', 'b.txt', 'old.txt'], 'initial');
+    assert.equal(result.success, true, result.message);
+    assert.equal(await status(), '');
+
+    // a.txt is staged, then changed again; b.txt is staged and not selected.
+    write('a.txt', 'a2 staged\n');
+    await git.execGit(['add', 'a.txt']);
+    write('a.txt', 'a3 later\n');
+    write('b.txt', 'b2 staged\n');
+    await git.execGit(['add', 'b.txt']);
+    const head = await git.execGit(['rev-parse', 'HEAD']);
+
+    // A partly staged file needs a choice; nothing is committed or restaged without one.
+    result = await service.commitFiles('.', ['a.txt'], 'no choice');
+    assert.equal(result.success, false);
+    assert.match(result.message, /partly staged/);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), head);
+    assert.equal(await status(), 'MM a.txt\nM  b.txt\n');
+
+    // A rejecting hook: the commit fails and the index is exactly as it was (no leftover git add).
+    const hook = path.join(root, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    result = await service.commitFiles('.', ['a.txt'], 'rejected', 'whole');
+    assert.equal(result.success, false);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), head);
+    assert.equal(await status(), 'MM a.txt\nM  b.txt\n', 'a failed commit changed the index');
+    assert.equal(await show(':a.txt'), 'a2 staged');
+    rmSync(hook);
+
+    // Only the staged part: the commit has the staged version, the later change stays unstaged,
+    // and b.txt (staged, not selected) is neither committed nor unstaged.
+    result = await service.commitFiles('.', ['a.txt'], 'staged part', 'staged');
+    assert.equal(result.success, true, result.message);
+    assert.equal(await show('HEAD:a.txt'), 'a2 staged');
+    assert.equal(await show('HEAD:b.txt'), 'b1');
+    assert.equal(await status(), ' M a.txt\nM  b.txt\n');
+
+    // The whole file: the commit has the working tree version, and the file is clean.
+    await git.execGit(['add', 'a.txt']);
+    write('a.txt', 'a4 whole\n');
+    result = await service.commitFiles('.', ['a.txt'], 'whole file', 'whole');
+    assert.equal(result.success, true, result.message);
+    assert.equal(await show('HEAD:a.txt'), 'a4 whole');
+    assert.equal(await status(), 'M  b.txt\n');
+
+    // A staged rename, partly staged: the staged part keeps the rename and drops the old path.
+    await git.execGit(['mv', 'old.txt', 'new.txt']);
+    write('new.txt', 'moved\nlater\n');
+    write('fresh.txt', 'untracked\n');
+    result = await service.commitFiles('.', ['new.txt', 'fresh.txt'], 'rename', 'staged');
+    assert.equal(result.success, true, result.message);
+    assert.equal(await show('HEAD:new.txt'), 'moved');
+    assert.equal(await show('HEAD:fresh.txt'), 'untracked');
+    await assert.rejects(show('HEAD:old.txt'));
+    assert.equal(await status(), 'M  b.txt\n M new.txt\n');
+
+    // Push: a branch's own remote is used; a detached HEAD gets a clear message instead of a git error.
+    const remote = mkdtempSync(path.join(tmpdir(), 'repository-manager-commit-remote-'));
+    try {
+      await git.execGit(['init', '-q', '--bare', remote]);
+      await git.execGit(['remote', 'add', 'upstream', remote], root);
+      await git.execGit(['config', 'branch.main.remote', 'upstream'], root);
+      const branches = new BranchService(git);
+      const pushed = await branches.pushChanges('.');
+      assert.equal(pushed.success, true, pushed.message);
+      assert.equal(await git.execGit(['rev-parse', 'main'], remote), await git.execGit(['rev-parse', 'HEAD'], root));
+      await git.execGit(['checkout', '-q', '--detach'], root);
+      const detached = await branches.pushChanges('.');
+      assert.equal(detached.success, false);
+      assert.match(detached.message, /HEAD is detached\. Check out a branch to push/);
+    } finally {
+      rmSync(remote, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -772,6 +881,8 @@ async function main(): Promise<void> {
   testHistoryGraph();
   testDashboardToolbarHierarchy();
   await testWorkingTreePreview();
+  await testCommitSelectedFiles();
+  testCountChanges();
   await testChangeSummaryContext();
   await testRepositoryIntegration();
   await testBranchFromHistoryCommit();
