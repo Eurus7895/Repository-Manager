@@ -2383,6 +2383,45 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   background: var(--vscode-button-background);
 }
 
+.commit-preview-modes button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.commit-partial {
+  margin: 12px 0 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
+  border-radius: 4px;
+}
+
+.commit-partial[hidden] {
+  display: none;
+}
+
+.commit-partial legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.commit-partial label {
+  display: block;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.commit-partial small {
+  color: var(--text-secondary);
+}
+
+.commit-push-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  cursor: pointer;
+}
+
 .commit-preview-diff {
   flex: 1;
   max-height: min(43vh, 430px);
@@ -2810,3 +2849,10 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .review-entry .review-open-tab:hover { background: var(--vscode-list-hoverBackground); }
 .review-open-badge:not(:empty) { margin-left: 5px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .review-open-badge.review-open-badge-blocking { color: var(--tone-error); font-weight: 600; }
+
+/* Local changes on a repository button: staged, modified, untracked, conflicted. */
+.repo-change { font-variant-numeric: tabular-nums; }
+.repo-change-staged { color: var(--vscode-gitDecoration-addedResourceForeground, #73c991); }
+.repo-change-modified { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+.repo-change-untracked { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
+.repo-change-conflicted { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }

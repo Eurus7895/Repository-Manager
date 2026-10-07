@@ -259,7 +259,12 @@ export class BranchService {
 
     try {
       const currentBranch = branch || await this.gitCmd.execGit(['rev-parse', '--abbrev-ref', 'HEAD'], fullPath);
-      await this.gitCmd.execGit(['push', '-u', 'origin', currentBranch], fullPath);
+      if (currentBranch === 'HEAD') {
+        return { success: false, message: 'Failed to push: HEAD is detached. Check out a branch to push.' };
+      }
+      // The branch's own remote when it has one (a fork, a second remote), else origin.
+      const remote = await this.gitCmd.execGit(['config', '--get', `branch.${currentBranch}.remote`], fullPath).catch(() => '') || 'origin';
+      await this.gitCmd.execGit(['push', '-u', remote, currentBranch], fullPath);
       return { success: true, message: 'Changes pushed successfully' };
     } catch (error: unknown) {
       const err = error as Error;

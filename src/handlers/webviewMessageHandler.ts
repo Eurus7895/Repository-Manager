@@ -19,6 +19,23 @@ export interface MessageHandlerContext {
   workspaceRoot: string;
   refresh: () => Promise<void>;
   reloadDashboardHistory: (repositoryPaths: string[]) => Promise<void>;
+  /** Where small per-repository choices are remembered, such as Push after commit. */
+  workspaceState?: vscode.Memento;
+}
+
+const PUSH_AFTER_COMMIT_KEY = 'repositoryManager.pushAfterCommit';
+
+/** Repositories (absolute roots) whose commit dialog has Push after commit ticked. */
+function pushAfterCommitRoots(ctx: MessageHandlerContext): string[] {
+  const value = ctx.workspaceState?.get<unknown>(PUSH_AFTER_COMMIT_KEY);
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+async function rememberPushAfterCommit(ctx: MessageHandlerContext, repositoryPath: string, push: boolean): Promise<void> {
+  if (!ctx.workspaceState) { return; }
+  const root = ctx.gitOps.resolveRepositoryPath(repositoryPath);
+  const roots = pushAfterCommitRoots(ctx).filter(item => item !== root);
+  await ctx.workspaceState.update(PUSH_AFTER_COMMIT_KEY, push ? [...roots, root] : roots);
 }
 
 export type MessagePayload = {
@@ -169,9 +186,10 @@ export async function handleGetWorkingTreeChanges(ctx: MessageHandlerContext, pa
 
   try {
     const changes = await ctx.gitOps.getWorkingTreeChanges(repositoryPath);
+    const pushAfterCommit = pushAfterCommitRoots(ctx).includes(ctx.gitOps.resolveRepositoryPath(repositoryPath));
     await sendToWebview(ctx, {
       type: 'workingTreeChangesLoaded',
-      payload: { repositoryPath, changes }
+      payload: { repositoryPath, changes, pushAfterCommit }
     });
   } catch (error) {
     await sendDashboardError(ctx, 'getWorkingTreeChanges', repositoryPath, error);
@@ -213,11 +231,16 @@ export async function handleCommitFiles(ctx: MessageHandlerContext, payload: unk
     ? request.files.filter((file): file is string => typeof file === 'string' && file.length > 0)
     : [];
 
-  const result = await ctx.gitOps.commitFiles(repositoryPath, files, message);
-  showResult(result.success, result.message);
+  const partial = request.partial === 'staged' || request.partial === 'whole' ? request.partial : undefined;
+  await rememberPushAfterCommit(ctx, repositoryPath, request.push === true);
+  const result = await ctx.gitOps.commitFiles(repositoryPath, files, message, partial);
+  // Push after commit: only once the commit exists. A failed push leaves the commit in place, and says so.
+  const pushed = result.success && request.push === true ? await ctx.gitOps.pushChanges(repositoryPath) : undefined;
+  const summary = pushed ? `${result.message}; ${pushed.success ? 'pushed' : pushed.message.replace(/^Failed to push: /, 'not pushed: ')}` : result.message;
+  showResult(result.success && (!pushed || pushed.success), summary);
   await sendToWebview(ctx, {
     type: 'commitFilesResult',
-    payload: { repositoryPath, success: result.success, message: result.message }
+    payload: { repositoryPath, success: result.success, message: summary, pushed: pushed ? pushed.success : undefined }
   });
 
   if (result.success) {

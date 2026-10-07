@@ -479,6 +479,56 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
 
+    // A file staged and then changed again: the dialog asks which version to commit, and the
+    // preview offers both sides of it. Push after commit goes with the request.
+    fs.writeFileSync(path.join(parent, 'partly.txt'), 'staged\n');
+    git(parent, 'add', 'partly.txt');
+    fs.writeFileSync(path.join(parent, 'partly.txt'), 'staged\nlater\n');
+    await page.evaluate(() => {
+      const toHost = window.__postToHost;
+      window.__restorePost = () => { window.__postToHost = toHost; };
+      window.__commitRequests = [];
+      // The commit itself is tested on real repositories elsewhere; here it must not change the fixture.
+      window.__postToHost = message => message.type === 'commitFiles' ? window.__commitRequests.push(message.payload) : toHost(message);
+    });
+    await page.click('[data-action="openCommitChangesModal"]');
+    await page.locator('#commitChangesModal.active').waitFor();
+    await page.locator('.commit-change-preview-button[data-path="partly.txt"]').click();
+    await page.waitForFunction(() => !document.getElementById('commitPreviewModes').hidden);
+    assert.deepEqual(await page.locator('#commitPreviewModes button').evaluateAll(buttons => buttons.map(button => [button.textContent, button.disabled])),
+      [['Staged diff', false], ['Unstaged diff', false]]);
+    await page.locator('#commitPartialChoice:not([hidden])').waitFor();
+    assert.match(await page.textContent('#commitPartialLegend'), /^partly\.txt is partly staged/);
+    assert.equal(await page.isChecked('#commitPushAfter'), false);
+    await page.fill('#commitMessage', 'feat: partly');
+    await page.click('#commitSelectedFilesButton');
+    assert.equal(await page.textContent('#commitChangesResult'), 'Choose how to commit the partly staged files.');
+    assert.equal(await page.evaluate(() => window.__commitRequests.length), 0, 'committed without a choice');
+    await snap(page, '07b-commit-partly-staged');
+    await page.check('input[name="commitPartial"][value="staged"]');
+    await page.check('#commitPushAfter');
+    await page.click('#commitSelectedFilesButton');
+    const request = await page.evaluate(() => window.__commitRequests[0]);
+    assert.deepEqual([request.partial, request.push, request.message], ['staged', true, 'feat: partly']);
+    assert.ok(request.files.includes('partly.txt'));
+    // Unticking the partly staged file removes the question.
+    await page.uncheck('.commit-change-checkbox[data-path="partly.txt"]');
+    assert.equal(await page.isHidden('#commitPartialChoice'), true);
+    // A file with only unstaged changes: its Staged diff is there but disabled, and says why.
+    const unstagedOnly = await page.locator('.commit-change-row', { hasNotText: 'partly.txt' }).first().locator('.commit-change-preview-button').getAttribute('data-path');
+    await page.locator(`.commit-change-preview-button[data-path="${unstagedOnly}"]`).click();
+    await page.waitForFunction(() => document.querySelector('#commitPreviewModes [data-mode="staged"]').disabled);
+    assert.match(await page.getAttribute('#commitPreviewModes [data-mode="staged"]', 'title'), /Nothing of this file is staged/);
+    await page.evaluate(() => window.__restorePost());
+    await page.keyboard.press('Escape');
+    await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
+    git(parent, 'rm', '-q', '-f', '--cached', 'partly.txt');
+    fs.rmSync(path.join(parent, 'partly.txt'));
+    // Each repository button shows its local changes by kind, spelled out on hover.
+    const changeBadge = page.locator('#dashboardRepositories .repo-change').first();
+    assert.match(await changeBadge.textContent(), /^[SMUC]\d+$/);
+    assert.match(await changeBadge.getAttribute('title'), /^\d+ files? (staged|modified, not staged|untracked|with conflicts)$/);
+
     // Release › Load range loads the changes since the latest release tag, and only loads them.
     assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Load range']);
     assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review commit', 'Review branch', 'Review all', 'Review ↗']);

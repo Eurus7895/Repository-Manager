@@ -542,6 +542,8 @@
       if (result) result.textContent = '';
       if (selectAll) selectAll.checked = true;
       if (commitButton) commitButton.disabled = false;
+      document.querySelectorAll('input[name="commitPartial"]').forEach(radio => { radio.checked = false; });
+      updatePartialChoice();
       if (modal) modal.classList.add('active');
 
       postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository });
@@ -564,10 +566,17 @@
         if (result) result.textContent = 'Enter a commit message.';
         return;
       }
+      const partialChoice = document.querySelector('input[name="commitPartial"]:checked');
+      if (selectedPartlyStaged().length && !partialChoice) {
+        if (result) result.textContent = 'Choose how to commit the partly staged files.';
+        return;
+      }
+      const push = Boolean((document.getElementById('commitPushAfter') || {}).checked);
 
-      if (result) result.textContent = 'Creating commit…';
+      if (result) result.textContent = push ? 'Creating commit, then pushing…' : 'Creating commit…';
       if (commitButton) commitButton.disabled = true;
-      postMessage('commitFiles', { repositoryPath, files, message });
+      postMessage('commitFiles', { repositoryPath, files, message, push,
+        partial: selectedPartlyStaged().length ? partialChoice.value : undefined });
     },
 
     openCreateBranchModal: (fromHistory = false) => {
@@ -716,6 +725,7 @@
     const selected = document.querySelectorAll('.commit-change-checkbox:checked').length;
     const count = document.getElementById('commitSelectionCount');
     if (count) count.textContent = selected + ' selected';
+    updatePartialChoice();
   }
 
   // Renders a unified patch with old/new file line numbers. Git's file headers
@@ -758,10 +768,13 @@
     if (heading) heading.textContent = filePath;
     if (modes) {
       modes.hidden = false;
+      // Both stay visible: an empty side is disabled and says why, rather than disappearing.
       modes.querySelectorAll('button').forEach(button => {
-        button.hidden = button.dataset.mode === 'staged'
-          ? !change.staged
-          : !change.unstaged && !change.untracked;
+        const empty = button.dataset.mode === 'staged' ? !change.staged : !change.unstaged && !change.untracked;
+        button.disabled = empty;
+        button.title = empty
+          ? (button.dataset.mode === 'staged' ? 'Nothing of this file is staged' : 'No changes beyond what is staged')
+          : (button.dataset.mode === 'staged' ? 'Show the changes already staged (the index)' : 'Show the changes not staged yet (the working tree)');
       });
     }
     requestWorkingTreePreview(change.unstaged || change.untracked ? 'unstaged' : 'staged');
@@ -806,6 +819,8 @@
 
     const changes = Array.isArray(payload.changes) ? payload.changes : [];
     workingTreeChanges = changes;
+    const pushAfter = document.getElementById('commitPushAfter');
+    if (pushAfter) pushAfter.checked = Boolean(payload.pushAfterCommit);
     const list = document.getElementById('commitChangesList');
     if (!list) return;
     if (changes.length === 0) {
@@ -840,6 +855,25 @@
     }).join('');
     updateCommitSelectionCount();
     selectWorkingTreePreview(changes[0].path);
+  }
+
+  // Selected files staged, then changed again: the commit takes either the staged part or the whole file.
+  function selectedPartlyStaged() {
+    const selected = new Set(Array.from(document.querySelectorAll('.commit-change-checkbox:checked')).map(checkbox => checkbox.dataset.path));
+    return workingTreeChanges.filter(change => selected.has(change.path) && change.staged && change.unstaged && !change.untracked && !change.conflicted);
+  }
+
+  function updatePartialChoice() {
+    const fieldset = document.getElementById('commitPartialChoice');
+    if (!fieldset) return;
+    const partly = selectedPartlyStaged();
+    fieldset.hidden = partly.length === 0;
+    const legend = document.getElementById('commitPartialLegend');
+    if (legend && partly.length) {
+      legend.textContent = partly.length === 1
+        ? `${partly[0].path} is partly staged: it was staged, then changed again`
+        : `${partly.length} selected files are partly staged: staged, then changed again`;
+    }
   }
 
   function escapeHtml(value) {
@@ -889,6 +923,7 @@
       const unavailable = alignment === 'uninitialized';
       const branch = repository.currentBranch || `(detached) ${repository.currentCommit || ''}`.trim();
       const badges = [
+        changeBadges(repository.changeCounts),
         repository.behind > 0 ? `<span class="repo-badge" title="${repository.behind} commit(s) behind its upstream branch: Pull brings them in">↓${repository.behind}</span>` : '',
         repository.ahead > 0 ? `<span class="repo-badge" title="${repository.ahead} commit(s) ahead of its upstream branch: Push sends them">↑${repository.ahead}</span>` : '',
         alignment === 'pinned'
@@ -921,6 +956,22 @@
       </button>${resetAction}</div>`;
     }).join('') || '<span class="sidebar-placeholder">No repositories</span>';
     applyReviewLock();
+  }
+
+  // Local changes by kind, as VS Code's Source Control letters; the tooltip spells them out.
+  const CHANGE_KINDS = [
+    ['staged', 'S', 'staged', 'repo-change-staged'],
+    ['modified', 'M', 'modified, not staged', 'repo-change-modified'],
+    ['untracked', 'U', 'untracked', 'repo-change-untracked'],
+    ['conflicted', 'C', 'with conflicts', 'repo-change-conflicted']
+  ];
+
+  function changeBadges(counts) {
+    if (!counts) return '';
+    return CHANGE_KINDS.filter(([key]) => counts[key] > 0).map(([key, letter, words, className]) => {
+      const label = `${counts[key]} file${counts[key] === 1 ? '' : 's'} ${words}`;
+      return `<span class="repo-badge repo-change ${className}" title="${label}" aria-label="${label}">${letter}${counts[key]}</span>`;
+    }).join('');
   }
 
   function shortRevision(revision) {

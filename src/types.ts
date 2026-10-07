@@ -11,6 +11,8 @@ export interface RepositoryInfo {
   currentBranch: string;
   status: SubmoduleStatus;
   hasChanges: boolean;
+  /** Local changes by kind; a file staged and then changed again counts as staged and as modified. */
+  changeCounts?: ChangeCounts;
   ahead: number;
   behind: number;
   lastUpdated?: Date;
@@ -365,4 +367,9 @@ export type DashboardRequest =
   | { type: 'getRepositoryRefs'; payload: { repositoryPath: string } }
   | { type: 'getWorkingTreeChanges'; payload: { repositoryPath: string } }
   | { type: 'getWorkingTreePreview'; payload: { repositoryPath: string; path: string; mode: 'staged' | 'unstaged'; requestId: number } }
-  | { type: 'commitFiles'; payload: { repositoryPath: string; files: string[]; message: string } };
+  | { type: 'commitFiles'; payload: { repositoryPath: string; files: string[]; message: string; partial?: PartialStagedChoice; push?: boolean } };
+
+/** For a partly staged file: commit its staged version, or the whole file as in the working tree. */
+export type PartialStagedChoice = 'staged' | 'whole';
+
+export interface ChangeCounts { staged: number; modified: number; untracked: number; conflicted: number }

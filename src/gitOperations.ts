@@ -33,7 +33,8 @@ import {
   HistoryQuery,
   RepositoryRefs,
   WorkingTreeChange,
-  WorkingTreePreview
+  WorkingTreePreview,
+  PartialStagedChoice
 } from './types';
 
 export class GitOperations {
@@ -271,8 +272,13 @@ export class GitOperations {
     return this.commitService.getWorkingTreePreview(repositoryPath, filePath, mode, requestId);
   }
 
-  async commitFiles(repositoryPath: string, filePaths: string[], message: string): Promise<CommandResult> {
-    return this.commitService.commitFiles(repositoryPath, filePaths, message);
+  /** The absolute root of a repository path ('.' or a linked repository's relative path). */
+  resolveRepositoryPath(repositoryPath: string): string {
+    return this.gitCmd.resolveRepositoryPath(repositoryPath);
+  }
+
+  async commitFiles(repositoryPath: string, filePaths: string[], message: string, partial?: PartialStagedChoice): Promise<CommandResult> {
+    return this.commitService.commitFiles(repositoryPath, filePaths, message, partial);
   }
 
   /**

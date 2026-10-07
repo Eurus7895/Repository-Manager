@@ -6,7 +6,23 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitCommandService } from './gitCommandService';
-import { SubmoduleInfo, SubmoduleStatus, CommandResult, GitStatus } from '../types';
+import { ChangeCounts, SubmoduleInfo, SubmoduleStatus, CommandResult, GitStatus } from '../types';
+
+/**
+ * Local changes by kind, from `status --porcelain=v2` entries: `1`/`2` (changed or renamed, XY =
+ * index and working tree), `u` (unmerged) and `?` (untracked).
+ */
+export function countChanges(lines: string[]): ChangeCounts {
+  const counts: ChangeCounts = { staged: 0, modified: 0, untracked: 0, conflicted: 0 };
+  for (const line of lines) {
+    if (line.startsWith('? ')) { counts.untracked++; continue; }
+    if (line.startsWith('u ')) { counts.conflicted++; continue; }
+    if (!line.startsWith('1 ') && !line.startsWith('2 ')) { continue; }
+    if (line[2] !== '.') { counts.staged++; }
+    if (line[3] !== '.') { counts.modified++; }
+  }
+  return counts;
+}
 
 export class SubmoduleService {
   constructor(private gitCmd: GitCommandService) {}
@@ -17,8 +33,9 @@ export class SubmoduleService {
    * from the upstream; a branch without one falls back to the same-named branch on origin.
    */
   private async readState(cwd: string, ignoreSubmoduleContent: boolean): Promise<{ commit: string; branch: string; detached: boolean;
-    hasChanges: boolean; ahead: number; behind: number }> {
-    const args = ['status', '--porcelain=v2', '--branch'];
+    hasChanges: boolean; changeCounts: ChangeCounts; ahead: number; behind: number }> {
+    // Every untracked file, not one entry per new folder, so the counts are per file.
+    const args = ['status', '--porcelain=v2', '--branch', '--untracked-files=all'];
     // A parent lists a submodule with new commits, but not edits inside it: each submodule reports those itself.
     if (ignoreSubmoduleContent) { args.push('--ignore-submodules=dirty'); }
     const lines = (await this.gitCmd.execGitRaw(args, cwd)).split('\n');
@@ -39,7 +56,8 @@ export class SubmoduleService {
         // No upstream and no same-named remote branch: nothing to compare with.
       }
     }
-    return { commit: oid === '(initial)' ? '' : oid, branch, detached, hasChanges: lines.some(line => line && !line.startsWith('#')), ahead, behind };
+    return { commit: oid === '(initial)' ? '' : oid, branch, detached, hasChanges: lines.some(line => line && !line.startsWith('#')),
+      changeCounts: countChanges(lines), ahead, behind };
   }
 
   /**
@@ -58,7 +76,7 @@ export class SubmoduleService {
     if (!state) {
       const name = remoteUrl.match(/\/([^/]+?)(\.git)?$/)?.[1] || path.basename(workspaceRoot) || 'Parent Repository';
       return { name, path: '.', url: '', branch: 'main', currentCommit: '', currentBranch: '', status: 'unknown',
-        hasChanges: false, ahead: 0, behind: 0, isParentRepo: true };
+        hasChanges: false, changeCounts: undefined, ahead: 0, behind: 0, isParentRepo: true };
     }
     const match = remoteUrl.match(/\/([^/]+?)(\.git)?$/);
     return {
@@ -70,6 +88,7 @@ export class SubmoduleService {
       currentBranch: state.branch,
       status: state.hasChanges ? 'modified' : state.detached ? 'detached' : 'clean',
       hasChanges: state.hasChanges,
+      changeCounts: state.changeCounts,
       ahead: state.ahead,
       behind: state.behind,
       isParentRepo: true
@@ -121,6 +140,7 @@ export class SubmoduleService {
       currentBranch: state && state.commit ? state.branch : '',
       status,
       hasChanges: Boolean(state && state.commit && state.hasChanges),
+      changeCounts: state && state.commit ? state.changeCounts : undefined,
       ahead: state && state.commit ? state.ahead : 0,
       behind: state && state.commit ? state.behind : 0,
       recordedCommit: recordedCommit.substring(0, 8),

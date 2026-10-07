@@ -42,6 +42,10 @@ async function main() {
     commit(libB, 'b.txt', 'b\n');
     git(libB, 'checkout', '-q', '--detach');
     fs.appendFileSync(path.join(libB, 'README.md'), 'edit\n');
+    // Two new files in a new folder count as two untracked files, not one folder.
+    fs.mkdirSync(path.join(libB, 'new'));
+    fs.writeFileSync(path.join(libB, 'new', 'one.txt'), '1\n');
+    fs.writeFileSync(path.join(libB, 'new', 'two.txt'), '2\n');
     // lib-c: a branch without upstream; origin/<branch> exists and is one commit ahead.
     const libC = path.join(parent, 'libs/lib-c');
     git(libC, 'checkout', '-q', '-b', 'topic');
@@ -58,18 +62,20 @@ async function main() {
     const recorded = name => git(parent, 'ls-tree', 'HEAD', `libs/${name}`).split(/\s+/)[2].slice(0, 8);
 
     assert.deepEqual(strip(await service.getParentRepoInfo()), { name: 'parent', path: '.', url: '', branch: 'main', currentCommit: short(parent),
-      currentBranch: 'main', status: 'modified', hasChanges: true, ahead: 1, behind: 1, isParentRepo: true });
+      currentBranch: 'main', status: 'modified', hasChanges: true,
+      // lib-a, lib-b and lib-c are at other commits than recorded: changes the parent can commit.
+      changeCounts: { staged: 0, modified: 3, untracked: 0, conflicted: 0 }, ahead: 1, behind: 1, isParentRepo: true });
     const list = (await service.getSubmodules()).map(strip);
     const url = name => path.join(base, `${name}.git`);
     assert.deepEqual(list, [
       { name: 'libs/lib-a', path: 'libs/lib-a', url: url('lib-a'), branch: 'develop', currentCommit: short(libA), currentBranch: 'main',
-        status: 'clean', hasChanges: false, ahead: 2, behind: 0, recordedCommit: recorded('lib-a'), atRecordedCommit: false },
+        status: 'clean', hasChanges: false, changeCounts: { staged: 0, modified: 0, untracked: 0, conflicted: 0 }, ahead: 2, behind: 0, recordedCommit: recorded('lib-a'), atRecordedCommit: false },
       { name: 'libs/lib-b', path: 'libs/lib-b', url: url('lib-b'), branch: 'main', currentCommit: short(libB), currentBranch: '',
-        status: 'modified', hasChanges: true, ahead: 0, behind: 0, recordedCommit: recorded('lib-b'), atRecordedCommit: false },
+        status: 'modified', hasChanges: true, changeCounts: { staged: 0, modified: 1, untracked: 2, conflicted: 0 }, ahead: 0, behind: 0, recordedCommit: recorded('lib-b'), atRecordedCommit: false },
       { name: 'libs/lib-c', path: 'libs/lib-c', url: url('lib-c'), branch: 'main', currentCommit: short(libC), currentBranch: 'topic',
-        status: 'clean', hasChanges: false, ahead: 0, behind: 1, recordedCommit: recorded('lib-c'), atRecordedCommit: true },
+        status: 'clean', hasChanges: false, changeCounts: { staged: 0, modified: 0, untracked: 0, conflicted: 0 }, ahead: 0, behind: 1, recordedCommit: recorded('lib-c'), atRecordedCommit: true },
       { name: 'libs/lib-d', path: 'libs/lib-d', url: url('lib-d'), branch: 'main', currentCommit: '', currentBranch: '',
-        status: 'uninitialized', hasChanges: false, ahead: 0, behind: 0, recordedCommit: recorded('lib-d'), atRecordedCommit: undefined }
+        status: 'uninitialized', hasChanges: false, changeCounts: undefined, ahead: 0, behind: 0, recordedCommit: recorded('lib-d'), atRecordedCommit: undefined }
     ]);
     // The same answer for one submodule on its own (used by pull requests).
     assert.deepEqual(strip(await service.getSubmoduleInfo('libs/lib-a', 'libs/lib-a')), list[0]);
