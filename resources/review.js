@@ -213,6 +213,10 @@
   // Auto-fix: one button in the triage summary, and the proposal (or its outcome) below it.
   function renderFixAction(readiness) {
     const count = readiness.toFix || 0;
+    // A review of local changes read files you are still editing: auto-fix writes only over files with no local changes.
+    if (reviewState.kind === 'local') {
+      return '<button type="button" class="btn review-fix-action" data-action="proposeReviewFix" disabled title="Auto-fix needs committed files: fix your uncommitted changes in the editor, or commit them and review the commit to use auto-fix">Fix with Copilot…</button>';
+    }
     const busy = reviewState.fix && reviewState.fix.status === 'running';
     const title = count ? 'Copilot proposes edits for the findings marked Needs fix; you see the diff before anything is written'
       : 'Mark findings "Needs fix" first';
@@ -468,8 +472,8 @@
       meta.textContent = '';
       status.textContent = '';
       body.innerHTML = hasHistory
-        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one with Review commit, Review branch or Review all in the dashboard.</div>'
-        : '<div class="dashboard-empty">No review yet. Start one with Review commit, Review branch or Review all in the dashboard; Review skills above sets what Copilot checks.</div>';
+        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one with Review changes, Review commit, Review branch or Review all in the dashboard.</div>'
+        : '<div class="dashboard-empty">No review yet. Start one with Review changes, Review commit, Review branch or Review all in the dashboard; Review skills above sets what Copilot checks.</div>';
       return;
     }
     const running = reviewState.status === 'running';
@@ -479,11 +483,12 @@
     document.getElementById('saveReviewButton').hidden = !done;
     // A release review's ends are unknown until the extension has resolved them.
     const release = reviewState.kind === 'release';
-    const target = reviewState.targetLabel || (release ? 'current branch' : '');
+    const local = reviewState.kind === 'local';
+    const target = reviewState.targetLabel || (release ? 'current branch' : local ? 'local changes' : '');
     const label = reviewState.scope === 'changes'
-      ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : 'parent')} → ${target}`
+      ? `Diff: ${reviewState.baseLabel || (release ? 'latest release' : local ? 'HEAD' : 'parent')} → ${target}`
       : `Branch: ${target}`;
-    title.textContent = reviewState.kind === 'release' ? 'Current branch review' : 'Review';
+    title.textContent = release ? 'Current branch review' : local ? 'Local changes review' : 'Review';
     // Name the repository when the dashboard has moved on to another one (or another folder).
     const request = reviewState.result && reviewState.result.request;
     // The exact commits, unless the label already is them (a Base/Target selection of plain commits).
@@ -574,7 +579,9 @@
     // Reviews read commits only; say so when there is work they did not see.
     const reviewedRepository = getRepository(reviewState.repositoryPath);
     const uncommitted = reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
-      ? '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed; commit them and review again to include them.</p>' : '';
+      ? (reviewState.kind === 'local'
+        ? '<p class="review-uncommitted-note" role="note">This review read your local changes as they were when it started. Changes made since are not in it: use Review changes again to include them.</p>'
+        : '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed: use Review changes in the dashboard to review them before committing.</p>') : '';
     body.innerHTML = `${uncommitted}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${stopped}
       ${triageBar}

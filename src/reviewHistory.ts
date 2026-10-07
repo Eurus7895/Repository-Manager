@@ -7,7 +7,7 @@
 import { trimReviewLog } from './services/reviewLog';
 import { ReviewResult, ReviewTriage } from './types';
 import { MementoLike } from './reviewConsent';
-import { assessReadiness, normalizeTriage } from './services/reviewReport';
+import { assessReadiness, normalizeTriage, ReviewKind } from './services/reviewReport';
 
 const KEY = 'repositoryManager.reviewHistory';
 export const MAX_PER_REPOSITORY = 20;
@@ -15,7 +15,7 @@ export const MAX_PER_REPOSITORY = 20;
 export const MAX_STORED_GAPS = 200;
 
 export interface StoredReviewContext {
-  kind: 'review' | 'release';
+  kind: ReviewKind;
   repositoryName: string;
   baseLabel?: string;
   targetLabel: string;
@@ -39,7 +39,7 @@ export interface ReviewHistoryEntry {
 export interface ReviewHistorySummary {
   id: string;
   generatedAt: string;
-  kind: 'review' | 'release';
+  kind: ReviewKind;
   scope: 'changes' | 'branch';
   baseLabel?: string;
   targetLabel: string;

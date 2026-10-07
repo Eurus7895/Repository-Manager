@@ -685,6 +685,12 @@
     // Reviews start at once: "changes" reviews the diff Base → Target, "branch" every file at Target.
     // The current branch: what it adds since the default branch ('changes'), or every file at its tip.
     reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' }),
+    // Local changes: HEAD → a snapshot of the working tree the extension takes when the review starts.
+    reviewLocal: () => {
+      const repository = getRepository(activeDashboardRepository);
+      if (repository && !repository.hasChanges) return;
+      startReview({ kind: 'local', scope: 'changes' });
+    },
     loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
       releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
@@ -1061,7 +1067,7 @@
     status.hidden = false;
     status.innerHTML = commitCompareSelection.length === 1
       ? `<span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} · Ctrl+click a second commit <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`
-      : `<span class="compare-range"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      : `<span class="compare-range" title="Base ${escapeHtml(shortRevision(commitCompareSelection[0]))} → Target ${escapeHtml(shortRevision(commitCompareSelection[1]))}"><span class="compare-role">B</span> ${escapeHtml(shortRevision(commitCompareSelection[0]))} → <span class="compare-role compare-role-target">T</span> ${escapeHtml(shortRevision(commitCompareSelection[1]))}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
     applyReviewLock();
   }
 
@@ -1118,7 +1124,7 @@
     const status = document.getElementById('commitCompareStatus');
     if (!status) return;
     status.hidden = false;
-    status.innerHTML = `<span class="compare-range${isError ? ' compare-error' : ''}">${escapeHtml(text)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear">×</button>`;
+    status.innerHTML = `<span class="compare-range${isError ? ' compare-error' : ''}" title="${escapeHtml(text)}">${escapeHtml(text)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear">×</button>`;
   }
 
   function loadComparison(baseRevision, targetRevision, source, labels) {
@@ -1139,7 +1145,7 @@
       const kind = { branches: 'Branches', review: 'Review', release: 'Release' }[source] || 'Commits';
       const base = labels && labels.base ? labels.base : shortRevision(baseRevision);
       const target = labels && labels.target ? labels.target : shortRevision(targetRevision);
-      status.innerHTML = `<span class="compare-range">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
+      status.innerHTML = `<span class="compare-range" title="${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}">${kind}: ${escapeHtml(base)} → ${escapeHtml(target)}</span> <button type="button" data-action="clearCommitComparison" aria-label="Clear comparison">×</button>`;
       applyReviewLock();
     }
     saveState();
@@ -2670,14 +2676,18 @@
         : reviewStatus.state === 'completed' && reviewStatus.blocking ? String(reviewStatus.blocking) : '';
       badge.classList.toggle('review-open-badge-blocking', reviewStatus.state === 'completed' && reviewStatus.blocking > 0);
     }
-    const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], ' +
+    const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], [data-action="reviewLocal"], ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
       const nothingSelected = element.dataset.action === 'reviewSelection' && !changeSummarySelection;
-      if (locked || nothingSelected) {
+      const activeRepository = getRepository(activeDashboardRepository);
+      const nothingLocal = element.dataset.action === 'reviewLocal' && Boolean(activeRepository) && !activeRepository.hasChanges;
+      if (locked || nothingSelected || nothingLocal) {
         element.setAttribute('aria-disabled', 'true');
         if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';
-        element.setAttribute('title', locked ? REVIEW_LOCK_HINT : 'Select a commit, or load a comparison, to review it');
+        element.setAttribute('title', locked ? REVIEW_LOCK_HINT : nothingLocal
+          ? 'No local changes in this repository: nothing to review before committing'
+          : 'Select a commit, or load a comparison, to review it');
       } else if (element.getAttribute('aria-disabled') === 'true') {
         element.removeAttribute('aria-disabled');
         const title = element.dataset.unlockedTitle;
