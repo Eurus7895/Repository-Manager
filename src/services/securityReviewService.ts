@@ -3,7 +3,7 @@ import { PolicyRuleResult, ReviewFinding, ReviewProgressCallback, ReviewProgress
 import { GitCommandService } from './gitCommandService';
 import { trimReviewLog } from './reviewLog';
 import { findingFingerprint, validatePolicyResult, validateReviewFinding } from './reviewFindingValidation';
-import { appliesToPath, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from './reviewSurveyService';
+import { appliesToPath, component, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from './reviewSurveyService';
 import { consolidateLimitations, TRUNCATION_NOTE } from './reviewLimitations';
 import { PROMPT_VERSION, ReviewChatModel, SecurityReviewProvider } from './securityReviewProvider';
 import { ReviewUnitCacheLike, ReviewUnitOutcome, reviewUnitKey } from '../reviewUnitCache';
@@ -11,6 +11,29 @@ import { AppliedSkills, ReviewSkill, selectReviewSkills } from './reviewSkills';
 
 /** Steps kept in a result's log; a long review keeps its first ones. */
 const MAX_LOG = 400;
+
+/**
+ * The components a review covers, each with its files, for the progress list; files left out when
+ * planning (binary, lockfile, symlink, budget) are listed under their component with the reason,
+ * and components with only such files come last with no files to review.
+ */
+export function progressComponents(plan: ReviewPlan): ReviewProgressComponent[] {
+  const steps: ReviewProgressComponent[] = plan.units.map(unit => ({ component: unit.component, files: unit.paths.length, paths: unit.paths }));
+  for (const item of plan.coverage.skipped.slice(0, 200)) {
+    const name = component(item.path);
+    let step = steps.find(entry => entry.component === name);
+    if (!step) { step = { component: name, files: 0, paths: [] }; steps.push(step); }
+    (step.skipped = step.skipped || []).push({ path: item.path, reason: item.reason });
+  }
+  return steps;
+}
+
+export interface ReviewProgressComponent {
+  component: string;
+  files: number;
+  paths: string[];
+  skipped?: Array<{ path: string; reason: string }>;
+}
 
 export class SecurityReviewService {
   private survey: ReviewSurveyService;
@@ -57,7 +80,7 @@ export class SecurityReviewService {
     const modelId = `${model.id}:${model.version}`;
     state.model = model.name || model.id;
     progress(`Planned ${plan.units.length} component(s), ${state.filesTotal} file(s)`, { ...state,
-      components: plan.units.map(unit => ({ component: unit.component, files: unit.paths.length })) });
+      components: progressComponents(plan) });
     // Components already reviewed at these commits with this model and these prompts are reused.
     // Skills are chosen per component by its paths; what was sent is part of the cache key.
     const available = this.skills();

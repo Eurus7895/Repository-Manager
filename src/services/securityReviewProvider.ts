@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { createHash } from 'crypto';
 import { ReviewFinding } from '../types';
-import { ReviewPlan, ReviewWorkUnit } from './reviewSurveyService';
+import { changedTargetRanges, isLockfile, ReviewPlan, ReviewWorkUnit } from './reviewSurveyService';
 
 export interface ReviewChatModel {
   id: string; name: string; version: string; maxInputTokens: number;
@@ -104,7 +104,9 @@ const FINAL_PROMPT = 'The tool budget is used up. Do not request more tools: ret
  * result is reused only for the same prompts (see ReviewUnitCache).
  */
 export const PROMPT_VERSION = createHash('sha256')
-  .update(JSON.stringify([ANALYZE_PROMPT, VERIFY_PROMPT, REPAIR_PROMPT, FINAL_PROMPT, INITIAL_FILE_LINES, INITIAL_FILE_CHARS, INITIAL_UNIT_CHARS]))
+  .update(JSON.stringify([ANALYZE_PROMPT, VERIFY_PROMPT, REPAIR_PROMPT, FINAL_PROMPT, INITIAL_FILE_LINES, INITIAL_FILE_CHARS, INITIAL_UNIT_CHARS,
+    // What a packet holds: a changed lockfile is sent as its changed entries only.
+    'lockfile-excerpts-1']))
   .digest('hex').slice(0, 16);
 
 export class SecurityReviewProvider {
@@ -139,6 +141,30 @@ export class SecurityReviewProvider {
       const source = plan.snapshot.fileExists(path) ? plan.snapshot : plan.base;
       if (!source) { throw new Error(`File missing from both revisions: ${path}`); }
       const limit = Math.min(INITIAL_FILE_CHARS, budget - (unit.paths.length - index - 1) * floor);
+      // A changed lockfile: only its changed entries (with 3 lines of context), at their real line
+      // numbers, so citations still check; unchanged packages and hashes are left out on purpose.
+      if (isLockfile(path) && plan.base && plan.snapshot.fileExists(path) && plan.base.fileExists(path)) {
+        const ranges = changedTargetRanges((await plan.snapshot.readDiff(plan.base.targetSha, path)).patch);
+        const key = `${plan.snapshot.targetSha}:${path}`;
+        const sent: Array<[number, number]> = [];
+        let used = 0;
+        let complete = true;
+        for (const [start, end] of ranges) {
+          const chunk = boundContent(await plan.snapshot.readFile(path, start, Math.min(500, end - start + 1)), limit - used);
+          if (chunk.endLine < chunk.startLine) { complete = false; break; }
+          used += chunk.content.length;
+          sent.push([chunk.startLine, chunk.endLine]);
+          files.push({ path, revision: plan.snapshot.targetSha, startLine: chunk.startLine, endLine: chunk.endLine,
+            totalLines: chunk.totalLines, content: chunk.content, truncated: true,
+            excerpt: 'lockfile: only the changed entries, with 3 lines of context' });
+          if (chunk.endLine < end) { complete = false; break; }
+        }
+        budget -= used;
+        seen.set(key, [...sent]);
+        // All changed lines sent: the rest of the lockfile is out of scope, not a gap.
+        totals.set(key, complete ? linesCovered(sent) : (await plan.snapshot.readFile(path, 1, 1)).totalLines);
+        continue;
+      }
       const file = boundContent(await source.readFile(path, 1, INITIAL_FILE_LINES), limit);
       budget -= file.content.length;
       const key = `${source.targetSha}:${path}`;

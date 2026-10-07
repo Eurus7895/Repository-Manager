@@ -703,7 +703,9 @@ async function main() {
     let releaseRunner;
     const runnerGate = new Promise(resolve => { releaseRunner = resolve; });
     reviewProbe.runner = async (request, token, progress) => {
-      const components = [{ component: 'src', files: 1 }, { component: 'lib', files: 2 }, { component: 'docs', files: 1 }];
+      const components = [{ component: 'src', files: 1, paths: ['src/app.txt'] },
+        { component: 'lib', files: 2, paths: ['lib/a.ts', 'lib/b.ts'], skipped: [{ path: 'lib/logo.png', reason: 'binary file' }] },
+        { component: 'docs', files: 1, paths: ['docs/guide.md'] }, { component: 'assets', files: 0, paths: [], skipped: [{ path: 'assets/icon.png', reason: 'binary file' }] }];
       const step = { phase: 'analyzing', unit: 2, units: 3, component: 'lib', filesDone: 1, filesTotal: 4, candidates: 2 };
       progress('Planned 3 component(s), 4 file(s)', { ...step, phase: 'planning', unit: 0, filesDone: 0, candidates: 0, components });
       progress('Reading related code (1/6)…', step);
@@ -748,7 +750,11 @@ async function main() {
     assert.match(await rv.textContent('.review-progress-where'), /Component 2 of 3: lib · Analyzing/);
     assert.match(await rv.textContent('.review-progress-counts'), /1 of 4 files · 2 candidate findings · \d+s elapsed/);
     assert.deepEqual(await rv.locator('.review-step').evaluateAll(items => items.map(item => item.className.replace('review-step ', ''))),
-      ['review-step-done', 'review-step-current', 'review-step-pending']);
+      ['review-step-done', 'review-step-current', 'review-step-pending', 'review-step-skipped']);
+    // Each component lists its files, and files left out say why.
+    assert.deepEqual(await rv.locator('.review-step-current .review-step-file').evaluateAll(items => items.map(item => [item.title, item.textContent])),
+      [['lib/a.ts', 'a.ts'], ['lib/b.ts', 'b.ts'], ['lib/logo.png', 'logo.pngskipped: binary file']]);
+    assert.match(await rv.textContent('.review-step-skipped'), /assets\s*not reviewed\s*icon\.pngskipped: binary file/);
     assert.match(await rv.textContent('.review-progress-message'), /Reading related code/);
     await rv.waitForTimeout(150);
     await rv.screenshot({ path: path.join(outputDir, '09b-review-progress.png'), animations: 'disabled', caret: 'hide' });
