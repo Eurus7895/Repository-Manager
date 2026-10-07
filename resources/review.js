@@ -175,10 +175,17 @@
     const counts = detail
       ? `${detail.filesDone} of ${detail.filesTotal} files · ${detail.candidates} candidate finding${detail.candidates === 1 ? '' : 's'} · <span id="reviewElapsed"></span>`
       : '';
+    // Each component lists its files, so what is reviewed matches the changed files; files left out
+    // (binary, lockfile, budget) are listed with the reason, under their component.
+    const fileItem = (filePath, reason) => `<li class="review-step-file${reason ? ' review-step-file-skipped' : ''}" title="${escapeHtml(filePath)}"><span>${escapeHtml(filePath.split('/').pop())}</span>${reason ? `<small>skipped: ${escapeHtml(reason)}</small>` : ''}</li>`;
     const steps = components.map((component, index) => {
-      const state = finishing || (detail && index + 1 < detail.unit) ? 'done' : detail && index + 1 === detail.unit ? 'current' : 'pending';
-      const mark = { done: '✓', current: '●', pending: '○' }[state];
-      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><code>${escapeHtml(component.component)}</code><span>${component.files} file${component.files === 1 ? '' : 's'}</span></li>`;
+      const state = !component.files ? 'skipped'
+        : finishing || (detail && index + 1 < detail.unit) ? 'done' : detail && index + 1 === detail.unit ? 'current' : 'pending';
+      const mark = { done: '✓', current: '●', pending: '○', skipped: '–' }[state];
+      const files = (component.paths || []).map(filePath => fileItem(filePath)).join('') +
+        (component.skipped || []).map(item => fileItem(item.path, item.reason)).join('');
+      const count = component.files ? `${component.files} file${component.files === 1 ? '' : 's'}` : 'not reviewed';
+      return `<li class="review-step review-step-${state}"${state === 'current' ? ' aria-current="step"' : ''}><span class="review-step-mark" aria-hidden="true">${mark}</span><code>${escapeHtml(component.component)}</code><span>${count}</span>${files ? `<ul class="review-step-files">${files}</ul>` : ''}</li>`;
     }).join('');
     body.innerHTML = `<div class="review-progress-block">
         <div class="review-progress-where">${where}</div>

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Uncommitted changes** are shown like a commit: the same header with the branch and `HEAD → working tree`, and **Commit…**, **Review changes** and **Summarize changes** in the bar below it.
+- The Repository Review tab lists the files of each component while a review runs, and the files left out with the reason (binary file, lockfile, file budget), so what is reviewed can be checked against the changed files.
+- Reviews leave out binary files (images, archives), which cannot be read as text, instead of failing on them. A changed dependency lockfile (`uv.lock`, `package-lock.json`, `Cargo.lock` and others) is reviewed by its changed entries only, the added or updated packages and their sources; **Review all** leaves lockfiles out.
 - The **Model** list moved into the dashboard toolbar, next to the review buttons, so you can choose the Copilot model for reviews, summaries, commit messages and fixes from any view, including Uncommitted changes.
 - **Compare branches** also lists tags, newest version first, so the changes since a release (for example `1.12.0` → `main`) are two picks, labelled with the tag's name. Picking the same branch or tag twice says so in the dialog instead of a pop-up.
 

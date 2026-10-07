@@ -186,7 +186,7 @@ export interface ReviewProgressDetail {
   /** The model's display name, once it is selected. */
   model?: string;
   /** Sent once the plan exists: every component with its file count. */
-  components?: Array<{ component: string; files: number }>;
+  components?: Array<{ component: string; files: number; paths?: string[]; skipped?: Array<{ path: string; reason: string }> }>;
 }
 
 export type ReviewProgressCallback = (message: string, detail?: ReviewProgressDetail) => void;
