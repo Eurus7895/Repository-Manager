@@ -1,7 +1,48 @@
 const assert = require('node:assert/strict');
-const { LiveChanges, affectsStatus } = require('../../out/liveChanges.js');
+const { execFileSync } = require('node:child_process');
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
+const { LiveChanges, affectsStatus, MAX_CHECKED_FILES } = require('../../out/liveChanges.js');
+const { ignoredPaths } = require('../../out/services/ignoredPaths.js');
+
+async function checkIgnoredPaths() {
+  const base = mkdtempSync(path.join(tmpdir(), 'repository-manager-ignored-'));
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com',
+    GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com', GIT_ALLOW_PROTOCOL: 'file' };
+  const git = (cwd, ...args) => execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd, env, encoding: 'utf8' });
+  try {
+    const lib = path.join(base, 'lib-src');
+    mkdirSync(lib);
+    git(lib, 'init', '-q', '-b', 'main');
+    writeFileSync(path.join(lib, '.gitignore'), 'dist/\n');
+    git(lib, 'add', '.');
+    git(lib, 'commit', '-qm', 'lib');
+    const root = path.join(base, 'w');
+    mkdirSync(root);
+    git(root, 'init', '-q', '-b', 'main');
+    writeFileSync(path.join(root, '.gitignore'), 'out/\n*.log\n');
+    writeFileSync(path.join(root, 'kept.log'), 'tracked\n');
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'kept.log');
+    git(root, 'submodule', '-q', 'add', lib, 'lib');
+    git(root, 'commit', '-qm', 'root');
+    mkdirSync(path.join(root, 'out'));
+    mkdirSync(path.join(root, 'lib', 'dist'));
+    mkdirSync(path.join(root, 'lib', 'out'));
+    const at = (...parts) => path.join(root, ...parts);
+    const ignored = await ignoredPaths([at('out', 'a.js'), at('out'), at('b.log'), at('kept.log'), at('src.ts'),
+      at('lib', 'dist', 'x.js'), at('lib', 'out', 'y.js'), at('lib', 'index.ts')], root);
+    // Each file against its own repository's .gitignore; a tracked file that matches still shows.
+    assert.deepEqual([...ignored].sort(), [at('b.log'), at('lib', 'dist', 'x.js'), at('out'), at('out', 'a.js')].sort());
+    await assert.rejects(ignoredPaths([path.join(base, 'elsewhere.txt')], root), /Not in a repository/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}
 
 async function main() {
+  await checkIgnoredPaths();
   // Which paths can change git status: files, and Git's index, HEAD and refs; not its internals.
   for (const file of ['/w/src/a.ts', '/w/.gitignore', '/w/.git/index', '/w/.git/HEAD', '/w/.git/refs/heads/main',
     '/w/.git/modules/lib/index', 'C:\\w\\.git\\index', '/w/lib/.git',
@@ -101,11 +142,47 @@ async function main() {
   await advance(800);
   assert.equal(refreshes, 7, 'a later staging was ignored');
 
+  // With an ignore check: a batch of only ignored files (a build) does not refresh; one other file,
+  // a Git change, a failed check, or too many files to check, does.
+  let ignoredAnswer = paths => Promise.resolve(new Set(paths.filter(file => file.includes('/out/'))));
+  let checks = 0;
+  const filtered = new LiveChanges({
+    refresh: () => { refreshes++; return Promise.resolve(); },
+    canRefresh: () => true,
+    setTimer: (callback, ms) => { const id = next++; timers.set(id, { callback, at: now + ms }); return id; },
+    clearTimer: id => timers.delete(id),
+    now: () => now,
+    ignored: paths => { checks++; return ignoredAnswer(paths); }
+  }, 800);
+  const before = refreshes;
+  filtered.notify('/w/out/a.js');
+  filtered.notify('/w/out/b.js');
+  await advance(800);
+  assert.deepEqual([refreshes - before, checks], [0, 1], 'ignored build output refreshed');
+  filtered.notify('/w/out/c.js');
+  filtered.notify('/w/src/a.ts');
+  await advance(800);
+  assert.equal(refreshes - before, 1);
+  filtered.notify('/w/out/d.js');
+  filtered.notify('/w/.git/refs/heads/main');
+  await advance(800);
+  assert.deepEqual([refreshes - before, checks], [2, 2], 'a Git change was checked against .gitignore');
+  await advance(2000);
+  ignoredAnswer = () => Promise.reject(new Error('no git'));
+  filtered.notify('/w/out/e.js');
+  await advance(800);
+  assert.equal(refreshes - before, 3, 'a failed check skipped the refresh');
+  for (let index = 0; index <= MAX_CHECKED_FILES; index++) { filtered.notify(`/w/out/${index}.js`); }
+  ignoredAnswer = paths => Promise.resolve(new Set(paths));
+  await advance(800);
+  assert.equal(refreshes - before, 4, 'a huge batch was not refreshed');
+  filtered.dispose();
+
   // Disposed: nothing more.
   live.notify('/w/a.ts');
   live.dispose();
   await advance(5000);
-  assert.equal(refreshes, 7);
+  assert.equal(refreshes, 11);
   console.log('Live changes smoke passed');
 }
 

@@ -3,7 +3,8 @@
  * workspace (saves, creates, deletes, and Git's own index and ref updates) schedule one repository
  * refresh after they settle, instead of a `git status` per event.
  *
- * Git's internal churn (objects, logs, lock files) is ignored. While the dashboard is hidden, or a
+ * Git's internal churn (objects, logs, lock files) is ignored, and so is a batch of files that Git
+ * ignores (build output, dependency folders), checked with `git check-ignore` once the batch settles. While the dashboard is hidden, or a
  * user action is running, the refresh waits and runs once when it can. Nothing here depends on
  * VS Code, so it is tested with a fake clock.
  */
@@ -17,7 +18,12 @@ export interface LiveChangesDeps {
   clearTimer(handle: unknown): void;
   /** Milliseconds now (a fake clock in tests). */
   now?(): number;
+  /** The subset of changed working-tree files that Git ignores; when all are, no refresh runs. */
+  ignored?(paths: string[]): Promise<Set<string>>;
 }
+
+/** Past this many changed files in one batch (a checkout, an install), refresh without checking them. */
+export const MAX_CHECKED_FILES = 2000;
 
 /**
  * After a refresh, index files changed only by it are ignored for this long: `git status` (ours, or
@@ -48,6 +54,12 @@ function isIndexFile(filePath: string): boolean {
   return /\/\.git\/(.+\/)?index$/.test(filePath.replace(/\\/g, '/'));
 }
 
+/** A path in a Git directory (or a `.git` file), as opposed to a working-tree file. */
+function isInsideGit(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/');
+  return normalized.includes('/.git/') || normalized.endsWith('/.git');
+}
+
 export class LiveChanges {
   private timer: unknown;
   private pending = false;
@@ -55,6 +67,10 @@ export class LiveChanges {
   private disposed = false;
   /** Until when index-only events come from our own refresh. */
   private quietIndexUntil = 0;
+  /** Working-tree files changed since the last refresh, to check against .gitignore. */
+  private files = new Set<string>();
+  /** A change that refreshes whatever the files are: inside .git, or too many files to check. */
+  private mustRefresh = false;
 
   constructor(private readonly deps: LiveChangesDeps, private readonly delayMs = LIVE_CHANGES_DELAY_MS) {}
 
@@ -63,6 +79,11 @@ export class LiveChanges {
     if (this.disposed || !affectsStatus(filePath)) { return; }
     if (isIndexFile(filePath) && this.clock() < this.quietIndexUntil) { return; }
     this.pending = true;
+    if (!this.deps.ignored || isInsideGit(filePath) || this.files.size >= MAX_CHECKED_FILES) {
+      this.mustRefresh = true;
+    } else {
+      this.files.add(filePath);
+    }
     if (this.timer !== undefined) { this.deps.clearTimer(this.timer); }
     this.timer = this.deps.setTimer(() => { this.timer = undefined; void this.flush(); }, this.delayMs);
   }
@@ -70,6 +91,16 @@ export class LiveChanges {
   /** The dashboard became visible, or an action finished: run a refresh that had to wait. */
   resume(): void {
     if (this.pending && this.timer === undefined) { void this.flush(); }
+  }
+
+  /** Whether Git ignores every file; when it cannot tell, it does not. */
+  private async allIgnored(files: string[]): Promise<boolean> {
+    try {
+      const ignored = await this.deps.ignored!(files);
+      return files.every(file => ignored.has(file));
+    } catch {
+      return false;
+    }
   }
 
   private clock(): number {
@@ -86,13 +117,22 @@ export class LiveChanges {
     if (this.disposed || !this.pending || this.running || !this.deps.canRefresh()) { return; }
     this.pending = false;
     this.running = true;
+    const files = [...this.files];
+    const mustRefresh = this.mustRefresh || files.length === 0;
+    this.files = new Set();
+    this.mustRefresh = false;
     try {
-      await this.deps.refresh();
-    } catch {
-      // The next file event, or the next action, refreshes again.
+      if (mustRefresh || !(await this.allIgnored(files))) {
+        try {
+          await this.deps.refresh();
+        } catch {
+          // The next file event, or the next action, refreshes again.
+        } finally {
+          this.quietIndexUntil = this.clock() + SELF_INDEX_WRITE_MS;
+        }
+      }
     } finally {
       this.running = false;
-      this.quietIndexUntil = this.clock() + SELF_INDEX_WRITE_MS;
     }
     // Events during the refresh asked for another one.
     if (this.pending && this.timer === undefined) { void this.flush(); }

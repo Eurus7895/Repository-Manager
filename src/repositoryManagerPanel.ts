@@ -23,6 +23,7 @@ import { resolveReleaseRange } from './services/releaseRange';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 import { CommitMessageController } from './commitMessageController';
 import { LiveChanges } from './liveChanges';
+import { ignoredPaths } from './services/ignoredPaths';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -211,7 +212,8 @@ export class RepositoryManagerPanel {
       refresh: () => this.refresh(),
       canRefresh: () => this._panel.visible && this._actionsInFlight === 0,
       setTimer: (callback, ms) => setTimeout(callback, ms),
-      clearTimer: handle => clearTimeout(handle as NodeJS.Timeout)
+      clearTimer: handle => clearTimeout(handle as NodeJS.Timeout),
+      ignored: paths => ignoredPaths(paths, this._workspaceRoot)
     });
     // The watcher exists only while the setting is on: with it off, no file event reaches the extension.
     const watchFiles = () => {
