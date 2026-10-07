@@ -35,6 +35,32 @@ export class CopilotSummaryProvider implements AIProvider {
     return models.map(model => ({ id: model.id, name: model.name || model.id }));
   }
 
+  /** One prompt, one plain-text reply (a commit message): the selected Copilot model, or the first one. */
+  async complete(prompt: string, selectedModelId: string | undefined, token: vscode.CancellationToken, maxChars = 8000): Promise<{ text: string; model: string }> {
+    const api = vscode as typeof vscode & SummaryLanguageModelAPI;
+    if (!api.lm?.selectChatModels || !api.LanguageModelChatMessage) {
+      throw new Error('Copilot features require VS Code 1.91 or newer.');
+    }
+    const models = await api.lm.selectChatModels({ vendor: 'copilot' });
+    const model = selectedModelId ? models.find(candidate => candidate.id === selectedModelId) : models[0];
+    if (!model) {
+      throw new Error(selectedModelId
+        ? 'The selected Copilot model is no longer available. Reload the model list and try again.'
+        : 'No Copilot model available. Sign in to GitHub Copilot and try again.');
+    }
+    if (await model.countTokens(prompt) > model.maxInputTokens - 1024) {
+      throw new Error('The selected files\' diff does not fit this model. Select fewer files, or choose a model with a larger context window.');
+    }
+    const response = await model.sendRequest([api.LanguageModelChatMessage.User(prompt)], {}, token);
+    let text = '';
+    for await (const fragment of response.text) {
+      if (token.isCancellationRequested) { throw new Error('Cancelled'); }
+      text += fragment;
+      if (text.length > maxChars) { throw new Error('The model\'s reply is longer than a commit message should be.'); }
+    }
+    return { text, model: `${model.id}:${model.version}` };
+  }
+
   async summarize(packet: ChangeContextPacket, token: vscode.CancellationToken, progress: (status: string) => void, selectedModelId?: string) {
     const api = vscode as typeof vscode & SummaryLanguageModelAPI;
     if (!api.lm?.selectChatModels || !api.LanguageModelChatMessage) {

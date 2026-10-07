@@ -35,6 +35,7 @@ const { ReviewController } = require(path.join(root, 'out/reviewController'));
 const { ReviewHistoryStore } = require(path.join(root, 'out/reviewHistory'));
 const { ReviewSkillStore } = require(path.join(root, 'out/reviewSkillStore'));
 const { ReviewBridge } = require(path.join(root, 'out/reviewBridge'));
+const { CommitMessageController } = require(path.join(root, 'out/commitMessageController'));
 const { resolveReleaseRange } = require(path.join(root, 'out/services/releaseRange'));
 const { GitCommandService } = require(path.join(root, 'out/services/gitCommandService'));
 const { getHtmlForWebview, getReviewHtml, getSidebarHtml } = require(path.join(root, 'out/webview/template'));
@@ -57,6 +58,19 @@ const lightThemeCss = `:root{--vscode-font-family:system-ui,sans-serif;--vscode-
 --vscode-list-hoverBackground:#f2f2f2;--vscode-toolbar-hoverBackground:rgba(184,184,184,.31);--vscode-focusBorder:#005fb8;--vscode-dropdown-background:#ffffff;--vscode-dropdown-foreground:#3b3b3b;--vscode-dropdown-border:#cecece;--vscode-menu-background:#ffffff;--vscode-menu-foreground:#3b3b3b;--vscode-menu-border:#cecece}`;
 
 function git(cwd, ...args) {
+  // The dashboard runs `git status` in the background, which holds the index lock for a moment;
+  // a test command that writes the index then fails with "index.lock: File exists". Wait for it.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return runGit(cwd, args);
+    } catch (error) {
+      if (attempt >= 40 || !/index\.lock': File exists/.test(String(error.stderr || ''))) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
+function runGit(cwd, args) {
   return execFileSync('git', ['-c', 'protocol.file.allow=always', ...args], {
     cwd,
     encoding: 'utf8',
@@ -121,7 +135,8 @@ function startServer(workspace, otherFolder) {
   // The review runs through the real ReviewController with a scripted runner instead of Copilot.
   // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
   const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set(),
-    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [] };
+    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [], messagePrompts: [],
+    messageReply: async () => ({ text: 'feat(app): add the partly file\n\nIt holds the staged line.', model: 'scripted:1' }) };
   // Saved reviews outlive a page (a reopened dashboard), like VS Code's workspace state.
   const historyState = new Map();
   const reviewHistory = new ReviewHistoryStore({ get: key => historyState.get(key),
@@ -160,6 +175,20 @@ function startServer(workspace, otherFolder) {
       revealDashboard: () => { reviewProbe.dashboardRevealed = (reviewProbe.dashboardRevealed || 0) + 1; }
     });
     page.reviewBridge = bridge;
+    // Commit messages: the real controller, with a scripted model (Copilot is not available here).
+    const commitMessages = new CommitMessageController({
+      workspaceRoot: () => currentRoot,
+      post,
+      ask: async (message, detail, actions) => { reviewProbe.questions.push({ message, actions }); return reviewProbe.ask(actions); },
+      alwaysConfirm: () => false,
+      isConsentRemembered: rootPath => reviewProbe.remembered.has(rootPath),
+      rememberConsent: async rootPath => { reviewProbe.remembered.add(rootPath); },
+      complete: async (prompt, modelId) => { reviewProbe.messagePrompts.push({ prompt, modelId }); return reviewProbe.messageReply(prompt); },
+      createCancellation: () => {
+        const token = { isCancellationRequested: false };
+        return { token, cancel() { token.isCancellationRequested = true; }, dispose() {} };
+      }
+    });
     const reviews = new ReviewController({
       workspaceRoot: () => currentRoot,
       post: message => bridge.toReview(message),
@@ -216,6 +245,8 @@ function startServer(workspace, otherFolder) {
           ? { requestId, repositoryPath, baseSha: await service.resolveRevision(repositoryPath, range.latestReleaseTag),
             targetSha: await service.resolveRevision(repositoryPath, range.currentBranch), baseLabel: range.latestReleaseTag, targetLabel: range.currentBranch }
           : { requestId, repositoryPath, message: `No release tag like 1.5.0 or v1.5.0 is reachable from ${range.currentBranch}.` } });
+      } else if (commitMessages.handles(message.type)) {
+        await commitMessages.handle(message);
       } else if (message.type === 'summarizeChanges') {
         // The summary itself needs Copilot; the test checks what would be summarized.
         reviewProbe.summaries.push(message.payload);
@@ -519,7 +550,38 @@ async function main() {
     await page.locator(`.commit-change-preview-button[data-path="${unstagedOnly}"]`).click();
     await page.waitForFunction(() => document.querySelector('#commitPreviewModes [data-mode="staged"]').disabled);
     assert.match(await page.getAttribute('#commitPreviewModes [data-mode="staged"]', 'title'), /Nothing of this file is staged/);
+    // Write with Copilot fills the message for the selected files, with the convention it followed;
+    // a draft of yours stays one Undo away.
     await page.evaluate(() => window.__restorePost());
+    await page.check('.commit-change-checkbox[data-path="partly.txt"]');
+    await page.fill('#commitMessage', 'my own draft');
+    // A partly staged file needs the choice first: the message describes what will be committed.
+    await page.evaluate(() => document.querySelectorAll('input[name="commitPartial"]').forEach(radio => { radio.checked = false; }));
+    const promptsBefore = reviewProbe.messagePrompts.length;
+    await page.click('#commitMessageGenerate');
+    assert.match(await page.textContent('#commitMessageStatus'), /Choose how to commit the partly staged files first/);
+    assert.equal(reviewProbe.messagePrompts.length, promptsBefore);
+    await page.check('input[name="commitPartial"][value="staged"]');
+    await page.click('#commitMessageGenerate');
+    await page.waitForFunction(() => document.getElementById('commitMessage').value.startsWith('feat(app): add the partly file'));
+    assert.match(reviewProbe.messagePrompts.at(-1).prompt, /\+staged/);
+    assert.doesNotMatch(reviewProbe.messagePrompts.at(-1).prompt, /\+later/, 'the staged-part choice was not used for the message');
+    assert.match(await page.textContent('#commitMessageStatus'), /Written by scripted:1, following (AGENTS\.md|Conventional Commits)/);
+    await snap(page, '07c-commit-message-written');
+    // Changing the choice afterwards says the message no longer matches.
+    await page.check('input[name="commitPartial"][value="whole"]');
+    assert.match(await page.textContent('#commitMessageStatus'), /written for the staged part only/);
+    await page.check('input[name="commitPartial"][value="staged"]');
+    await page.fill('#commitMessage', 'my own draft');
+    await page.click('#commitMessageGenerate');
+    await page.waitForFunction(() => /Written by/.test(document.getElementById('commitMessageStatus').textContent));
+    await page.click('#commitMessageStatus [data-action="undoCommitMessage"]');
+    assert.equal(await page.inputValue('#commitMessage'), 'my own draft');
+    // A failure is said in place, and the button is usable again.
+    reviewProbe.messageReply = async () => { throw new Error('No Copilot model available. Sign in to GitHub Copilot and try again.'); };
+    await page.click('#commitMessageGenerate');
+    await page.waitForFunction(() => /Sign in to GitHub Copilot/.test(document.getElementById('commitMessageStatus').textContent));
+    assert.equal(await page.textContent('#commitMessageGenerate'), 'Write with Copilot');
     await page.keyboard.press('Escape');
     await page.locator('#commitChangesModal.active').waitFor({ state: 'detached' });
     git(parent, 'rm', '-q', '-f', '--cached', 'partly.txt');

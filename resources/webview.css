@@ -2863,3 +2863,11 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .repo-change-modified { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
 .repo-change-untracked { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
 .repo-change-conflicted { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
+
+/* Commit dialog: Write with Copilot beside the message label, and what it did. */
+.commit-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.commit-message-heading .form-label { margin-bottom: 0; }
+.commit-message-generate { padding: 2px 10px; font-size: 12px; }
+.commit-message-status { min-height: 16px; margin: 4px 0 6px; color: var(--text-secondary); font-size: 12px; }
+.commit-message-status:empty { margin: 0; min-height: 0; }
+.commit-message-status .link-button { padding: 0; border: 0; color: var(--vscode-textLink-foreground, var(--accent)); background: none; font: inherit; text-decoration: underline; cursor: pointer; }

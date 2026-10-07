@@ -21,6 +21,7 @@ import { ReviewUnitCache } from './reviewUnitCache';
 import { ReviewSkillStore } from './reviewSkillStore';
 import { resolveReleaseRange } from './services/releaseRange';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
+import { CommitMessageController } from './commitMessageController';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -34,6 +35,8 @@ const READ_ONLY_MESSAGES = new Set([
   'requestReview', 'openReviewTab', 'dashboardContext', 'getReviewStatus', 'getReviewQuality', 'reviewReady', 'showReviewEvidence',
   'startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview',
+  // Writing a commit message reads the working tree's diff; nothing is committed.
+  'generateCommitMessage', 'cancelCommitMessage',
   // The Side Bar's copy of the repository list; no Git.
   'sidebarSnapshot'
 ]);
@@ -50,6 +53,7 @@ export class RepositoryManagerPanel {
   private _workspaceRoot: string;
   private readonly _summaryProvider = new CopilotSummaryProvider();
   private readonly _reviews: ReviewController;
+  private readonly _commitMessages: CommitMessageController;
   /** Routes review messages between this dashboard, the Repository Review tab and the controller. */
   private readonly _reviewBridge: ReviewBridge;
   private _reviewPanel?: vscode.WebviewPanel;
@@ -120,6 +124,16 @@ export class RepositoryManagerPanel {
       postDashboard: message => this._panel.webview.postMessage(message),
       openView: () => this._openReviewPanel(),
       revealDashboard: () => this._panel.reveal(undefined, false)
+    });
+    this._commitMessages = new CommitMessageController({
+      workspaceRoot: () => this._workspaceRoot,
+      post: message => Promise.resolve(this._panel.webview.postMessage(message)),
+      ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
+      alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
+      isConsentRemembered: root => consent.has(root),
+      rememberConsent: root => consent.allow(root),
+      complete: (prompt, modelId, token) => this._summaryProvider.complete(prompt, modelId, token as vscode.CancellationToken),
+      createCancellation: () => new vscode.CancellationTokenSource()
     });
     this._reviews = new ReviewController({
       workspaceRoot: () => this._workspaceRoot,
@@ -377,6 +391,10 @@ export class RepositoryManagerPanel {
         await this._reviews.handle(message);
         return;
       }
+      if (this._commitMessages.handles(message.type)) {
+        await this._commitMessages.handle(message);
+        return;
+      }
       if (message.type === 'sidebarSnapshot') {
         const html = (message.payload as { html?: unknown } | undefined)?.html;
         if (typeof html === 'string') { RepositoryManagerLauncher.current?.update(html); }
@@ -492,6 +510,7 @@ export class RepositoryManagerPanel {
   public dispose() {
     this._cancelSummary();
     this._reviews.cancel();
+    this._commitMessages.cancel();
     const reviewPanel = this._reviewPanel;
     this._reviewPanel = undefined;
     reviewPanel?.dispose();

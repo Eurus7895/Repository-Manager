@@ -5,6 +5,12 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - Unreleased
+
+### Added
+
+- **Write with Copilot** in the commit dialog: Copilot writes the commit message for the selected files (the staged part, when that is what you commit), following the repository's own commit convention from AGENTS.md, CLAUDE.md, CONTRIBUTING.md or a commitlint config, or Conventional Commits when it has none. The message goes into the dialog for you to edit; a draft you had is one Undo away. It asks before sending code, and shares the review's "Always allow" per repository.
+
 ## [1.12.0] - 2026-10-07
 
 ### Added
