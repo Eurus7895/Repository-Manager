@@ -440,8 +440,9 @@ async function main() {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
     await page.waitForFunction(() => /1 staged · 1 modified · 1 new/.test(document.getElementById('uncommittedRow').textContent));
     assert.match(await page.textContent('#dashboardCommitSummary'), /update app in two places/, 'a refresh took the picked commit away');
-    // Back to the changes: each file, with its staged or unstaged diff.
-    await page.click('#uncommittedRow');
+    // Back to the changes, from the keyboard: each file, with its staged or unstaged diff.
+    await page.focus('#uncommittedRow');
+    await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelectorAll('#dashboardChangedFiles .changed-file-item').length === 3);
     await page.click('#dashboardChangedFiles .changed-file-item[data-path="src/app.txt"]');
     await page.waitForFunction(() => /\+staged edit/.test(document.getElementById('dashboardDiff').textContent));
@@ -456,6 +457,28 @@ async function main() {
     fs.rmSync(path.join(parent, 'live-new.txt'));
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
     await page.waitForFunction(() => /^Uncommitted changes\s*1 modified/.test(document.getElementById('uncommittedRow').textContent.trim()));
+    // A commit made outside the dashboard (a terminal): HEAD moves, so the history reloads with it.
+    fs.writeFileSync(path.join(parent, 'terminal.txt'), 'from a terminal\n');
+    git(parent, 'add', 'terminal.txt');
+    git(parent, 'commit', '-q', '-m', 'chore: commit from a terminal');
+    const repositoriesAfter = await page.evaluate(() => window.__initialRepositories);
+    const headNow = git(parent, 'rev-parse', '--short=8', 'HEAD').trim();
+    await page.evaluate(([list, head]) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules:
+      list.map(repository => repository.path === '.' ? Object.assign({}, repository, { currentCommit: head }) : repository) } } })), [repositoriesAfter, headNow]);
+    await page.locator('.history-row', { hasText: 'commit from a terminal' }).waitFor({ timeout: 5000 });
+    // Undo the terminal commit but keep the fixture's own local change.
+    git(parent, 'reset', '-q', 'HEAD~1');
+    fs.rmSync(path.join(parent, 'terminal.txt'));
+    await page.evaluate(list => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } })), repositoriesAfter);
+    await page.locator('.history-row', { hasText: 'commit from a terminal' }).waitFor({ state: 'detached', timeout: 5000 });
+    // Half of a comparison (one graph node picked) survives a status update: the second pick compares.
+    await page.locator('.graph-node-control').nth(1).click();
+    await page.evaluate(list => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: list } } })), repositoriesAfter);
+    await page.waitForTimeout(300);
+    await page.locator('.graph-node-control').nth(0).click();
+    await page.waitForFunction(() => /Compare/.test(document.getElementById('dashboardCommitSummary').textContent));
+    await page.click('[data-action="clearCommitComparison"]');
+    await page.click('#uncommittedRow');
     // A repository without local changes has no row and opens on its newest commit.
     await page.evaluate(() => document.querySelector('.sidebar-repository-item[data-path="lib-a"]').click());
     await page.locator('.history-row').first().waitFor();

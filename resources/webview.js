@@ -61,6 +61,8 @@
   let workingPreviewRequestId = 1000000;
   let workingDiffMode = null;
   let uncommittedRowRendered = false;
+  // The active repository's branch and commit at the last repository list, to notice HEAD moving.
+  let activeHeadSignature = { repositoryPath: null, head: '' };
   let workingTreePreviewRequestId = 0;
   let changeSummaryRequestId = 0;
   let changeSummarySelection = null;
@@ -1191,6 +1193,7 @@
 
   function toggleCommitCompareNode(commitHash) {
     if (!commitHash) return;
+    commitChosen = true; // a picked node, or half of a comparison, is not replaced by the working tree
     const transition = window.RepositoryHistoryGraph.transitionCompareSelection(
       commitCompareSelection,
       commitHash,
@@ -1601,7 +1604,7 @@
       updateCommitCompareUI();
       if (commitCompareSelection.length === 2) {
         loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
-      } else if (dashboardWorkingChanges().length && (selectedDashboardCommit === WORKING_TREE || !commitChosen)) {
+      } else if (dashboardWorkingChanges().length && (selectedDashboardCommit === WORKING_TREE || (!commitChosen && commitCompareSelection.length === 0))) {
         selectWorkingTree();
       } else {
         loadParentCommitDetail(preferred.hash);
@@ -1610,8 +1613,21 @@
     if (!append) requestWorkingTreeSummary();
   }
 
+  // One status request at a time per repository: a second ask while one runs asks once more afterwards.
+  let workingSummaryInFlight = null;
+  let workingSummaryAgain = false;
   function requestWorkingTreeSummary() {
-    if (activeDashboardRepository) postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository, purpose: 'dashboard' });
+    if (!activeDashboardRepository) return;
+    if (workingSummaryInFlight === activeDashboardRepository) { workingSummaryAgain = true; return; }
+    workingSummaryInFlight = activeDashboardRepository;
+    workingSummaryAgain = false;
+    postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository, purpose: 'dashboard' });
+  }
+
+  function workingSummaryAnswered(repositoryPath) {
+    if (workingSummaryInFlight !== repositoryPath) return;
+    workingSummaryInFlight = null;
+    if (workingSummaryAgain) requestWorkingTreeSummary();
   }
 
   function dashboardWorkingChanges() {
@@ -1654,6 +1670,7 @@
 
   // The status of the active repository arrived (on load, after a refresh or a live update).
   function applyWorkingTreeSummary(payload) {
+    if (payload) workingSummaryAnswered(payload.repositoryPath);
     if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
     workingTree = { repositoryPath: payload.repositoryPath, changes: Array.isArray(payload.changes) ? payload.changes : [] };
     updateUncommittedRow();
@@ -1662,7 +1679,7 @@
       if (hasChanges) renderWorkingTreeDetail();
       else if (loadedHistoryCommits.length) loadParentCommitDetail(loadedHistoryCommits[0].hash);
       else clearCommitDetail();
-    } else if (hasChanges && !commitChosen && !comparisonSource && commitCompareSelection.length < 2) {
+    } else if (hasChanges && !commitChosen && !comparisonSource && commitCompareSelection.length === 0) {
       selectWorkingTree();
     }
   }
@@ -1695,6 +1712,8 @@
         '<div class="uncommitted-actions"><button type="button" class="btn" data-action="openCommitChangesModal">Commit…</button><button type="button" class="btn" data-action="reviewLocal">Review changes</button></div>';
     }
     if (count) count.textContent = String(changes.length);
+    // The new Review changes button follows the review lock; Review commit has nothing to review here.
+    applyReviewLock();
     if (!files) return;
     files.innerHTML = changes.map(change => {
       const status = change.conflicted ? 'unmerged' : change.untracked ? 'added' : change.originalPath ? 'renamed'
@@ -1861,6 +1880,18 @@
   }
 
   function renderDashboardError(payload) {
+    if (payload && payload.request === 'getWorkingTreeChanges') {
+      // The status could not be read: say so rather than keep showing the last one as current.
+      workingSummaryAnswered(payload.repositoryPath);
+      if (payload.repositoryPath !== activeDashboardRepository) return;
+      workingTree = { repositoryPath: payload.repositoryPath, changes: [] };
+      updateUncommittedRow();
+      if (selectedDashboardCommit === WORKING_TREE) {
+        const summary = document.getElementById('dashboardCommitSummary');
+        if (summary) summary.innerHTML = `<div class="dashboard-error">Cannot read the local changes: ${escapeHtml(payload.message)}</div>`;
+      }
+      return;
+    }
     if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
     const history = document.getElementById('dashboardHistory');
     if (payload.request === 'getHistory' && history) {
@@ -1937,6 +1968,14 @@
     e.preventDefault();
     e.stopPropagation();
     requestBranchCheckout(branchRef.dataset.branch);
+  });
+
+  // The Uncommitted changes row is a div (it holds no button of its own): Enter and Space open it.
+  document.body.addEventListener('keydown', function (e) {
+    const row = e.target.closest && e.target.closest('#uncommittedRow');
+    if (!row || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    actions.selectWorkingTree();
   });
 
   document.body.addEventListener('keydown', function (e) {
@@ -2218,6 +2257,15 @@
           publishReviewContext();
           // So does the Uncommitted changes row (a refresh, a live update, or an action's result).
           requestWorkingTreeSummary();
+          // A commit, checkout or reset made outside the dashboard moved HEAD: its history is reloaded too.
+          {
+            const active = getRepository(activeDashboardRepository);
+            const head = active ? `${active.currentBranch || ''}@${active.currentCommit || ''}` : '';
+            if (head && activeHeadSignature.repositoryPath === activeDashboardRepository && activeHeadSignature.head && activeHeadSignature.head !== head) {
+              reloadActiveDashboardData();
+            }
+            activeHeadSignature = { repositoryPath: activeDashboardRepository, head };
+          }
           break;
         }
 

@@ -4,11 +4,15 @@ const { LiveChanges, affectsStatus } = require('../../out/liveChanges.js');
 async function main() {
   // Which paths can change git status: files, and Git's index, HEAD and refs; not its internals.
   for (const file of ['/w/src/a.ts', '/w/.gitignore', '/w/.git/index', '/w/.git/HEAD', '/w/.git/refs/heads/main',
-    '/w/.git/modules/lib/index', 'C:\\w\\.git\\index', '/w/lib/.git']) {
+    '/w/.git/modules/lib/index', 'C:\\w\\.git\\index', '/w/lib/.git',
+    // A submodule named after a nested path, packed refs, the local exclude file, a linked worktree.
+    '/w/.git/modules/libs/foo/index', '/w/.git/modules/libs/foo/refs/heads/main', '/w/.git/packed-refs',
+    '/w/.git/info/exclude', '/w/.git/worktrees/fix/index', '/w/.git/worktrees/fix/HEAD']) {
     assert.equal(affectsStatus(file), file !== '/w/lib/.git', file);
   }
   for (const file of ['/w/.git/objects/ab/cdef', '/w/.git/index.lock', '/w/.git/logs/HEAD', '/w/.git/FETCH_HEAD',
-    '/w/.git/modules/lib/objects/12/34', '/w/.git/refs/heads/main.lock']) {
+    '/w/.git/modules/lib/objects/12/34', '/w/.git/refs/heads/main.lock', '/w/.git/ORIG_HEAD',
+    '/w/.git/modules/libs/foo/logs/refs/heads/main', '/w/.git/hooks/pre-commit']) {
     assert.equal(affectsStatus(file), false, file);
   }
 
@@ -31,7 +35,8 @@ async function main() {
     refresh: () => { refreshes++; return slow ? new Promise(resolve => { release = resolve; }) : Promise.resolve(); },
     canRefresh: () => canRefresh,
     setTimer: (callback, ms) => { const id = next++; timers.set(id, { callback, at: now + ms }); return id; },
-    clearTimer: id => timers.delete(id)
+    clearTimer: id => timers.delete(id),
+    now: () => now
   }, 800);
 
   // A burst of saves: one refresh, once they have been quiet for the delay.
@@ -79,11 +84,28 @@ async function main() {
   await advance(0);
   assert.equal(refreshes, 4);
 
+  // Our refresh's git status rewrites the index: that alone does not start another refresh,
+  // for a moment after it; a ref change in that moment, or an index change later, still does.
+  live.notify('/w/a.ts');
+  await advance(800);
+  assert.equal(refreshes, 5);
+  live.notify('/w/.git/index');
+  live.notify('/w/.git/modules/libs/foo/index');
+  await advance(1000);
+  assert.equal(refreshes, 5, 'the refresh refreshed itself');
+  live.notify('/w/.git/refs/heads/main');
+  await advance(800);
+  assert.equal(refreshes, 6);
+  await advance(2000);
+  live.notify('/w/.git/index');
+  await advance(800);
+  assert.equal(refreshes, 7, 'a later staging was ignored');
+
   // Disposed: nothing more.
   live.notify('/w/a.ts');
   live.dispose();
   await advance(5000);
-  assert.equal(refreshes, 4);
+  assert.equal(refreshes, 7);
   console.log('Live changes smoke passed');
 }
 

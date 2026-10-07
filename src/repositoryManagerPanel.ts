@@ -69,6 +69,7 @@ export class RepositoryManagerPanel {
   /** Git actions (not read-only requests) running now: a live refresh waits for them. */
   private _actionsInFlight = 0;
   private readonly _liveChanges: LiveChanges;
+  private _fileWatcher?: vscode.FileSystemWatcher;
 
   /** `preserveFocus` keeps the keyboard where it is, as when the Side Bar opens the dashboard. */
   public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento, preserveFocus = false) {
@@ -212,16 +213,23 @@ export class RepositoryManagerPanel {
       setTimer: (callback, ms) => setTimeout(callback, ms),
       clearTimer: handle => clearTimeout(handle as NodeJS.Timeout)
     });
-    const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*');
-    const onFileEvent = (uri: vscode.Uri) => {
-      if (vscode.workspace.getConfiguration('repositoryManager').get<boolean>('liveChanges', true)) {
-        this._liveChanges.notify(uri.fsPath);
-      }
+    // The watcher exists only while the setting is on: with it off, no file event reaches the extension.
+    const watchFiles = () => {
+      this._fileWatcher?.dispose();
+      this._fileWatcher = undefined;
+      if (!vscode.workspace.getConfiguration('repositoryManager').get<boolean>('liveChanges', true)) { return; }
+      const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+      const onFileEvent = (uri: vscode.Uri) => this._liveChanges.notify(uri.fsPath);
+      watcher.onDidChange(onFileEvent);
+      watcher.onDidCreate(onFileEvent);
+      watcher.onDidDelete(onFileEvent);
+      this._fileWatcher = watcher;
     };
-    fileWatcher.onDidChange(onFileEvent, null, this._disposables);
-    fileWatcher.onDidCreate(onFileEvent, null, this._disposables);
-    fileWatcher.onDidDelete(onFileEvent, null, this._disposables);
-    this._disposables.push(fileWatcher, { dispose: () => this._liveChanges.dispose() });
+    watchFiles();
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('repositoryManager.liveChanges')) { watchFiles(); }
+    }, null, this._disposables);
+    this._disposables.push({ dispose: () => { this._fileWatcher?.dispose(); this._liveChanges.dispose(); } });
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('repositoryManager.autoFetch')
         || event.affectsConfiguration('repositoryManager.autoFetchInterval')) {
