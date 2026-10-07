@@ -11,6 +11,7 @@ import { ReviewBridge } from './reviewBridge';
 import { messageHandlers, MessageHandlerContext } from './handlers/webviewMessageHandler';
 import { GitCommandService } from './services/gitCommandService';
 import { ChangeContextService, MAX_PATCH_BYTES } from './services/changeContextService';
+import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { CopilotSummaryProvider } from './services/changeSummaryService';
 import { SecurityReviewService } from './services/securityReviewService';
 import { SecurityReviewProvider } from './services/securityReviewProvider';
@@ -576,7 +577,8 @@ export class RepositoryManagerPanel {
     }
     const request = payload as Record<string, unknown>;
     const { repositoryPath, targetSha, baseSha, requestId, modelId } = request;
-    if (typeof repositoryPath !== 'string' || typeof targetSha !== 'string' ||
+    const local = request.local === true;
+    if (typeof repositoryPath !== 'string' || (!local && typeof targetSha !== 'string') ||
         (baseSha !== null && typeof baseSha !== 'string') || typeof requestId !== 'number' ||
         (modelId !== undefined && typeof modelId !== 'string')) {
       return;
@@ -592,15 +594,28 @@ export class RepositoryManagerPanel {
       }
     };
     try {
-      await send('changeSummaryProgress', { status: 'Collecting context…' });
-      const context = await new ChangeContextService(new GitCommandService(root))
-        .collect(repositoryPath, targetSha, baseSha || undefined);
+      await send('changeSummaryProgress', { status: local ? 'Reading the local changes…' : 'Collecting context…' });
+      const git = new GitCommandService(root);
+      // Local changes: HEAD → a snapshot of the working tree (as Review changes takes it); nothing
+      // is committed, staged or changed.
+      let range: { base?: string; target: string; label?: string };
+      if (local) {
+        const snapshot = await snapshotLocalChanges(git, git.resolveRepositoryPath(repositoryPath));
+        if (!snapshot) {
+          await send('changeSummaryError', { message: 'There are no local changes to summarize.' });
+          return;
+        }
+        range = { base: snapshot.headSha, target: snapshot.snapshotSha, label: 'HEAD → local changes (staged, unstaged and new files)' };
+      } else {
+        range = { base: typeof baseSha === 'string' ? baseSha : undefined, target: targetSha as string };
+      }
+      const context = await new ChangeContextService(git).collect(repositoryPath, range.target, range.base);
       if (generation !== this._summaryRequest || controller.token.isCancellationRequested) {
         return;
       }
       const decision = await vscode.window.showInformationMessage(
         `Summarize ${context.coverage.totalFiles} changed files with Copilot?`,
-        { modal: true, detail: `${context.repositoryPath}\n${context.baseSha} → ${context.targetSha}\n` +
+        { modal: true, detail: `${context.repositoryPath}\n${range.label || `${context.baseSha} → ${context.targetSha}`}\n` +
           `${context.patches.length} patches (up to ${Math.round(MAX_PATCH_BYTES / 1000)} KB total) may be sent across multiple model requests. ` +
           `${context.coverage.omitted.length} items have no patch. Review changed files in the dashboard first.` },
         'Summarize'

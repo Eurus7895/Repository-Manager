@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.0] - Unreleased
 
+### Added
+
+- **Summarize changes** for uncommitted changes: Copilot summarizes your local changes (staged, unstaged and new files) from a snapshot, as Review changes does, without committing or staging anything.
+
 ### Changed
 
+- **Uncommitted changes** are shown like a commit: the same header with the branch and `HEAD → working tree`, and **Commit…**, **Review changes** and **Summarize changes** in the bar below it.
 - The **Model** list moved into the dashboard toolbar, next to the review buttons, so you can choose the Copilot model for reviews, summaries, commit messages and fixes from any view, including Uncommitted changes.
 - **Compare branches** also lists tags, newest version first, so the changes since a release (for example `1.12.0` → `main`) are two picks, labelled with the tag's name. Picking the same branch or tag twice says so in the dialog instead of a pop-up.
 
