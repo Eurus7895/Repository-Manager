@@ -6,6 +6,7 @@ A VS Code extension for Git workflows across a parent repository and its linked 
 
 - **Overview:** every repository in one dashboard, with drift from the target branch, a commit graph, changed files and diffs. Compare any two commits or branches, and filter or search history.
 - **Branches across repositories:** create, switch and delete branches in the repositories you pick, with naming rules for `main`, `dev`, `feature`, `task` and `release`.
+- **Uncommitted changes:** each repository's history starts with your local changes and their staged and unstaged diffs, kept current as you edit.
 - **Everyday Git:** checkout, fetch, pull, push, open a pull request, rebase, reset or drop commits (with a backup branch), and align linked repositories to their recorded commits.
 - **AI review with Copilot:**
   - **Review changes** (your uncommitted work, before you commit), **Review commit**, **Review branch** (changes since the default branch) or **Review all** (every file);

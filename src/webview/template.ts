@@ -361,7 +361,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               </div>
               <div class="dashboard-splitter dashboard-splitter-vertical" id="filesDiffSplitter" role="separator" aria-label="Resize changed files and diff panels" aria-orientation="vertical" tabindex="0"></div>
               <div class="diff-panel">
-                <div class="panel-title"><span id="diffFileName">Diff</span><span id="diffTruncated"></span></div>
+                <div class="panel-title"><span id="diffFileName">Diff</span><span class="working-diff-modes" id="workingDiffModes" role="group" aria-label="Which uncommitted changes the diff shows" hidden><button type="button" data-action="workingDiffMode" data-mode="staged" title="The changes already staged (the index)">Staged</button><button type="button" data-action="workingDiffMode" data-mode="unstaged" title="The changes not staged yet (the working tree)">Unstaged</button></span><span id="diffTruncated"></span></div>
                 <pre class="diff-viewer" id="dashboardDiff"><span class="diff-placeholder">Select a changed file to load its patch.</span></pre>
               </div>
             </div>

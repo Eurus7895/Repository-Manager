@@ -419,7 +419,50 @@ async function main() {
     // Only repositories off their recorded commit offer the reset action.
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-b"]').count(), 1);
     assert.equal(await side.locator('.sidebar-repository-action[data-path="lib-a"]').count(), 0);
+    // Uncommitted changes: with local changes and no commit picked, the dashboard shows them, not HEAD.
+    await page.locator('#uncommittedRow.active').waitFor();
+    assert.match(await page.textContent('#uncommittedRow'), /Uncommitted changes\s*1 modified/);
+    assert.match(await page.textContent('#dashboardCommitSummary'), /Uncommitted changes/);
+    assert.deepEqual(await page.locator('#dashboardChangedFiles .changed-file-item').evaluateAll(items => items.map(item => item.dataset.path)), ['lib-b']);
+    await page.locator('#dashboardDiff .diff-addition').first().waitFor();
+    assert.deepEqual(await page.locator('#workingDiffModes button').evaluateAll(buttons => buttons.map(button => [button.dataset.mode, button.disabled, button.classList.contains('active')])),
+      [['staged', true, false], ['unstaged', false, true]]);
     await snap(page, '01-dashboard');
+    // Picking a commit shows it, and a later status update does not take the view back.
+    await page.locator('.history-row', { hasText: 'update app in two places' }).click();
+    await page.waitForFunction(() => /update app in two places/.test(document.getElementById('dashboardCommitSummary').textContent));
+    assert.equal(await page.isHidden('#workingDiffModes'), true);
+    assert.equal(await page.locator('#uncommittedRow.active').count(), 0);
+    // Live: a new file and a staged edit show up when the repository list refreshes (a file event's refresh).
+    fs.writeFileSync(path.join(parent, 'live-new.txt'), 'new\n');
+    fs.appendFileSync(path.join(parent, 'src/app.txt'), 'staged edit\n');
+    git(parent, 'add', 'src/app.txt');
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
+    await page.waitForFunction(() => /1 staged · 1 modified · 1 new/.test(document.getElementById('uncommittedRow').textContent));
+    assert.match(await page.textContent('#dashboardCommitSummary'), /update app in two places/, 'a refresh took the picked commit away');
+    // Back to the changes: each file, with its staged or unstaged diff.
+    await page.click('#uncommittedRow');
+    await page.waitForFunction(() => document.querySelectorAll('#dashboardChangedFiles .changed-file-item').length === 3);
+    await page.click('#dashboardChangedFiles .changed-file-item[data-path="src/app.txt"]');
+    await page.waitForFunction(() => /\+staged edit/.test(document.getElementById('dashboardDiff').textContent));
+    assert.equal(await page.getAttribute('#workingDiffModes [data-mode="staged"]', 'aria-pressed'), 'true');
+    assert.equal(await page.isDisabled('#workingDiffModes [data-mode="unstaged"]'), true);
+    await page.click('#dashboardChangedFiles .changed-file-item[data-path="live-new.txt"]');
+    await page.waitForFunction(() => /\+new/.test(document.getElementById('dashboardDiff').textContent));
+    await snap(page, '01c-uncommitted-changes');
+    // Clean again: the row goes, and the newest commit is shown.
+    git(parent, 'reset', '-q', '--', 'src/app.txt');
+    git(parent, 'checkout', '--', 'src/app.txt');
+    fs.rmSync(path.join(parent, 'live-new.txt'));
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
+    await page.waitForFunction(() => /^Uncommitted changes\s*1 modified/.test(document.getElementById('uncommittedRow').textContent.trim()));
+    // A repository without local changes has no row and opens on its newest commit.
+    await page.evaluate(() => document.querySelector('.sidebar-repository-item[data-path="lib-a"]').click());
+    await page.locator('.history-row').first().waitFor();
+    await page.waitForFunction(() => document.querySelector('.history-row.active'));
+    assert.equal(await page.locator('#uncommittedRow').count(), 0);
+    await page.evaluate(() => document.querySelector('.sidebar-repository-item[data-path="."]').click());
+    await page.locator('#uncommittedRow.active').waitFor();
     // Before any review, the Review button opens the Repository Review tab, so its skills can be set up first.
     // The dashboard keeps no review panel of its own.
     assert.equal(await page.locator('#reviewPanel, #detailTabs').count(), 0, 'the dashboard still has a Review tab');

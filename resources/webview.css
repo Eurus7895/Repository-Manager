@@ -2871,3 +2871,37 @@ body.sidebar-view { overflow: hidden; background: var(--vscode-sideBar-backgroun
 .commit-message-status { min-height: 16px; margin: 4px 0 6px; color: var(--text-secondary); font-size: 12px; }
 .commit-message-status:empty { margin: 0; min-height: 0; }
 .commit-message-status .link-button { padding: 0; border: 0; color: var(--vscode-textLink-foreground, var(--accent)); background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+/* Uncommitted changes: a row above the history, styled like one, with an open dot for the graph. */
+.uncommitted-row {
+  display: grid;
+  grid-template-columns:
+    var(--history-graph-column-width)
+    var(--history-message-column-width)
+    var(--history-author-column-width)
+    var(--history-date-column-width)
+    var(--history-commit-column-width);
+  gap: 8px;
+  align-items: center;
+  width: var(--history-content-width, 100%);
+  min-height: 27px;
+  padding: 0 var(--history-horizontal-padding, 9px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d) 8%, transparent);
+  cursor: pointer;
+}
+.uncommitted-row:hover { background: var(--vscode-list-hoverBackground); }
+.uncommitted-row.active { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
+.uncommitted-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+/* Centred on the graph's first lane (historyGraph.js: LANE_INSET 18px), where HEAD's line runs. */
+.uncommitted-graph { display: flex; justify-content: flex-start; padding-left: calc(18px - 6.5px); }
+.uncommitted-dot { width: 9px; height: 9px; border: 2px dashed var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); border-radius: 50%; }
+.uncommitted-counts { color: var(--text-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uncommitted-row.active .uncommitted-counts { color: inherit; opacity: .82; }
+.uncommitted-avatar { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
+.uncommitted-actions { display: flex; gap: 6px; align-items: center; }
+.working-diff-modes { display: inline-flex; gap: 4px; margin-left: auto; margin-right: 8px; }
+.working-diff-modes[hidden] { display: none; }
+.working-diff-modes button { padding: 1px 7px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.working-diff-modes button.active { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.working-diff-modes button:disabled { opacity: .45; cursor: default; }

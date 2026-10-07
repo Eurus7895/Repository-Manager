@@ -52,6 +52,15 @@
   let commitDraftRepository = null;
   let previewedWorkingTreeFile = null;
   let workingTreePreviewMode = 'unstaged';
+  // Uncommitted changes: a row above the history and the working tree in the detail pane. They are
+  // shown by default when there are changes and no commit was picked (commitChosen).
+  const WORKING_TREE = '__working_tree__';
+  let workingTree = { repositoryPath: null, changes: [] };
+  let commitChosen = false;
+  // Apart from the commit dialog's preview ids, so each side knows its own replies.
+  let workingPreviewRequestId = 1000000;
+  let workingDiffMode = null;
+  let uncommittedRowRendered = false;
   let workingTreePreviewRequestId = 0;
   let changeSummaryRequestId = 0;
   let changeSummarySelection = null;
@@ -385,10 +394,17 @@
       if (historyNextOffset !== null && !historyAppendPending) requestDashboardHistory(historyNextOffset, true);
     },
 
+    selectWorkingTree: () => {
+      commitChosen = false;
+      selectWorkingTree();
+    },
+    workingDiffMode: (el) => requestWorkingDiff(el.dataset.mode),
+
     selectHistoryCommit: (el, event) => {
       const commitHash = el.dataset.commit;
       // Rows of a history being replaced may belong to the previous repository.
       if (!commitHash || (el.closest && el.closest('.history-stale'))) return;
+      commitChosen = true;
       // Ctrl/Cmd-click or Shift-click picks the row for a comparison, like the graph node (as Git Graph does).
       if (event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
         toggleCommitCompareNode(commitHash);
@@ -408,6 +424,15 @@
       const fileName = document.getElementById('diffFileName');
       const diff = document.getElementById('dashboardDiff');
       if (fileName) fileName.textContent = filePath;
+      const workingModes = document.getElementById('workingDiffModes');
+      if (selectedDashboardCommit === WORKING_TREE) {
+        // A live update re-renders the list: keep the diff on screen until the new one arrives.
+        if (diff && diff.dataset.workingPath !== filePath) diff.innerHTML = '<span class="diff-placeholder">Loading patch…</span>';
+        requestWorkingDiff(workingDiffMode);
+        return;
+      }
+      if (workingModes) workingModes.hidden = true;
+      if (diff) delete diff.dataset.workingPath;
       if (diff) diff.innerHTML = '<span class="diff-placeholder">Loading patch…</span>';
       postMessage('getFileDiff', {
         repositoryPath: activeDashboardRepository,
@@ -1132,6 +1157,7 @@
 
   function loadParentCommitDetail(commitHash) {
     if (!commitHash) return;
+    if (commitHash === WORKING_TREE) { selectWorkingTree(); return; }
     resetChangeSummary();
     selectedDashboardCommit = commitHash;
     activeComparisonTarget = commitHash;
@@ -1141,6 +1167,9 @@
     document.querySelectorAll('.history-row').forEach(row => {
       row.classList.toggle('active', row.dataset.commit === commitHash);
     });
+    updateUncommittedRow();
+    const workingModes = document.getElementById('workingDiffModes');
+    if (workingModes) workingModes.hidden = true;
     updateCommitCompareUI();
     saveState();
     showCommitDetailLoading();
@@ -1271,6 +1300,10 @@
       cancelPendingChangeSummary();
       changeSummaries.clear();
     }
+    if (repositoryPath !== activeDashboardRepository) {
+      commitChosen = false;
+      workingTree = { repositoryPath: null, changes: [] };
+    }
     activeDashboardRepository = repositoryPath;
     resetChangeSummary();
     const canRestoreComparison = !dashboardActivated && comparisonRepository === repositoryPath;
@@ -1321,7 +1354,7 @@
     if (!history) return;
     // inert keeps keyboard focus and Enter off the old rows too, not only the pointer.
     if (history.querySelector('.history-row')) { history.classList.add('history-stale'); history.inert = true; }
-    else history.innerHTML = '<div class="dashboard-loading">Loading history…</div>';
+    else { uncommittedRowRendered = false; history.innerHTML = '<div class="dashboard-loading">Loading history…</div>'; }
   }
 
   function captureHistoryViewport(history) {
@@ -1541,9 +1574,11 @@
       scheduleHistoryGraphGeometry();
     } else {
       const rows = renderRows(loadedHistoryCommits);
-      history.innerHTML = rows
+      const uncommitted = uncommittedRowHtml();
+      uncommittedRowRendered = Boolean(uncommitted);
+      history.innerHTML = uncommitted + (rows
         ? `<div class="history-table-content">${renderHistoryGraph(loadedHistoryCommits, graphModel)}${rows}</div>`
-        : '<div class="dashboard-empty">No commits match this view.</div>';
+        : '<div class="dashboard-empty">No commits match this view.</div>');
     }
     const viewport = pendingHistoryViewport;
     if (viewport && viewport.requestId === payload.requestId && viewport.repositoryPath === payload.repositoryPath) {
@@ -1566,11 +1601,132 @@
       updateCommitCompareUI();
       if (commitCompareSelection.length === 2) {
         loadComparison(commitCompareSelection[0], commitCompareSelection[1], 'commits');
+      } else if (dashboardWorkingChanges().length && (selectedDashboardCommit === WORKING_TREE || !commitChosen)) {
+        selectWorkingTree();
       } else {
         loadParentCommitDetail(preferred.hash);
       }
     }
+    if (!append) requestWorkingTreeSummary();
   }
+
+  function requestWorkingTreeSummary() {
+    if (activeDashboardRepository) postMessage('getWorkingTreeChanges', { repositoryPath: activeDashboardRepository, purpose: 'dashboard' });
+  }
+
+  function dashboardWorkingChanges() {
+    return workingTree.repositoryPath === activeDashboardRepository ? workingTree.changes : [];
+  }
+
+  function workingTreeCountText(changes) {
+    const count = predicate => changes.filter(predicate).length;
+    return [
+      [count(change => change.staged && !change.conflicted), 'staged'],
+      [count(change => change.unstaged && !change.conflicted), 'modified'],
+      [count(change => change.untracked), 'new'],
+      [count(change => change.conflicted), 'conflicted']
+    ].filter(([value]) => value > 0).map(([value, label]) => `${value} ${label}`).join(' · ');
+  }
+
+  function uncommittedRowHtml() {
+    const changes = dashboardWorkingChanges();
+    if (!changes.length) return '';
+    const active = selectedDashboardCommit === WORKING_TREE;
+    return `<div class="uncommitted-row${active ? ' active' : ''}" id="uncommittedRow" data-action="selectWorkingTree" role="button" tabindex="0" aria-pressed="${active}" title="Your staged and unstaged changes, not committed yet">
+      <span class="uncommitted-graph"><span class="uncommitted-dot" aria-hidden="true"></span></span>
+      <span class="history-message"><strong class="history-subject">Uncommitted changes</strong><span class="uncommitted-counts">${escapeHtml(workingTreeCountText(changes))}</span></span>
+      <span class="history-author"></span><span class="history-date">Now</span><code class="history-hash">*</code>
+    </div>`;
+  }
+
+  function updateUncommittedRow() {
+    const history = document.getElementById('dashboardHistory');
+    if (!history) return;
+    const html = uncommittedRowHtml();
+    // Nothing shown and nothing to show: leave the history alone.
+    if (!html && !uncommittedRowRendered) return;
+    const existing = uncommittedRowRendered ? document.getElementById('uncommittedRow') : null;
+    uncommittedRowRendered = Boolean(html);
+    if (existing && html) existing.outerHTML = html;
+    else if (existing) existing.remove();
+    else if (html) history.insertAdjacentHTML('afterbegin', html);
+  }
+
+  // The status of the active repository arrived (on load, after a refresh or a live update).
+  function applyWorkingTreeSummary(payload) {
+    if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
+    workingTree = { repositoryPath: payload.repositoryPath, changes: Array.isArray(payload.changes) ? payload.changes : [] };
+    updateUncommittedRow();
+    const hasChanges = workingTree.changes.length > 0;
+    if (selectedDashboardCommit === WORKING_TREE) {
+      if (hasChanges) renderWorkingTreeDetail();
+      else if (loadedHistoryCommits.length) loadParentCommitDetail(loadedHistoryCommits[0].hash);
+      else clearCommitDetail();
+    } else if (hasChanges && !commitChosen && !comparisonSource && commitCompareSelection.length < 2) {
+      selectWorkingTree();
+    }
+  }
+
+  function selectWorkingTree() {
+    if (!dashboardWorkingChanges().length) return;
+    if (selectedDashboardCommit !== WORKING_TREE) selectedDashboardFile = null;
+    resetChangeSummary();
+    selectedDashboardCommit = WORKING_TREE;
+    activeComparisonTarget = null;
+    comparisonBaseHash = null;
+    comparisonSource = null;
+    comparisonLabels = null;
+    commitCompareSelection = [];
+    updateCommitCompareUI();
+    document.querySelectorAll('.history-row').forEach(row => row.classList.remove('active'));
+    updateUncommittedRow();
+    saveState();
+    renderWorkingTreeDetail();
+  }
+
+  // The detail pane for the working tree: what the next commit would hold, file by file.
+  function renderWorkingTreeDetail() {
+    const changes = dashboardWorkingChanges();
+    const summary = document.getElementById('dashboardCommitSummary');
+    const files = document.getElementById('dashboardChangedFiles');
+    const count = document.getElementById('changedFileCount');
+    if (summary) {
+      summary.innerHTML = `<div class="commit-avatar uncommitted-avatar" aria-hidden="true">✎</div><div class="commit-summary-copy"><strong>Uncommitted changes</strong><span>${escapeHtml(workingTreeCountText(changes))} · not committed yet</span></div>` +
+        '<div class="uncommitted-actions"><button type="button" class="btn" data-action="openCommitChangesModal">Commit…</button><button type="button" class="btn" data-action="reviewLocal">Review changes</button></div>';
+    }
+    if (count) count.textContent = String(changes.length);
+    if (!files) return;
+    files.innerHTML = changes.map(change => {
+      const status = change.conflicted ? 'unmerged' : change.untracked ? 'added' : change.originalPath ? 'renamed'
+        : (change.indexStatus === 'D' || change.workTreeStatus === 'D') ? 'deleted' : (change.indexStatus === 'A') ? 'added' : 'modified';
+      const state = change.conflicted ? 'conflict' : change.untracked ? 'new' : change.staged && change.unstaged ? 'staged + modified' : change.staged ? 'staged' : 'modified';
+      return `<button class="changed-file-item status-${escapeHtml(status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(change.path)}" title="${escapeHtml(state)}"><span class="file-status-glyph">${changedFileGlyph(status)}</span><span class="file-path"><strong>${escapeHtml(change.path.split('/').pop())}</strong><small>${escapeHtml(change.originalPath ? `${change.originalPath} → ${change.path}` : change.path)} · ${escapeHtml(state)}</small></span><span>›</span></button>`;
+    }).join('');
+    const kept = selectedDashboardFile && Array.from(files.querySelectorAll('.changed-file-item')).find(item => item.dataset.path === selectedDashboardFile);
+    const first = kept || files.querySelector('.changed-file-item');
+    if (first) actions.selectChangedFile(first);
+  }
+
+  // Staged diff (the index) or Unstaged diff (the working tree) of the selected file.
+  function requestWorkingDiff(mode) {
+    const change = dashboardWorkingChanges().find(item => item.path === selectedDashboardFile);
+    const modes = document.getElementById('workingDiffModes');
+    if (!change) return;
+    const canStaged = change.staged;
+    const canUnstaged = change.unstaged || change.untracked;
+    workingDiffMode = mode === 'staged' && canStaged ? 'staged' : mode === 'unstaged' && canUnstaged ? 'unstaged' : canUnstaged ? 'unstaged' : 'staged';
+    if (modes) {
+      modes.hidden = false;
+      modes.querySelectorAll('button').forEach(button => {
+        const empty = button.dataset.mode === 'staged' ? !canStaged : !canUnstaged;
+        button.disabled = empty;
+        button.classList.toggle('active', button.dataset.mode === workingDiffMode);
+        button.setAttribute('aria-pressed', button.dataset.mode === workingDiffMode ? 'true' : 'false');
+      });
+    }
+    postMessage('getWorkingTreePreview', { repositoryPath: activeDashboardRepository, path: change.path, mode: workingDiffMode, requestId: ++workingPreviewRequestId });
+  }
+
 
   function renderRepositoryRefs(payload) {
     if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
@@ -1711,7 +1867,7 @@
       historyAppendPending = false;
       history.classList.remove('history-stale');
       history.inert = false;
-      history.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`;
+      { uncommittedRowRendered = false; history.innerHTML = `<div class="dashboard-error">${escapeHtml(payload.message)}</div>`; }
       return;
     }
     const target = payload.request === 'getCommitDetail'
@@ -1898,11 +2054,22 @@
           break;
         }
         case 'workingTreeChangesLoaded':
-          renderWorkingTreeChanges(message.payload);
+          if (message.payload && message.payload.purpose === 'dashboard') applyWorkingTreeSummary(message.payload);
+          else renderWorkingTreeChanges(message.payload);
           break;
 
         case 'workingTreePreviewLoaded': {
           const payload = message.payload;
+          if (payload.requestId === workingPreviewRequestId && selectedDashboardCommit === WORKING_TREE && payload.path === selectedDashboardFile) {
+            const dashboardDiff = document.getElementById('dashboardDiff');
+            const dashboardTruncated = document.getElementById('diffTruncated');
+            if (dashboardDiff) {
+              dashboardDiff.dataset.workingPath = payload.path;
+              dashboardDiff.innerHTML = payload.patch ? renderPatchLines(payload.patch) : '<span class="diff-placeholder">No changes in this view.</span>';
+            }
+            if (dashboardTruncated) dashboardTruncated.textContent = payload.truncated ? 'Patch truncated at 1 MiB' : '';
+            break;
+          }
           if (!isCurrentWorkingTreePreview(payload)) break;
           const diff = document.getElementById('commitPreviewDiff');
           const truncated = document.getElementById('commitPreviewTruncated');
@@ -1915,6 +2082,11 @@
 
         case 'workingTreePreviewError': {
           const payload = message.payload;
+          if (payload.requestId === workingPreviewRequestId && selectedDashboardCommit === WORKING_TREE) {
+            const dashboardDiff = document.getElementById('dashboardDiff');
+            if (dashboardDiff) dashboardDiff.innerHTML = '<span class="dashboard-error">' + escapeHtml(payload.message) + '</span>';
+            break;
+          }
           if (!isCurrentWorkingTreePreview(payload)) break;
           const diff = document.getElementById('commitPreviewDiff');
           if (diff) diff.innerHTML = '<span class="dashboard-error">' + escapeHtml(payload.message) + '</span>';
@@ -2025,7 +2197,7 @@
             loadedHistoryCommits = [];
             clearCommitDetail();
             const history = document.getElementById('dashboardHistory');
-            if (history) history.innerHTML = '<div class="dashboard-empty">No Git repository in this folder.</div>';
+            if (history) { uncommittedRowRendered = false; history.innerHTML = '<div class="dashboard-empty">No Git repository in this folder.</div>'; }
             saveState();
           }
           renderRepositorySwitcher();
@@ -2044,6 +2216,8 @@
           renderRepositorySwitcher();
           // The review tab notes uncommitted changes in the reviewed repository: keep it current.
           publishReviewContext();
+          // So does the Uncommitted changes row (a refresh, a live update, or an action's result).
+          requestWorkingTreeSummary();
           break;
         }
 
