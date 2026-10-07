@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A commit that failed (for example, rejected by a hook) left the selected files staged; your staging is now left exactly as it was.
+- Committing selected files during a paused merge is refused, instead of recording an incomplete merge.
+- Untracked files in a new folder are counted one by one.
 
 ## [1.11.0] - 2026-10-07
 

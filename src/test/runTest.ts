@@ -716,6 +716,34 @@ async function testCommitSelectedFiles(): Promise<void> {
     await assert.rejects(show('HEAD:old.txt'));
     assert.equal(await status(), 'M  b.txt\n M new.txt\n');
 
+    // Another Git process holds the real index once the commit exists (here a hook takes the lock):
+    // the commit is reported as created, with what is left to do, not as a failure to retry.
+    writeFileSync(hook, '#!/bin/sh\ntouch .git/index.lock\n', { mode: 0o755 });
+    write('fresh.txt', 'locked\n');
+    const beforeLock = await git.execGit(['rev-parse', 'HEAD']);
+    result = await service.commitFiles('.', ['fresh.txt'], 'while locked');
+    rmSync(hook);
+    rmSync(path.join(root, '.git', 'index.lock'));
+    assert.equal(result.success, true, result.message);
+    assert.notEqual(await git.execGit(['rev-parse', 'HEAD']), beforeLock);
+    assert.match(result.message, /^Created commit [0-9a-f]+, but the staged files could not be updated/);
+    await git.execGit(['reset', '-q', '--', 'fresh.txt']);
+
+    // A paused merge: committing only some of its files would record an incomplete merge, so it is refused.
+    await git.execGit(['checkout', '-q', '-b', 'side']);
+    write('a.txt', 'side\n');
+    write('fresh.txt', 'side\n');
+    await git.execGit(['commit', '-qam', 'side']);
+    await git.execGit(['checkout', '-q', 'main']);
+    await git.execGit(['merge', '-q', '--no-ff', '--no-commit', 'side']);
+    const merging = await git.execGit(['rev-parse', 'HEAD']);
+    result = await service.commitFiles('.', ['a.txt'], 'part of a merge', 'whole');
+    assert.equal(result.success, false);
+    assert.match(result.message, /A merge is in progress/);
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), merging);
+    await git.execGit(['rev-parse', '--verify', 'MERGE_HEAD']);
+    await git.execGit(['merge', '--abort']);
+
     // Push: a branch's own remote is used; a detached HEAD gets a clear message instead of a git error.
     const remote = mkdtempSync(path.join(tmpdir(), 'repository-manager-commit-remote-'));
     try {

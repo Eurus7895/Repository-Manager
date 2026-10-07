@@ -34,7 +34,8 @@ export class SubmoduleService {
    */
   private async readState(cwd: string, ignoreSubmoduleContent: boolean): Promise<{ commit: string; branch: string; detached: boolean;
     hasChanges: boolean; changeCounts: ChangeCounts; ahead: number; behind: number }> {
-    const args = ['status', '--porcelain=v2', '--branch'];
+    // Every untracked file, not one entry per new folder, so the counts are per file.
+    const args = ['status', '--porcelain=v2', '--branch', '--untracked-files=all'];
     // A parent lists a submodule with new commits, but not edits inside it: each submodule reports those itself.
     if (ignoreSubmoduleContent) { args.push('--ignore-submodules=dirty'); }
     const lines = (await this.gitCmd.execGitRaw(args, cwd)).split('\n');

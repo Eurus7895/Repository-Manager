@@ -196,6 +196,11 @@ export class CommitService {
         return { success: false, message: 'Resolve conflicted files before committing' };
       }
       const selected = selectedChanges as WorkingTreeChange[];
+      // A merge commit must hold the whole merge result: committing only some files would record an
+      // incomplete merge (Git refuses `commit -- <paths>` during a merge for the same reason).
+      if (await this.gitCmd.execGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], repositoryRoot).then(() => true, () => false)) {
+        return { success: false, message: 'A merge is in progress: finish it by committing every file of the merge (Source Control), or abort it, before committing selected files' };
+      }
       if (selected.some(isPartlyStaged) && partial !== 'staged' && partial !== 'whole') {
         return { success: false, message: 'Choose whether to commit only the staged part of partly staged files, or the whole files' };
       }
@@ -226,11 +231,17 @@ export class CommitService {
           : ['update-index', '--force-remove', '--', filePath], repositoryRoot, 30000, false, temporary);
       }
       await this.gitCmd.execGitRaw(['commit', '-m', commitMessage], repositoryRoot, 60000, false, temporary);
+      const shortHash = await this.gitCmd.execGit(['rev-parse', '--short', 'HEAD'], repositoryRoot);
 
       // The commit exists: the selected files' index entries now match it. A whole file is then clean;
-      // a file committed by its staged part keeps its later changes, unstaged.
-      await this.gitCmd.execGit(['reset', '-q', '--', ...wholePaths, ...stagedPaths], repositoryRoot);
-      const shortHash = await this.gitCmd.execGit(['rev-parse', '--short', 'HEAD'], repositoryRoot);
+      // a file committed by its staged part keeps its later changes, unstaged. If that fails (another
+      // Git process holds the index), the commit still exists: say so, rather than invite a second one.
+      try {
+        await this.gitCmd.execGit(['reset', '-q', '--', ...wholePaths, ...stagedPaths], repositoryRoot);
+      } catch (error: unknown) {
+        return { success: true, message: `Created commit ${shortHash}, but the staged files could not be updated to match it ` +
+          `(${(error as Error).message.split('\n')[0]}). They may still show as staged: run "git reset -- <file>" on them.` };
+      }
       return { success: true, message: `Created commit ${shortHash}` };
     } catch (error: unknown) {
       const err = error as Error;
