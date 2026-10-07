@@ -191,10 +191,13 @@ export class ReviewController {
     let baseRevision = optionalString(payload.baseRevision);
     // A current-branch review ('release') names no revisions: it covers what the current branch adds
     // ('changes') or every file at its tip ('branch'). A review of local changes ('local') names none
-    // either: it is HEAD → a snapshot taken now. Any other review names its target.
+    // either, and is HEAD → a snapshot taken now; or both ends, to run the same snapshot again (Retry).
+    // Any other review names its target.
+    const localAgain = kind === 'local' && Boolean(targetRevision && baseRevision);
     if (typeof requestId !== 'number' || !repositoryPath || (scope !== 'changes' && scope !== 'branch') ||
         (kind === 'local' && scope !== 'changes') ||
-        (kind === 'review' ? !targetRevision : Boolean(targetRevision || baseRevision))) {
+        (kind === 'review' ? !targetRevision : kind === 'local' ? !localAgain && Boolean(targetRevision || baseRevision)
+          : Boolean(targetRevision || baseRevision))) {
       return;
     }
     // The review tab may start a review the dashboard asked for after the dashboard switched
@@ -223,7 +226,10 @@ export class ReviewController {
     const repositoryName = path.basename(root);
     let branchBaseLabel: string | undefined;
     let localTargetLabel: string | undefined;
-    if (kind === 'local') {
+    if (localAgain) {
+      branchBaseLabel = 'HEAD';
+      localTargetLabel = 'local changes';
+    } else if (kind === 'local') {
       // Staged and unstaged changes and new files, as they are now; HEAD and the index are not touched.
       let snapshot;
       try {
@@ -289,8 +295,9 @@ export class ReviewController {
         `Review ${what} in ${repositoryName} with Copilot?`,
         (kind === 'local'
           ? 'Your uncommitted code as it is now, including new files that .gitignore does not exclude, and the repository review policy, ' +
-            'is sent to the selected Copilot model in several requests. The review reads a snapshot taken now; it never runs code, ' +
-            'commits, or changes your files or staging. Results are advisory.'
+            'is sent to the selected Copilot model in several requests. The review reads a snapshot of them (taken like `git add`, ' +
+            'so clean filters your Git config sets for these files run, as they do for git status); it never commits, ' +
+            'and never changes your files or staging. Results are advisory.'
           : 'Source code from these revisions, and the repository review policy, is sent to the selected Copilot model ' +
             'in several requests. The review reads commits only; it never runs code or changes the repository. Results are advisory.') +
           (actions.includes(ALWAYS) ? ' "Always allow" skips this question for this repository in this workspace; ' +

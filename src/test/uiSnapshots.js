@@ -994,11 +994,13 @@ async function main() {
     await snap(rv, '10h-review-local-changes');
     git(parent, 'checkout', '--', 'src/app.txt');
     fs.rmSync(path.join(parent, 'local-new.txt'));
-    // A clean repository has nothing local to review: the button is disabled and says why.
+    // Once the edits are gone, the review still says it read a snapshot.
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules:
       window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: false }) : repository) } } })));
-    await page.waitForFunction(() => document.getElementById('reviewLocalChangesButton').getAttribute('aria-disabled') === 'true');
-    assert.match(await page.getAttribute('#reviewLocalChangesButton', 'title'), /No local changes/);
+    await rv.waitForFunction(() => /as they were when it started/.test((document.querySelector('.review-uncommitted-note') || {}).textContent || ''));
+    // The dashboard's last refresh may be stale (an edit since then): the button stays usable, and the
+    // extension, which takes the snapshot, says when there is nothing to review (reviewControllerSmoke).
+    assert.equal(await page.getAttribute('#reviewLocalChangesButton', 'aria-disabled'), null, 'a stale "clean" disabled Review changes');
     await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
 
     // The review tab follows the dashboard: another repository shows its own past reviews.

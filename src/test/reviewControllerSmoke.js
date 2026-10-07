@@ -309,7 +309,7 @@ async function main() {
     await localStart(40);
     assert.equal(runs.length, ranBeforeLocal, 'reviewed with no local changes');
     assert.match(of('reviewFailed').at(-1).payload.message, /Nothing to review: there are no local changes/);
-    // A local review names no revisions: one that does is ignored.
+    // A local review names no revisions, or both ends (Retry of the same snapshot): one end alone is ignored.
     await localStart(41, { targetRevision: 'main' });
     assert.equal(runs.length, ranBeforeLocal);
     const headNow = git('rev-parse', 'HEAD');
@@ -338,6 +338,12 @@ async function main() {
     // The same changes again give the same snapshot, so a second review reuses saved components and decisions.
     await localStart(43);
     assert.equal(runs.at(-1).request.targetSha, local.targetSha);
+    // Retry runs that snapshot again, still as a local review, even after the files changed.
+    fs.writeFileSync(path.join(repo, 'app.js'), 'changed again\n');
+    await localStart(44, { baseRevision: local.baseSha, targetRevision: local.targetSha });
+    assert.deepEqual([runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], [local.baseSha, local.targetSha]);
+    const retried = of('reviewCompleted').at(-1).payload;
+    assert.deepEqual([retried.requestId, retried.context.kind, retried.context.targetLabel], [44, 'local', 'local changes']);
     git('checkout', '-q', '--', 'app.js');
     fs.rmSync(path.join(repo, 'new.js'));
 

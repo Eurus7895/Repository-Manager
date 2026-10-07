@@ -578,10 +578,10 @@
         `<li><code>${escapeHtml(item.component)}</code> ${item.skills.map(id => `<span class="review-skill-tag">${escapeHtml(id)}</span>`).join(' ')}${(item.omitted || []).length ? ` <small>left out (too long): ${escapeHtml(item.omitted.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>` : '';
     // Reviews read commits only; say so when there is work they did not see.
     const reviewedRepository = getRepository(reviewState.repositoryPath);
-    const uncommitted = reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
-      ? (reviewState.kind === 'local'
-        ? '<p class="review-uncommitted-note" role="note">This review read your local changes as they were when it started. Changes made since are not in it: use Review changes again to include them.</p>'
-        : '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed: use Review changes in the dashboard to review them before committing.</p>') : '';
+    const uncommitted = reviewState.kind === 'local'
+      ? '<p class="review-uncommitted-note" role="note">This review read your local changes as they were when it started. Changes made since are not in it: use Review changes again to include them.</p>'
+      : reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
+        ? '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed: use Review changes in the dashboard to review them before committing.</p>' : '';
     body.innerHTML = `${uncommitted}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
       ${stopped}
       ${triageBar}
@@ -675,7 +675,9 @@
       }
       // The same repository, model ("id:version" → id) and categories, so its saved components match.
       const modelId = result.modelId ? result.modelId.slice(0, result.modelId.lastIndexOf(':') > 0 ? result.modelId.lastIndexOf(':') : undefined) : '';
-      startReview({ scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
+      // A local review runs again on the same snapshot, as a local review.
+      startReview({ kind: reviewState.kind === 'local' ? 'local' : undefined,
+        scope: request.scope, target: request.targetSha, base: request.scope === 'changes' ? request.baseSha : undefined,
         targetLabel: reviewContext.targetLabel, baseLabel: reviewContext.baseLabel, includeQuality: (request.categories || []).includes('quality'),
         repositoryPath: reviewState.repositoryPath, folder: reviewState.folder, modelId });
     },

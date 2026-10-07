@@ -686,11 +686,8 @@
     // The current branch: what it adds since the default branch ('changes'), or every file at its tip.
     reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' }),
     // Local changes: HEAD → a snapshot of the working tree the extension takes when the review starts.
-    reviewLocal: () => {
-      const repository = getRepository(activeDashboardRepository);
-      if (repository && !repository.hasChanges) return;
-      startReview({ kind: 'local', scope: 'changes' });
-    },
+    // Whether there is anything to review is decided when the snapshot is taken, not from the last refresh.
+    reviewLocal: () => startReview({ kind: 'local', scope: 'changes' }),
     loadReleaseRange: () => {
       if (!activeDashboardRepository) return;
       releaseRange = { requestId: ++releaseRangeRequestId, repositoryPath: activeDashboardRepository };
@@ -2680,14 +2677,10 @@
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
       const nothingSelected = element.dataset.action === 'reviewSelection' && !changeSummarySelection;
-      const activeRepository = getRepository(activeDashboardRepository);
-      const nothingLocal = element.dataset.action === 'reviewLocal' && Boolean(activeRepository) && !activeRepository.hasChanges;
-      if (locked || nothingSelected || nothingLocal) {
+      if (locked || nothingSelected) {
         element.setAttribute('aria-disabled', 'true');
         if (!element.dataset.unlockedTitle) element.dataset.unlockedTitle = element.getAttribute('title') || '';
-        element.setAttribute('title', locked ? REVIEW_LOCK_HINT : nothingLocal
-          ? 'No local changes in this repository: nothing to review before committing'
-          : 'Select a commit, or load a comparison, to review it');
+        element.setAttribute('title', locked ? REVIEW_LOCK_HINT : 'Select a commit, or load a comparison, to review it');
       } else if (element.getAttribute('aria-disabled') === 'true') {
         element.removeAttribute('aria-disabled');
         const title = element.dataset.unlockedTitle;
