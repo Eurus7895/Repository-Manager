@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Write with Copilot** in the commit dialog: Copilot writes the commit message for the selected files (the staged part, when that is what you commit), following the repository's own commit convention from AGENTS.md, CLAUDE.md, CONTRIBUTING.md or a commitlint config, or Conventional Commits when it has none. The message goes into the dialog for you to edit; a draft you had is one Undo away. It asks before sending code, and shares the review's "Always allow" per repository.
+- **Uncommitted changes** in every repository's history: a row above the newest commit with its counts (staged, modified, new, conflicted). Selecting it shows each changed file with its **Staged** or **Unstaged** diff, and **Commit…** and **Review changes** for exactly those changes. With local changes and no commit picked, the dashboard opens on them instead of the newest commit.
+- Local changes stay current while you edit: saving, creating or deleting files, and staging with Git, refresh the uncommitted changes and the sidebar's change counts about a second later (`repositoryManager.liveChanges`, on by default). Changes only to files Git ignores, such as build output, do not refresh.
 
 ## [1.12.0] - 2026-10-07
 

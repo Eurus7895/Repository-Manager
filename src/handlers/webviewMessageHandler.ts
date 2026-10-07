@@ -187,9 +187,11 @@ export async function handleGetWorkingTreeChanges(ctx: MessageHandlerContext, pa
   try {
     const changes = await ctx.gitOps.getWorkingTreeChanges(repositoryPath);
     const pushAfterCommit = pushAfterCommitRoots(ctx).includes(ctx.gitOps.resolveRepositoryPath(repositoryPath));
+    // The dashboard (its Uncommitted changes row) and the commit dialog both ask; the reply says which.
+    const purpose = request.purpose === 'dashboard' ? 'dashboard' : undefined;
     await sendToWebview(ctx, {
       type: 'workingTreeChangesLoaded',
-      payload: { repositoryPath, changes, pushAfterCommit }
+      payload: { repositoryPath, changes, pushAfterCommit, purpose }
     });
   } catch (error) {
     await sendDashboardError(ctx, 'getWorkingTreeChanges', repositoryPath, error);

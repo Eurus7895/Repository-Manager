@@ -22,6 +22,8 @@ import { ReviewSkillStore } from './reviewSkillStore';
 import { resolveReleaseRange } from './services/releaseRange';
 import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 import { CommitMessageController } from './commitMessageController';
+import { LiveChanges } from './liveChanges';
+import { ignoredPaths } from './services/ignoredPaths';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -65,6 +67,10 @@ export class RepositoryManagerPanel {
   private _autoFetchRun?: Promise<void>;
   private _lastAutoFetch = 0;
   private _messagesInFlight = 0;
+  /** Git actions (not read-only requests) running now: a live refresh waits for them. */
+  private _actionsInFlight = 0;
+  private readonly _liveChanges: LiveChanges;
+  private _fileWatcher?: vscode.FileSystemWatcher;
 
   /** `preserveFocus` keeps the keyboard where it is, as when the Side Bar opens the dashboard. */
   public static createOrShow(extensionUri: vscode.Uri, workspaceRoot: string, workspaceState?: vscode.Memento, preserveFocus = false) {
@@ -199,7 +205,33 @@ export class RepositoryManagerPanel {
       this._disposables
     );
 
-    this._panel.onDidChangeViewState(() => this._autoFetchIfDue(), null, this._disposables);
+    this._panel.onDidChangeViewState(() => { this._autoFetchIfDue(); this._liveChanges.resume(); }, null, this._disposables);
+    // Local changes stay current while you edit: file events refresh the repository list once they
+    // settle (repositoryManager.liveChanges). A hidden dashboard catches up when it is shown.
+    this._liveChanges = new LiveChanges({
+      refresh: () => this.refresh(),
+      canRefresh: () => this._panel.visible && this._actionsInFlight === 0,
+      setTimer: (callback, ms) => setTimeout(callback, ms),
+      clearTimer: handle => clearTimeout(handle as NodeJS.Timeout),
+      ignored: paths => ignoredPaths(paths, this._workspaceRoot)
+    });
+    // The watcher exists only while the setting is on: with it off, no file event reaches the extension.
+    const watchFiles = () => {
+      this._fileWatcher?.dispose();
+      this._fileWatcher = undefined;
+      if (!vscode.workspace.getConfiguration('repositoryManager').get<boolean>('liveChanges', true)) { return; }
+      const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+      const onFileEvent = (uri: vscode.Uri) => this._liveChanges.notify(uri.fsPath);
+      watcher.onDidChange(onFileEvent);
+      watcher.onDidCreate(onFileEvent);
+      watcher.onDidDelete(onFileEvent);
+      this._fileWatcher = watcher;
+    };
+    watchFiles();
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('repositoryManager.liveChanges')) { watchFiles(); }
+    }, null, this._disposables);
+    this._disposables.push({ dispose: () => { this._fileWatcher?.dispose(); this._liveChanges.dispose(); } });
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('repositoryManager.autoFetch')
         || event.affectsConfiguration('repositoryManager.autoFetchInterval')) {
@@ -369,6 +401,8 @@ export class RepositoryManagerPanel {
 
   private async _handleMessage(message: { type: string; payload?: unknown }) {
     this._messagesInFlight++;
+    const action = !READ_ONLY_MESSAGES.has(message.type);
+    if (action) { this._actionsInFlight++; }
     try {
       // Git actions wait for a running background fetch so they never race it for ref locks.
       if (this._autoFetchRun && !READ_ONLY_MESSAGES.has(message.type)) {
@@ -377,6 +411,11 @@ export class RepositoryManagerPanel {
       await this._dispatchMessage(message);
     } finally {
       this._messagesInFlight--;
+      if (action) {
+        this._actionsInFlight--;
+        // File events during the action asked for a refresh; the action's own refresh may cover them.
+        this._liveChanges.resume();
+      }
     }
   }
 
