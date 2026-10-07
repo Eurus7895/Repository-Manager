@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { BranchService } from '../services/branchService';
 import { countChanges } from '../services/submoduleService';
+import { snapshotLocalChanges } from '../services/localChangesSnapshot';
 import { CommitService, parseWorkingTreeStatus } from '../services/commitService';
 import { DiffService, parseChangedFilesOutput } from '../services/diffService';
 import { GitCommandService } from '../services/gitCommandService';
@@ -766,6 +767,52 @@ async function testCommitSelectedFiles(): Promise<void> {
   }
 }
 
+async function testLocalChangesSnapshot(): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'repository-manager-snapshot-'));
+  const git = new GitCommandService(root);
+  const write = (file: string, content: string) => writeFileSync(path.join(root, file), content);
+  try {
+    await git.execGit(['init', '-q', '-b', 'main']);
+    await git.execGit(['config', 'user.name', 'Snapshot Test']);
+    await git.execGit(['config', 'user.email', 'snapshot@example.com']);
+    write('a.txt', 'a\n');
+    await assert.rejects(snapshotLocalChanges(git, root), /no commit yet/);
+    write('.gitignore', 'secret.env\n');
+    write('gone.txt', 'gone\n');
+    await git.execGit(['add', '-A']);
+    await git.execGit(['commit', '-qm', 'base']);
+    assert.equal(await snapshotLocalChanges(git, root), undefined, 'a clean tree has nothing to review');
+
+    // Staged, then changed again; a new file; a deleted file; an ignored file.
+    write('a.txt', 'staged\n');
+    await git.execGit(['add', 'a.txt']);
+    write('a.txt', 'staged\nunstaged\n');
+    write('new.txt', 'new\n');
+    rmSync(path.join(root, 'gone.txt'));
+    write('secret.env', 'TOKEN=x\n');
+    const head = await git.execGit(['rev-parse', 'HEAD']);
+    const status = await git.execGitRaw(['status', '--porcelain=v1']);
+    const index = await git.execGitRaw(['ls-files', '-s']);
+    const snapshot = await snapshotLocalChanges(git, root);
+    assert.ok(snapshot);
+    assert.equal(snapshot.headSha, head);
+    assert.equal(await git.execGit(['show', `${snapshot.snapshotSha}:a.txt`]), 'staged\nunstaged', 'staged + unstaged');
+    assert.equal(await git.execGit(['show', `${snapshot.snapshotSha}:new.txt`]), 'new');
+    await assert.rejects(git.execGit(['show', `${snapshot.snapshotSha}:gone.txt`]));
+    await assert.rejects(git.execGit(['show', `${snapshot.snapshotSha}:secret.env`]), /does not exist|exists on disk/, 'an ignored file was snapshotted');
+    assert.equal(await git.execGit(['rev-parse', `${snapshot.snapshotSha}^`]), head);
+    // HEAD, the branch, the index and the working tree are untouched; no ref points to the snapshot.
+    assert.equal(await git.execGit(['rev-parse', 'HEAD']), head);
+    assert.equal(await git.execGitRaw(['status', '--porcelain=v1']), status);
+    assert.equal(await git.execGitRaw(['ls-files', '-s']), index);
+    assert.equal(await git.execGit(['for-each-ref', '--contains', snapshot.snapshotSha]), '');
+    // Same changes, same snapshot.
+    assert.equal((await snapshotLocalChanges(git, root))?.snapshotSha, snapshot.snapshotSha);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testWorkingTreePreview(): Promise<void> {
   const repositoryRoot = mkdtempSync(path.join(tmpdir(), 'repository-manager-preview-'));
   const git = new GitCommandService(repositoryRoot);
@@ -911,6 +958,7 @@ async function main(): Promise<void> {
   await testWorkingTreePreview();
   await testCommitSelectedFiles();
   testCountChanges();
+  await testLocalChangesSnapshot();
   await testChangeSummaryContext();
   await testRepositoryIntegration();
   await testBranchFromHistoryCommit();

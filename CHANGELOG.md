@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Review changes**: review your local changes before committing, staged and unstaged changes and new files (not those `.gitignore` excludes). The review reads a snapshot taken when it starts; nothing is committed, staged or changed, and the same changes reviewed again reuse the earlier review's results and decisions. Auto-fix stays for committed reviews, since it would write over files you are editing. (#59)
 - **Push after commit**: a checkbox in the commit dialog pushes the branch once the commit is created, and is remembered per repository. A failed push keeps the commit and says only the push failed.
 - Each repository in the sidebar shows its local changes by kind: **S** staged, **M** modified, **U** untracked, **C** conflicted, with the counts spelled out on hover.
 
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A selected file that was staged and then changed again asks whether to commit **only the staged part** or **the whole file**, instead of always committing the whole file.
 - The commit preview's toggle is now **Staged diff / Unstaged diff**, with both always shown; it switches the preview and never stages or unstages anything.
 - Push uses the branch's own remote, and on a detached HEAD says to check out a branch instead of showing a Git error.
+- At narrow widths the comparison status shortens with an ellipsis, full text on hover, instead of leaving the screen.
 
 ### Fixed
 

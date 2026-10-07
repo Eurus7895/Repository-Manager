@@ -531,7 +531,7 @@ async function main() {
 
     // Release › Load range loads the changes since the latest release tag, and only loads them.
     assert.deepEqual(await page.locator('.review-release-group button').allTextContents(), ['Load range']);
-    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review commit', 'Review branch', 'Review all', 'Review ↗']);
+    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review changes', 'Review commit', 'Review branch', 'Review all', 'Review ↗']);
     await page.click('.review-release-group [data-action="loadReleaseRange"]');
     await page.waitForFunction(() => /Release: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('commitCompareStatus').textContent));
     await page.locator('#dashboardChangedFiles [data-action]').first().waitFor();
@@ -570,7 +570,7 @@ async function main() {
     };
     // Reviews start with one click, without a dialog: Review commit, Review branch, Review all, next to Load range.
     assert.deepEqual(await page.locator('.review-current-group button').evaluateAll(items => items.map(item => item.dataset.action)),
-      ['reviewSelection', 'reviewRelease', 'reviewRelease', 'openReviewTab']);
+      ['reviewLocal', 'reviewSelection', 'reviewRelease', 'reviewRelease', 'openReviewTab']);
     assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
     // The consent question is held open so the header can be checked while it waits.
     let answerConsent;
@@ -960,6 +960,49 @@ async function main() {
     assert.equal(await page.isChecked('#reviewQualityToggle'), true);
     await page.uncheck('#reviewQualityToggle');
 
+    // Review changes: the local changes as they are now (staged, unstaged, new files), before committing.
+    fs.writeFileSync(path.join(parent, 'src/app.txt'), fs.readFileSync(path.join(parent, 'src/app.txt'), 'utf8') + 'local edit\n');
+    fs.writeFileSync(path.join(parent, 'local-new.txt'), 'new file\n');
+    const headBeforeLocal = git(parent, 'rev-parse', 'HEAD').trim();
+    const statusBeforeLocal = git(parent, 'status', '--porcelain');
+    let localRequest;
+    reviewProbe.runner = async request => {
+      localRequest = request;
+      runs.push(request);
+      const evidence = [{ revision: request.targetSha, path: 'src/app.txt', side: 'target', startLine: 41, endLine: 41 }];
+      return { request, policyResults: [], policyStatus: 'not_configured', limitations: [], modelId: 'scripted:1',
+        findings: [{ id: 'local-finding', fingerprint: 'fp-local', category: 'security', severity: 'high', confidence: 'high', status: 'verified',
+          explanation: 'Found in an uncommitted edit', impact: 'Impact', suggestedAction: 'Fix it before committing', evidence }],
+        coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true } };
+    };
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules:
+      window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: true }) : repository) } } })));
+    await page.waitForFunction(() => document.getElementById('reviewLocalChangesButton').getAttribute('aria-disabled') === null);
+    await page.click('#reviewLocalChangesButton');
+    await rv.locator('.review-finding[data-finding-id="local-finding"]').waitFor();
+    assert.equal(await rv.textContent('#reviewTitle'), 'Local changes review');
+    assert.match(await rv.textContent('#reviewMeta'), /^Diff: HEAD → local changes · [0-9a-f]{8} → [0-9a-f]{8}/);
+    assert.equal(localRequest.baseSha, headBeforeLocal);
+    assert.match(git(parent, 'show', `${localRequest.targetSha}:src/app.txt`), /local edit/);
+    assert.equal(git(parent, 'show', `${localRequest.targetSha}:local-new.txt`), 'new file\n');
+    assert.equal(git(parent, 'rev-parse', 'HEAD').trim(), headBeforeLocal, 'Review changes moved HEAD');
+    assert.equal(git(parent, 'status', '--porcelain'), statusBeforeLocal, 'Review changes changed the staging or files');
+    // Auto-fix does not write over files you are still editing; the button says what to do instead.
+    assert.equal(await rv.isDisabled('[data-action="proposeReviewFix"]'), true);
+    assert.match(await rv.getAttribute('[data-action="proposeReviewFix"]', 'title'), /Auto-fix needs committed files/);
+    assert.match(await rv.textContent('.review-uncommitted-note'), /as they were when it started/);
+    await snap(rv, '10h-review-local-changes');
+    git(parent, 'checkout', '--', 'src/app.txt');
+    fs.rmSync(path.join(parent, 'local-new.txt'));
+    // Once the edits are gone, the review still says it read a snapshot.
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules:
+      window.__initialRepositories.map(repository => repository.path === '.' ? Object.assign({}, repository, { hasChanges: false }) : repository) } } })));
+    await rv.waitForFunction(() => /as they were when it started/.test((document.querySelector('.review-uncommitted-note') || {}).textContent || ''));
+    // The dashboard's last refresh may be stale (an edit since then): the button stays usable, and the
+    // extension, which takes the snapshot, says when there is nothing to review (reviewControllerSmoke).
+    assert.equal(await page.getAttribute('#reviewLocalChangesButton', 'aria-disabled'), null, 'a stale "clean" disabled Review changes');
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
+
     // The review tab follows the dashboard: another repository shows its own past reviews.
     await page.sidebar.click('.sidebar-repository-item[data-path="lib-b"]');
     await page.locator('.history-row', { hasText: 'unrecorded lib-b change' }).waitFor({ timeout: 5000 });
@@ -1285,7 +1328,7 @@ async function main() {
           .map(selector => document.querySelector(selector).innerText.replace(/\s+/g, ' ').trim()).join(' | ')
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), '◈ range | commit branch all clean code review ↗');
+      assert.equal(layout.releaseText.toLowerCase(), '◈ range | changes commit branch all clean code review ↗');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();

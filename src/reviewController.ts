@@ -8,8 +8,9 @@
 import * as path from 'path';
 import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } from './types';
 import { GitCommandService } from './services/gitCommandService';
-import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewReportContext } from './services/reviewReport';
+import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
+import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
 import { carryTriage } from './reviewTriageCarry';
@@ -185,13 +186,18 @@ export class ReviewController {
     const requestId = payload.requestId;
     const repositoryPath = optionalString(payload.repositoryPath);
     const scope = payload.scope;
-    const kind: 'review' | 'release' = payload.kind === 'release' ? 'release' : 'review';
+    const kind: ReviewKind = payload.kind === 'release' ? 'release' : payload.kind === 'local' ? 'local' : 'review';
     let targetRevision = optionalString(payload.targetRevision);
     let baseRevision = optionalString(payload.baseRevision);
     // A current-branch review ('release') names no revisions: it covers what the current branch adds
-    // ('changes') or every file at its tip ('branch'). Any other review names its target.
+    // ('changes') or every file at its tip ('branch'). A review of local changes ('local') names none
+    // either, and is HEAD → a snapshot taken now; or both ends, to run the same snapshot again (Retry).
+    // Any other review names its target.
+    const localAgain = kind === 'local' && Boolean(targetRevision && baseRevision);
     if (typeof requestId !== 'number' || !repositoryPath || (scope !== 'changes' && scope !== 'branch') ||
-        (kind === 'release' ? Boolean(targetRevision || baseRevision) : !targetRevision)) {
+        (kind === 'local' && scope !== 'changes') ||
+        (kind === 'review' ? !targetRevision : kind === 'local' ? !localAgain && Boolean(targetRevision || baseRevision)
+          : Boolean(targetRevision || baseRevision))) {
       return;
     }
     // The review tab may start a review the dashboard asked for after the dashboard switched
@@ -219,6 +225,28 @@ export class ReviewController {
     const root = git.resolveRepositoryPath(repositoryPath);
     const repositoryName = path.basename(root);
     let branchBaseLabel: string | undefined;
+    let localTargetLabel: string | undefined;
+    if (localAgain) {
+      branchBaseLabel = 'HEAD';
+      localTargetLabel = 'local changes';
+    } else if (kind === 'local') {
+      // Staged and unstaged changes and new files, as they are now; HEAD and the index are not touched.
+      let snapshot;
+      try {
+        snapshot = await snapshotLocalChanges(git, root);
+      } catch (error) {
+        await reply('reviewFailed', { message: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+      if (!snapshot) {
+        await reply('reviewFailed', { message: 'Nothing to review: there are no local changes (staged, unstaged or new files).' });
+        return;
+      }
+      baseRevision = snapshot.headSha;
+      targetRevision = snapshot.snapshotSha;
+      branchBaseLabel = 'HEAD';
+      localTargetLabel = 'local changes';
+    }
     if (kind === 'release') {
       targetRevision = (await resolveReleaseRange(git, root)).currentBranch;
       if (scope === 'changes') {
@@ -252,19 +280,26 @@ export class ReviewController {
       return;
     }
     const baseLabel = scope === 'changes' ? branchBaseLabel || optionalString(payload.baseLabel) || baseRevision : undefined;
-    const targetLabel = optionalString(payload.targetLabel) || target;
+    const targetLabel = localTargetLabel || optionalString(payload.targetLabel) || target;
     const needsConsent = this.host.alwaysConfirm() || !this.host.isConsentRemembered(root);
     await reply('reviewProgress', { message: needsConsent ? 'Waiting for confirmation…' : 'Planning the review…', baseLabel, targetLabel });
     if (needsConsent) {
-      const what = scope === 'changes'
-        ? `changes ${baseLabel || 'from the parent commit'} → ${targetLabel}`
-        : `every file at ${targetLabel}`;
+      const what = kind === 'local'
+        ? 'your local changes (staged, unstaged and new files)'
+        : scope === 'changes'
+          ? `changes ${baseLabel || 'from the parent commit'} → ${targetLabel}`
+          : `every file at ${targetLabel}`;
       // Offering "always" only makes sense when the setting does not ask every time anyway.
       const actions = this.host.alwaysConfirm() ? [START] : [START, ALWAYS];
       const answer = await this.host.ask(
         `Review ${what} in ${repositoryName} with Copilot?`,
-        'Source code from these revisions, and the repository review policy, is sent to the selected Copilot model ' +
-          'in several requests. The review reads commits only; it never runs code or changes the repository. Results are advisory.' +
+        (kind === 'local'
+          ? 'Your uncommitted code as it is now, including new files that .gitignore does not exclude, and the repository review policy, ' +
+            'is sent to the selected Copilot model in several requests. The review reads a snapshot of them (taken like `git add`, ' +
+            'so clean filters your Git config sets for these files run, as they do for git status); it never commits, ' +
+            'and never changes your files or staging. Results are advisory.'
+          : 'Source code from these revisions, and the repository review policy, is sent to the selected Copilot model ' +
+            'in several requests. The review reads commits only; it never runs code or changes the repository. Results are advisory.') +
           (actions.includes(ALWAYS) ? ' "Always allow" skips this question for this repository in this workspace; ' +
             'undo it with "Repository Manager: Forget Review Permissions".' : ''),
         actions);

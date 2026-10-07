@@ -85,9 +85,14 @@ export const DISMISS_REASONS: Record<DismissReason, string> = {
 };
 /* eslint-enable @typescript-eslint/naming-convention */
 
+/**
+ * What a review covers: 'release' the current branch (Review branch or Review all), 'local' the
+ * uncommitted changes (Review changes: HEAD → a snapshot of the working tree), 'review' anything else.
+ */
+export type ReviewKind = 'review' | 'release' | 'local';
+
 export interface ReviewReportContext {
-  /** 'release' for a review of the current branch (Review branch or Review all). */
-  kind: 'review' | 'release';
+  kind: ReviewKind;
   repositoryName: string;
   /** What the user picked, e.g. a tag or branch name; the resolved SHAs come from the result. */
   baseLabel?: string;
@@ -240,7 +245,7 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
   const range = request.scope === 'changes'
     ? `${code(context.baseLabel || short(request.baseSha) || 'parent')} (${short(request.baseSha) || 'root'}) → ${code(context.targetLabel)} (${short(request.targetSha)})`
     : `Every file at ${code(context.targetLabel)} (${short(request.targetSha)})`;
-  const title = `${context.kind === 'release' ? 'Current branch review' : 'Security and compliance review'} — ${request.scope === 'changes'
+  const title = `${context.kind === 'release' ? 'Current branch review' : context.kind === 'local' ? 'Local changes review' : 'Security and compliance review'} — ${request.scope === 'changes'
     ? `Diff: ${context.baseLabel || short(request.baseSha) || 'parent'} → ${context.targetLabel}`
     : `Branch: ${context.targetLabel}`}`;
   const findingsById = new Map(result.findings.map(finding => [finding.id, finding]));

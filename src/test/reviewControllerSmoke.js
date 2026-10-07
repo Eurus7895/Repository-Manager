@@ -302,6 +302,51 @@ async function main() {
     assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 7]);
     assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
+    // Review changes: HEAD → a snapshot of the working tree (staged, unstaged, new files), taken now.
+    const localStart = (requestId, extra = {}) => controller.handle({ type: 'startReview', payload: {
+      requestId, repositoryPath: '.', scope: 'changes', kind: 'local', ...extra } });
+    const ranBeforeLocal = runs.length;
+    await localStart(40);
+    assert.equal(runs.length, ranBeforeLocal, 'reviewed with no local changes');
+    assert.match(of('reviewFailed').at(-1).payload.message, /Nothing to review: there are no local changes/);
+    // A local review names no revisions, or both ends (Retry of the same snapshot): one end alone is ignored.
+    await localStart(41, { targetRevision: 'main' });
+    assert.equal(runs.length, ranBeforeLocal);
+    const headNow = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(repo, 'app.js'), 'line 1\nlocal edit\n');
+    fs.writeFileSync(path.join(repo, 'new.js'), 'brand new\n');
+    const statusBefore = git('status', '--porcelain');
+    runnerScript = async run => ({ request: run.request, findings: [], policyResults: [], policyStatus: 'not_configured', limitations: [],
+      coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true } });
+    const askedBeforeLocal = questions.length;
+    answer = 'Start review';
+    alwaysConfirm = true;
+    await localStart(42);
+    alwaysConfirm = false;
+    assert.match(questions.at(-1).message, /^Review your local changes \(staged, unstaged and new files\) in /);
+    assert.equal(questions.length, askedBeforeLocal + 1);
+    const local = runs.at(-1).request;
+    assert.equal(local.baseSha, headNow);
+    assert.notEqual(local.targetSha, headNow);
+    assert.equal(git('show', `${local.targetSha}:app.js`), 'line 1\nlocal edit');
+    assert.equal(git('show', `${local.targetSha}:new.js`), 'brand new');
+    const localDone = of('reviewCompleted').at(-1).payload;
+    assert.deepEqual([localDone.context.kind, localDone.context.baseLabel, localDone.context.targetLabel], ['local', 'HEAD', 'local changes']);
+    // Nothing moved: HEAD, branch, staging and files are as they were.
+    assert.equal(git('rev-parse', 'HEAD'), headNow);
+    assert.equal(git('status', '--porcelain'), statusBefore);
+    // The same changes again give the same snapshot, so a second review reuses saved components and decisions.
+    await localStart(43);
+    assert.equal(runs.at(-1).request.targetSha, local.targetSha);
+    // Retry runs that snapshot again, still as a local review, even after the files changed.
+    fs.writeFileSync(path.join(repo, 'app.js'), 'changed again\n');
+    await localStart(44, { baseRevision: local.baseSha, targetRevision: local.targetSha });
+    assert.deepEqual([runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], [local.baseSha, local.targetSha]);
+    const retried = of('reviewCompleted').at(-1).payload;
+    assert.deepEqual([retried.requestId, retried.context.kind, retried.context.targetLabel], [44, 'local', 'local changes']);
+    git('checkout', '-q', '--', 'app.js');
+    fs.rmSync(path.join(repo, 'new.js'));
+
     // Evidence opens the file as it was at the reviewed commit; unsafe input is ignored.
     await controller.handle({ type: 'openReviewEvidence', payload: { repositoryPath: '.', revision: release, path: 'app.js', line: 1 } });
     assert.deepEqual([opened.content, opened.revision, opened.filePath, opened.line], ['v2\n', release, 'app.js', 1]);

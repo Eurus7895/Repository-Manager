@@ -2456,8 +2456,8 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .change-summary-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .change-summary-toolbar select { max-width: min(260px, 100%); min-width: 150px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border, var(--border)); padding: 5px; }
 /* Reviews of the same selection, set apart from the summary and its Cancel. */
-#reviewSelectionChangesButton { position: relative; margin-left: 11px; }
-#reviewSelectionChangesButton::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: -11px; border-left: 1px solid var(--border); }
+#reviewLocalChangesButton { position: relative; margin-left: 11px; }
+#reviewLocalChangesButton::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: -11px; border-left: 1px solid var(--border); }
 .change-summary-result { font-size: 12px; line-height: 1.5; }
 .change-summary-result section { margin-top: 12px; }
 .change-summary-result h4 { margin: 0 0 4px; }
@@ -2724,6 +2724,13 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   .compare-branches-button::first-letter { font-size: 13px; }
   .commit-compare-status > .compare-range { min-width: 40px; }
   .dashboard-search { min-width: 100px; }
+}
+/* Narrower still: the search box gives way before the review buttons or the comparison status. */
+@media (max-width: 900px) {
+  .dashboard-search { min-width: 44px; }
+  .review-entry button { padding: 0 6px; }
+  /* The range text shortens with an ellipsis (its full text is in the tooltip) instead of the status leaving the screen. */
+  .commit-compare-status:not([hidden]) { min-width: 96px; }
 }
 .diff-viewer > .diff-line-highlight { box-shadow: inset 3px 0 0 var(--warning); background: rgba(229, 165, 71, .16); }
 
