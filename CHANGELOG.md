@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reviews open in their own **Repository Review** editor tab, beside the dashboard. **Review commit**, **Review branch**, **Review all** and **Clean code** sit next to **Load range**, followed by a **Review ↗** button that opens the tab. A review keeps running when you close the tab, and the button shows its progress, then its number of blocking items. The tab follows the repository selected in the dashboard, and evidence still opens the cited line in the dashboard's diff.
 - A submodule detached at the commit the parent records is shown as **pinned** (grey) and counts as aligned, since that is how `git submodule update` leaves it. **detached** and **drift** now warn only when a repository is off the recorded commit or on another branch.
 - Repository badges and the review buttons explain themselves on hover; reviews say that uncommitted and untracked files are not reviewed, and the Review tab says so when the repository has uncommitted changes.
 - The review header names the model that reviewed (its exact id on hover), and the report shows both.

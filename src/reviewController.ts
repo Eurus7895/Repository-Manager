@@ -194,6 +194,14 @@ export class ReviewController {
         (kind === 'release' ? Boolean(targetRevision || baseRevision) : !targetRevision)) {
       return;
     }
+    // The review tab may start a review the dashboard asked for after the dashboard switched
+    // folders: its repository path is relative to the folder it was asked in, so never run it here.
+    const folder = optionalString(payload.folder);
+    if (folder && folder !== this.host.workspaceRoot()) {
+      await this.host.post({ type: 'reviewFailed', payload: { requestId, repositoryPath,
+        message: 'The workspace folder changed before this review started. Start it again from the dashboard.' } });
+      return;
+    }
     this.cancel();
     const generation = this.generation;
     this.active = { requestId, repositoryPath };

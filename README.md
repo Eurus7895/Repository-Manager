@@ -10,6 +10,7 @@ A VS Code extension for Git workflows across a parent repository and its linked 
 - **AI review with Copilot:**
   - **Review commit**, **Review branch** (changes since the default branch) or **Review all** (every file);
   - findings cite exact lines and can be triaged and fixed with Copilot;
+  - results open in their own **Repository Review** tab, and a review keeps running when you close it;
   - stopped reviews continue where they left off, and past reviews are saved;
   - review skills (security checklists by file type) turn on automatically, and **Clean code** adds maintainability notes that never block.
 

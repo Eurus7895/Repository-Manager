@@ -313,10 +313,12 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <span class="review-entry-label"><span aria-hidden="true">◈</span><span class="review-entry-word"> Release</span></span>
               <button type="button" data-action="loadReleaseRange" title="Load the changes since the latest release tag on the current branch; summarize or review them below"><span class="review-entry-word">Load </span>range</button>
             </div>
-            <div class="review-entry review-current-group" role="group" aria-label="Review the current branch with Copilot">
+            <div class="review-entry review-current-group" role="group" aria-label="Review with Copilot">
+              <button type="button" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Review the selected commit against its parent, or the loaded comparison (Base/Target, branches, release range). Committed changes only: uncommitted and untracked files are not reviewed"><span class="review-entry-word">Review </span>commit</button>
               <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds since it left the default branch (main or master), as a pull request shows it. Committed changes only: uncommitted and untracked files are not reviewed; commit them first to include them"><span class="review-entry-word">Review </span>branch</button>
               <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file as committed at the tip of the current branch. Committed changes only: uncommitted and untracked files are not reviewed; commit them first to include them"><span class="review-entry-word">Review </span>all</button>
               <label class="review-quality-toggle" title="Every review (commit, branch, all) also checks maintainability: complexity, duplication, naming, error handling, dead code, tests. These notes never block a review."><input type="checkbox" id="reviewQualityToggle"> Clean code</label>
+              <button type="button" class="review-open-tab" data-action="openReviewTab" id="openReviewTabButton" title="Open the Repository Review tab: progress, results, past reviews and review skills">Review<span class="review-open-badge" id="reviewTabBadge"></span> ↗</button>
             </div>
             <div class="commit-compare-status" id="commitCompareStatus" role="status" aria-live="polite" hidden></div>
             <div class="dashboard-search"><span>⌕</span><input id="dashboardSearch" type="text" placeholder="Search author, commit, message, or ref"></div>
@@ -338,36 +340,8 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
               <div class="detail-placeholder">Select a commit to inspect its changed files and diff.</div>
             </div>
             <div class="change-summary" id="changeSummary" hidden>
-              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model" title="The Copilot model for summaries, reviews and fixes; the list loads when you open it"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><button type="button" class="btn" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Security and compliance review of the selected commit against its parent, or of the loaded comparison. Committed changes only: uncommitted and untracked files are not reviewed">Review commit</button><span id="changeSummaryStatus" role="status"></span></div>
+              <div class="change-summary-toolbar"><label for="summaryModelSelect">Model</label><select id="summaryModelSelect" aria-label="AI summary model" title="The Copilot model for summaries, reviews and fixes; the list loads when you open it"><option value="">Default Copilot model</option></select><button type="button" class="btn" data-action="summarizeChanges" id="summarizeChangesButton" title="Summarize these changes with Copilot">Summarize changes</button><button type="button" class="btn" data-action="cancelChangeSummary" id="cancelChangeSummaryButton" hidden>Cancel</button><span id="changeSummaryStatus" role="status"></span></div>
               <div class="change-summary-result" id="changeSummaryResult"></div>
-            </div>
-            <div class="detail-tabs" id="detailTabs" role="tablist" aria-label="Detail view" hidden>
-              <button type="button" role="tab" id="detailTabChanges" data-action="showDetailTab" data-tab="changes" aria-selected="true" aria-controls="commitContent">Changes</button>
-              <button type="button" role="tab" id="detailTabReview" data-action="showDetailTab" data-tab="review" aria-selected="false" aria-controls="reviewPanel">Review <span class="detail-tab-badge" id="reviewTabBadge"></span></button>
-            </div>
-            <div class="review-panel" id="reviewPanel" role="tabpanel" aria-labelledby="detailTabReview" hidden>
-              <div class="review-header">
-                <div class="review-title"><strong id="reviewTitle">Review</strong><span id="reviewMeta"></span></div>
-                <div class="review-actions">
-                  <span class="review-status" id="reviewStatus" role="status" aria-live="polite"></span>
-                  <button type="button" class="btn" data-action="toggleReviewExpanded" id="expandReviewButton" aria-pressed="false" title="Give the review the whole dashboard">Expand</button>
-                  <button type="button" class="btn" data-action="cancelReview" id="cancelReviewButton" hidden>Cancel</button>
-                  <button type="button" class="btn" data-action="exportReview" data-format="copy" id="copyReviewButton" hidden>Copy Markdown</button>
-                  <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>
-                </div>
-              </div>
-              <details class="review-history" id="reviewHistory" hidden>
-                <summary>Past reviews <span class="review-history-count" id="reviewHistoryCount"></span></summary>
-                <p class="review-history-note">Saved in this workspace on this machine, never in the repository.</p>
-                <ul class="review-history-list" id="reviewHistoryList"></ul>
-              </details>
-              <details class="review-skills" id="reviewSkills">
-                <summary>Review skills <span class="review-history-count" id="reviewSkillsCount"></span></summary>
-                <p class="review-history-note">Checklists given to Copilot with the files they match. Turn one off, or import your own Markdown file with the same header.</p>
-                <ul class="review-skills-list" id="reviewSkillsList"></ul>
-                <div class="review-skills-actions"><button type="button" class="btn" data-action="importReviewSkill">Import skill…</button><span id="reviewSkillsStatus" role="status"></span></div>
-              </details>
-              <div class="review-body" id="reviewBody"></div>
             </div>
             <div class="commit-content" id="commitContent">
               <div class="changed-files-panel">
@@ -413,6 +387,47 @@ export function getSidebarHtml(resourceUris: SidebarResourceUris): string {
 </head>
 <body class="sidebar-view">
   <aside class="dashboard-sidebar" id="sidebarRoot" aria-label="Repositories and branches"><span class="sidebar-placeholder">Opening the dashboard…</span></aside>
+  <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
+</body>
+</html>`;
+}
+
+/** The Repository Review tab: its script fills the panel and talks to the extension (ReviewBridge). */
+export function getReviewHtml(resourceUris: SidebarResourceUris): string {
+  const nonce = getNonce();
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${resourceUris.styleUri.scheme}:; script-src 'nonce-${nonce}';">
+  <title>Repository Review</title>
+  <link rel="stylesheet" href="${resourceUris.styleUri}">
+</head>
+<body class="review-view-body">
+  <main class="review-panel review-view" id="reviewPanel">
+    <div class="review-header">
+      <div class="review-title"><strong id="reviewTitle">Review</strong><span id="reviewMeta"></span></div>
+      <div class="review-actions">
+        <span class="review-status" id="reviewStatus" role="status" aria-live="polite"></span>
+        <button type="button" class="btn" data-action="cancelReview" id="cancelReviewButton" hidden>Cancel</button>
+        <button type="button" class="btn" data-action="exportReview" data-format="copy" id="copyReviewButton" hidden>Copy Markdown</button>
+        <button type="button" class="btn" data-action="exportReview" data-format="save" id="saveReviewButton" hidden>Save report…</button>
+      </div>
+    </div>
+    <details class="review-history" id="reviewHistory" hidden>
+      <summary>Past reviews <span class="review-history-count" id="reviewHistoryCount"></span></summary>
+      <p class="review-history-note">Saved in this workspace on this machine, never in the repository.</p>
+      <ul class="review-history-list" id="reviewHistoryList"></ul>
+    </details>
+    <details class="review-skills" id="reviewSkills">
+      <summary>Review skills <span class="review-history-count" id="reviewSkillsCount"></span></summary>
+      <p class="review-history-note">Checklists given to Copilot with the files they match. Turn one off, or import your own Markdown file with the same header.</p>
+      <ul class="review-skills-list" id="reviewSkillsList"></ul>
+      <div class="review-skills-actions"><button type="button" class="btn" data-action="importReviewSkill">Import skill…</button><span id="reviewSkillsStatus" role="status"></span></div>
+    </details>
+    <div class="review-body" id="reviewBody"></div>
+  </main>
   <script nonce="${nonce}" src="${resourceUris.scriptUri}"></script>
 </body>
 </html>`;
