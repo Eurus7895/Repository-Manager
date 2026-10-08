@@ -666,7 +666,7 @@ async function main() {
     assert.equal(await page.locator('[data-action="loadReleaseRange"]').count(), 0, 'Load range is still there');
     assert.equal(await page.locator('.history-controls .toolbar-model #summaryModelSelect').isVisible(), true, 'the model select is not in the toolbar');
     assert.equal(await page.locator('.change-summary-toolbar select').count(), 0, 'the summary bar still has a model select');
-    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review changes', 'Review commit', 'Review branch', 'Review all', 'Review ↗']);
+    assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review changes', 'Review commit', 'Review branch', '▾', 'Review ↗']);
     // Compare lists tags after the branches, newest version first: the release 1.0.0 → feature/dashboard
     // is two picks, labelled with the tag's name, and only loads the comparison.
     await page.click('[data-action="openBranchCompareModal"]');
@@ -719,9 +719,10 @@ async function main() {
         limitations: ['Scripted review used by the UI test.'],
         coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } };
     };
-    // Reviews start with one click, without a dialog: Review commit, Review branch, Review all, next to the model.
+    // Reviews start with one click, without a dialog: Review commit, Review branch (its ▾ chooses the
+    // changed files or every file), next to the model.
     assert.deepEqual(await page.locator('.review-current-group button').evaluateAll(items => items.map(item => item.dataset.action)),
-      ['reviewLocal', 'reviewSelection', 'reviewRelease', 'reviewRelease', 'openReviewTab']);
+      ['reviewLocal', 'reviewSelection', 'reviewRelease', 'toggleReviewBranchMenu', 'openReviewTab']);
     assert.equal(await page.locator('#reviewModal').count(), 0, 'the review dialog is gone');
     // The consent question is held open so the header can be checked while it waits.
     let answerConsent;
@@ -740,7 +741,7 @@ async function main() {
     await rv.screenshot({ path: path.join(outputDir, '09-review-waiting-for-consent.png'), animations: 'disabled', caret: 'hide' });
     // Only a second review waits; everything else stays usable while this one runs.
     const libBItem = page.sidebar.locator('.sidebar-repository-item[data-path="lib-b"]');
-    await page.waitForFunction(() => document.querySelector('.review-current-group [data-scope="branch"]').getAttribute('aria-disabled') === 'true');
+    await page.waitForFunction(() => document.querySelector('#reviewBranchMenuButton').getAttribute('aria-disabled') === 'true');
     assert.equal(await libBItem.getAttribute('aria-disabled'), null);
     assert.equal(await page.isDisabled('#workspaceFolderSelect'), false);
     answerConsent('Always allow for this repository');
@@ -780,7 +781,7 @@ async function main() {
     // The model that reviewed is named after the commits, with its exact id in the tooltip.
     assert.equal(await rv.textContent('#reviewMeta'), `Diff: 1.0.0 → feature/dashboard · ${releaseSha} → ${branchSha} · Scripted model`);
     assert.equal(await rv.getAttribute('#reviewMeta', 'title'), 'Reviewed with Scripted model (scripted:1)');
-    await page.waitForFunction(() => document.querySelector('.review-current-group [data-scope="branch"]').getAttribute('aria-disabled') === null);
+    await page.waitForFunction(() => document.querySelector('#reviewBranchMenuButton').getAttribute('aria-disabled') === null);
     const blocking = await rv.locator('.review-body .review-blocking').textContent();
     const attention = await rv.locator('.review-body .review-attention').locator('.review-finding').first().textContent();
     // Review gaps (here: no compliance policy) are their own section, apart from the findings.
@@ -947,13 +948,23 @@ async function main() {
     await rv.waitForFunction(() => /^Diff: /.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha, runs.at(-1).targetSha], ['changes', baseHash, targetHash]);
     assert.equal(await rv.textContent('#reviewMeta'), `Diff: ${baseHash.slice(0, 8)} → ${targetHash.slice(0, 8)}`);
-    // Review all: every file at the tip of the current branch, never at the selected commit.
+    // All files: every file at the tip of the current branch, never at the selected commit. It is
+    // only in the ▾ menu, which nothing remembers, and Escape closes the menu without a review.
     assert.equal(await page.locator('.change-summary-toolbar [data-action="reviewSelection"], .change-summary-toolbar [data-scope]').count(), 0, 'a review button stayed in the changes toolbar');
-    await page.click('.review-current-group [data-scope="branch"]');
+    assert.equal(await page.locator('.review-current-group [data-scope="branch"]').count(), 0, 'All files is a button again');
+    await page.click('#reviewBranchMenuButton');
+    assert.equal(await page.getAttribute('#reviewBranchMenuButton', 'aria-expanded'), 'true');
+    assert.deepEqual(await page.locator('#reviewBranchMenu button').allTextContents(), ['Changed files', 'All files']);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#reviewBranchMenu').isHidden(), true, 'Escape left the menu open');
+    assert.equal(runs.length, 1, 'closing the menu started a review');
+    await page.click('#reviewBranchMenuButton');
+    await page.click('#reviewBranchMenu [data-scope="branch"]');
+    assert.equal(await page.locator('#reviewBranchMenu').isHidden(), true, 'the menu stayed open');
     await rv.waitForFunction(() => document.getElementById('reviewMeta').textContent.startsWith('Branch: '));
     for (let i = 0; i < 100 && runs.length < 2; i++) await page.waitForTimeout(20);
     assert.deepEqual([runs.at(-1).scope, runs.at(-1).baseSha], ['branch', undefined]);
-    // Review branch: what the current branch adds since it left the default branch.
+    // Review branch: the files the current branch changed since it left the default branch.
     await page.click('.review-current-group [data-scope="changes"]');
     for (let i = 0; i < 100 && runs.length < 3; i++) await page.waitForTimeout(20);
     assert.equal(runs.at(-1).scope, 'changes');
@@ -1058,7 +1069,8 @@ async function main() {
         coverage: { surveyed: 3, analyzed: 1, skipped: [], complete: false,
           failed: [{ path: 'api/a.js', reason: 'Selected model cannot fit review context' }, { path: 'api/b.js', reason: 'Selected model cannot fit review context' }] } };
     };
-    await page.click('.review-current-group [data-scope="branch"]');
+    await page.click('#reviewBranchMenuButton');
+    await page.click('#reviewBranchMenu [data-scope="branch"]');
     await rv.locator('.review-quality .review-finding[data-finding-id="quality-note"]').waitFor();
     assert.deepEqual(runs.at(-1).categories, ['security', 'compliance', 'quality']);
     assert.equal(await rv.locator('.review-blocking .review-finding, .review-attention .review-finding').count(), 0, 'a quality note was listed as a finding');
@@ -1181,7 +1193,8 @@ async function main() {
           explanation: 'Found while the tab was closed', impact: 'Impact', suggestedAction: 'Fix it', evidence }],
         coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true } };
     };
-    await page.click('.review-current-group [data-scope="branch"]');
+    await page.click('#reviewBranchMenuButton');
+    await page.click('#reviewBranchMenu [data-scope="branch"]');
     await rv.locator('.review-steps .review-step-current').waitFor();
     await page.closeReviewTab();
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '50%');
@@ -1357,6 +1370,7 @@ async function main() {
     assert.deepEqual(appended, { rows: 200, sameFirst: true, lastSubject: true, graphCovers: true, nodes: 200 });
     await paging.close();
 
+
     // A light theme: the dashboard takes the theme's colours, and its text stays readable.
     const light = await openPage(1440, 900, 'light');
     await light.locator('.commit-summary-copy strong').waitFor();
@@ -1478,7 +1492,7 @@ async function main() {
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
       assert.ok(layout.modelRight <= layout.controlsRight, `${width}px: the model select is cut off`);
-      assert.equal(layout.releaseText.toLowerCase(), 'changes commit branch all clean code review ↗');
+      assert.equal(layout.releaseText.toLowerCase(), 'changes commit branch ▾ clean code review ↗');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
         await narrow.locator('.graph-node-control').nth(1).click();

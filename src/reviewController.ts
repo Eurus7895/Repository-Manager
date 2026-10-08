@@ -257,12 +257,13 @@ export class ReviewController {
           : '';
         if (!forkPoint) {
           await reply('reviewFailed', { message: defaultBranch
-            ? `${targetRevision} shares no history with ${defaultBranch}: use Review all instead.`
-            : 'No default branch (main or master) to compare the current branch with: use Review all instead.' });
+            ? `${targetRevision} shares no history with ${defaultBranch}: choose All files from the Review branch menu instead.`
+            : 'No default branch (main or master) to compare the current branch with: choose All files from the Review branch menu instead.' });
           return;
         }
         if (forkPoint === await git.execGit(['rev-parse', `${targetRevision}^{commit}`], root, 10000)) {
-          await reply('reviewFailed', { message: `Nothing to review: ${targetRevision} has no commits that ${defaultBranch} does not have.` });
+          await reply('reviewFailed', { message: `Nothing to review: ${targetRevision} has no commits that ${defaultBranch} does not have. ` +
+            'To review every file, choose All files from the Review branch menu.' });
           return;
         }
         baseRevision = forkPoint;
@@ -279,7 +280,20 @@ export class ReviewController {
       await reply('reviewFailed', { message: `Cannot resolve revision: ${error instanceof Error ? error.message : String(error)}` });
       return;
     }
-    const baseLabel = scope === 'changes' ? branchBaseLabel || optionalString(payload.baseLabel) || baseRevision : undefined;
+    // A comparison reviews what Target adds since it left Base, as a pull request shows it: commits
+    // only on Base would otherwise read as removed by Target. Base stays as chosen when it is an
+    // ancestor of Target (the merge-base is Base), when Target is behind it (a deliberate backward
+    // comparison), or when they share no history.
+    let comparedFromMergeBase = false;
+    if (kind === 'review' && baseSha) {
+      const mergeBase = await git.execGit(['merge-base', baseSha, targetSha], root, 10000).catch(() => '');
+      if (mergeBase && mergeBase !== baseSha && mergeBase !== targetSha) {
+        baseSha = mergeBase;
+        comparedFromMergeBase = true;
+      }
+    }
+    const chosenBaseLabel = branchBaseLabel || optionalString(payload.baseLabel) || baseRevision;
+    const baseLabel = scope === 'changes' ? (comparedFromMergeBase ? `${chosenBaseLabel} (merge-base)` : chosenBaseLabel) : undefined;
     const targetLabel = localTargetLabel || optionalString(payload.targetLabel) || target;
     const needsConsent = this.host.alwaysConfirm() || !this.host.isConsentRemembered(root);
     await reply('reviewProgress', { message: needsConsent ? 'Waiting for confirmation…' : 'Planning the review…', baseLabel, targetLabel });

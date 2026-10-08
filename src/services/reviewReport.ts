@@ -86,7 +86,7 @@ export const DISMISS_REASONS: Record<DismissReason, string> = {
 /* eslint-enable @typescript-eslint/naming-convention */
 
 /**
- * What a review covers: 'release' the current branch (Review branch or Review all), 'local' the
+ * What a review covers: 'release' the current branch (Review branch: changed files or all files), 'local' the
  * uncommitted changes (Review changes: HEAD → a snapshot of the working tree), 'review' anything else.
  */
 export type ReviewKind = 'review' | 'release' | 'local';

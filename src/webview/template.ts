@@ -324,8 +324,8 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <div class="review-entry review-current-group" role="group" aria-label="Review with Copilot">
               <button type="button" data-action="reviewLocal" id="reviewLocalChangesButton" title="Review your local changes before committing: staged and unstaged changes and new files (not those .gitignore excludes), as they are now. Nothing is committed or staged"><span class="review-entry-word">Review </span>changes</button>
               <button type="button" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Review the selected commit against its parent, or the loaded comparison (Base/Target or a branch comparison). Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>commit</button>
-              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review what the current branch adds since it left the default branch (main or master), as a pull request shows it. Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>branch</button>
-              <button type="button" data-action="reviewRelease" data-scope="branch" title="Review every file as committed at the tip of the current branch. Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>all</button>
+              <button type="button" data-action="reviewRelease" data-scope="changes" title="Review the files the current branch changed since it left the default branch (main or master), as a pull request shows them. Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>branch</button>
+              <button type="button" class="review-split-toggle" data-action="toggleReviewBranchMenu" id="reviewBranchMenuButton" aria-haspopup="menu" aria-expanded="false" aria-controls="reviewBranchMenu" aria-label="Choose what Review branch covers" title="Choose what Review branch covers: the changed files, or every file">▾</button>
               <label class="review-quality-toggle" title="Every review (commit, branch, all) also checks maintainability: complexity, duplication, naming, error handling, dead code, tests. These notes never block a review."><input type="checkbox" id="reviewQualityToggle"> Clean code</label>
               <button type="button" class="review-open-tab" data-action="openReviewTab" id="openReviewTabButton" title="Open the Repository Review tab: progress, results, past reviews and review skills">Review<span class="review-open-badge" id="reviewTabBadge"></span> ↗</button>
             </div>
@@ -479,6 +479,11 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent (committed content only)">Review changes in this commit</button>
     <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as committed at this commit; uncommitted changes are not included">Review branch at this commit</button>
+  </div>
+
+  <div class="history-context-menu review-branch-menu" id="reviewBranchMenu" role="menu" aria-label="Review branch" hidden>
+    <button type="button" role="menuitem" data-action="reviewRelease" data-scope="changes" title="The files the current branch changed since it left the default branch, as a pull request shows them">Changed files</button>
+    <button type="button" role="menuitem" data-action="reviewRelease" data-scope="branch" title="Every file as committed at the tip of the current branch. Sends far more code to Copilot">All files</button>
   </div>
 
   <script nonce="${nonce}">window.__initialRepositories = ${JSON.stringify(repositories)};</script>
