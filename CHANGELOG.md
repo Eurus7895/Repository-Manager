@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Commit nodes in the history graph stay round when the graph column is narrower than the graph: the drawing is clipped instead of squeezed into ellipses. Lane changes turn as even S-curves at any row height.
 
+## [2.1.1] - 2026-10-08
+
+### Fixed
+
 - The extension's repository, issues and homepage links, and the README's download link, point to eurus-labs/Repository-Manager, where the project now lives.
 
 ## [2.1.0] - 2026-10-07
