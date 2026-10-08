@@ -2189,9 +2189,9 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
   max-width: var(--history-graph-column-width);
 }
 
+/* A narrower graph column clips the drawing instead of squeezing it: scaled, the nodes became ellipses. */
 .history-graph-overlay {
-  width: min(var(--graph-width), var(--history-graph-column-width));
-  max-width: var(--history-graph-column-width);
+  clip-path: inset(0 max(0px, calc(var(--graph-width) - var(--history-graph-column-width))) 0 0);
 }
 
 .history-author,

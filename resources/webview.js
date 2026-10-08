@@ -1500,6 +1500,13 @@
     return historyDateFormat.format(date);
   }
 
+  // A lane change: an S-curve whose handles meet halfway down, so it leaves and enters each column
+  // vertically and turns evenly however tall the row is (fixed 9px handles bent sharply in tall rows).
+  function laneCurve(fromX, fromY, toX, toY) {
+    const half = (toY - fromY) / 2;
+    return `M ${fromX} ${fromY} C ${fromX} ${fromY + half}, ${toX} ${toY - half}, ${toX} ${toY}`;
+  }
+
   function renderHistoryGraph(commits, graphModel, rowHeights = []) {
     const paths = [];
     const nodes = [];
@@ -1531,14 +1538,14 @@
       // Other children of this commit arrive from their own columns.
       (layout.incomingLanes || []).forEach(lane => {
         const x = window.RepositoryHistoryGraph.laneX(lane);
-        paths.push(`<path class="graph-edge ${tone(beforeColors[lane] === undefined ? lane : beforeColors[lane])}" d="M ${x} ${top} C ${x} ${top + 9}, ${currentX} ${middle - 9}, ${currentX} ${middle}"/>`);
+        paths.push(`<path class="graph-edge ${tone(beforeColors[lane] === undefined ? lane : beforeColors[lane])}" d="${laneCurve(x, top, currentX, middle)}"/>`);
       });
       layout.parentLanes.forEach((parentLane, parentIndex) => {
         const parentX = window.RepositoryHistoryGraph.laneX(parentLane);
         const edgeColor = layout.parentColors ? layout.parentColors[parentIndex] : parentIndex === 0 ? layout.lane : parentLane;
         paths.push(parentLane === layout.lane
           ? `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} V ${bottom}"/>`
-          : `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} C ${currentX} ${middle + 9}, ${parentX} ${bottom - 9}, ${parentX} ${bottom}"/>`);
+          : `<path class="graph-edge ${tone(edgeColor)}" d="${laneCurve(currentX, middle, parentX, bottom)}"/>`);
       });
 
       const decorated = (commit.refs || []).length > 0 || layout.isMerge;
@@ -1550,7 +1557,7 @@
       controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
       top = bottom;
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}" preserveAspectRatio="none">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
   }
 
   function renderGraphCell() {

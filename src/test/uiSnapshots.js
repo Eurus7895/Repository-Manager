@@ -1370,6 +1370,39 @@ async function main() {
     assert.deepEqual(appended, { rows: 200, sameFirst: true, lastSubject: true, graphCovers: true, nodes: 200 });
     await paging.close();
 
+    // Many lanes in a narrow window: the graph column clips the drawing instead of squeezing it, so
+    // commit nodes stay round, and lane changes turn as even S-curves.
+    const lanes = await openPage(420, 1400);
+    const laneGeometry = await lanes.evaluate(async () => {
+      const sent = [];
+      const toHost = window.__postToHost;
+      window.__postToHost = message => { sent.push(message); return toHost(message); };
+      document.getElementById('dashboardIncludeRemotes').click();
+      for (let i = 0; i < 100 && !sent.some(message => message.type === 'getHistory'); i++) await new Promise(r => setTimeout(r, 20));
+      await new Promise(r => setTimeout(r, 500));
+      const request = sent.filter(message => message.type === 'getHistory').at(-1).payload;
+      const hex = n => n.toString(16).padStart(40, '0');
+      // Six branch tips, each one commit off a shared main line.
+      const commits = [];
+      for (let tip = 0; tip < 6; tip++) commits.push({ hash: hex(100 + tip), parentHashes: [hex(1 + tip)], subject: `topic ${tip}` });
+      for (let n = 1; n <= 8; n++) commits.push({ hash: hex(n), parentHashes: n < 8 ? [hex(n + 1)] : [], subject: `main ${n}` });
+      commits.forEach(commit => Object.assign(commit, { shortHash: commit.hash.slice(-7), authorName: 'A', authorEmail: 'a@x',
+        authoredAt: '2025-01-15T10:00:00Z', refs: [] }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'historyLoaded', payload: { repositoryPath: request.repositoryPath,
+        requestId: request.requestId, offset: 0, commits, nextOffset: null, upstream: null } } }));
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const hits = [...document.querySelectorAll('.graph-node-hit')].map(node => node.getBoundingClientRect());
+      const curves = [...document.querySelectorAll('.graph-edge')].map(path => path.getAttribute('d')).filter(d => d.includes(' C '));
+      return { squashed: hits.filter(box => box.width && Math.abs(box.width - box.height) > 0.5).length,
+        evenCurves: curves.every(d => { const [, y0, , y1, , y2, , y3] = d.match(/-?[\d.]+/g).map(Number); return Math.abs((y1 - y0) - (y3 - y0) / 2) < 0.01 && Math.abs(y3 - y2 - (y3 - y0) / 2) < 0.01; }),
+        curves: curves.length, clipped: document.querySelector('.history-graph-overlay').getBoundingClientRect().width > document.querySelector('.history-graph-cell').getBoundingClientRect().width };
+    });
+    assert.equal(laneGeometry.squashed, 0, 'commit nodes are drawn as ellipses');
+    assert.ok(laneGeometry.curves > 0, 'no lane changes were drawn');
+    assert.ok(laneGeometry.clipped, 'the window is wide enough for every lane, so nothing checks the narrow case');
+    assert.ok(laneGeometry.evenCurves, 'a lane change does not turn halfway down its row');
+    await snap(lanes, '04c-narrow-graph-lanes');
+    await lanes.close();
 
     // A light theme: the dashboard takes the theme's colours, and its text stays readable.
     const light = await openPage(1440, 900, 'light');
