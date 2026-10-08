@@ -2,7 +2,7 @@
   "name": "repository-manager",
   "displayName": "Repository Manager",
   "description": "Coordinate branches and Git workflows across a parent repository and its linked repositories from one VS Code dashboard",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "publisher": "repository-manager",
   "engines": {
     "vscode": "^1.74.0"
@@ -226,7 +226,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Eurus7895/Repository-Manager.git"
+    "url": "https://github.com/eurus-labs/Repository-Manager"
   },
+  "bugs": {
+    "url": "https://github.com/eurus-labs/Repository-Manager/issues"
+  },
+  "homepage": "https://github.com/eurus-labs/Repository-Manager#readme",
   "license": "MIT"
 }

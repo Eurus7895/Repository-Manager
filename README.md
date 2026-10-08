@@ -20,7 +20,7 @@ A VS Code extension for Git workflows across a parent repository and its linked 
 
 ## Install
 
-Download the `.vsix` from [GitHub Releases](https://github.com/Eurus7895/Repository-Manager/releases). In VS Code, open Extensions, choose **… › Install from VSIX…**, and select the file.
+Download the `.vsix` from [GitHub Releases](https://github.com/eurus-labs/Repository-Manager/releases). In VS Code, open Extensions, choose **… › Install from VSIX…**, and select the file.
 
 ## Use
 
