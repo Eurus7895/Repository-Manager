@@ -82,6 +82,32 @@
     document.getElementById('historyContextMenu').hidden = true;
   }
 
+  // Review branch's menu: the changed files (the button's own review) or every file. Nothing is
+  // remembered, so All files, which sends far more code, is always chosen on purpose.
+  function hideReviewBranchMenu(restoreFocus) {
+    const menu = document.getElementById('reviewBranchMenu');
+    const toggle = document.getElementById('reviewBranchMenuButton');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) toggle.focus();
+    }
+  }
+
+  function showReviewBranchMenu() {
+    const menu = document.getElementById('reviewBranchMenu');
+    const toggle = document.getElementById('reviewBranchMenuButton');
+    if (!menu || !toggle) return;
+    menu.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    const anchor = toggle.getBoundingClientRect();
+    const width = window.innerWidth || document.documentElement.clientWidth;
+    menu.style.left = `${Math.max(0, Math.min(anchor.right - menu.offsetWidth, width - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${anchor.bottom + 2}px`;
+    menu.querySelector('button').focus();
+  }
+
   // Operation paused in each repository ('rebase', 'merge', ...), as last reported by the extension.
   const pendingOperations = {};
   let historyContextMenuPoint = null;
@@ -758,12 +784,20 @@
 
     // Reviews start at once: "changes" reviews the diff Base → Target, "branch" every file at Target.
     // The current branch: what it adds since the default branch ('changes'), or every file at its tip.
-    reviewRelease: (el) => startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' }),
+    reviewRelease: (el) => {
+      hideReviewBranchMenu(false);
+      startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' });
+    },
+    toggleReviewBranchMenu: () => {
+      const menu = document.getElementById('reviewBranchMenu');
+      if (!menu || reviewLocked()) return;
+      if (menu.hidden) showReviewBranchMenu(); else hideReviewBranchMenu(true);
+    },
     // Local changes: HEAD → a snapshot of the working tree the extension takes when the review starts.
     // Whether there is anything to review is decided when the snapshot is taken, not from the last refresh.
     reviewLocal: () => startReview({ kind: 'local', scope: 'changes' }),
     // Review the changes the detail pane shows: the selected commit against its parent, or the
-    // loaded comparison from Base to Target. Every file at the branch tip is reviewed from Review all.
+    // loaded comparison from Base to Target. Every file at the branch tip is reviewed from All files in the Review branch menu.
     reviewSelection: () => {
       if (!changeSummarySelection || changeSummarySelection.local) return;
       const { baseSha, targetSha } = changeSummarySelection;
@@ -1466,6 +1500,13 @@
     return historyDateFormat.format(date);
   }
 
+  // A lane change: an S-curve whose handles meet halfway down, so it leaves and enters each column
+  // vertically and turns evenly however tall the row is (fixed 9px handles bent sharply in tall rows).
+  function laneCurve(fromX, fromY, toX, toY) {
+    const half = (toY - fromY) / 2;
+    return `M ${fromX} ${fromY} C ${fromX} ${fromY + half}, ${toX} ${toY - half}, ${toX} ${toY}`;
+  }
+
   function renderHistoryGraph(commits, graphModel, rowHeights = []) {
     const paths = [];
     const nodes = [];
@@ -1497,14 +1538,14 @@
       // Other children of this commit arrive from their own columns.
       (layout.incomingLanes || []).forEach(lane => {
         const x = window.RepositoryHistoryGraph.laneX(lane);
-        paths.push(`<path class="graph-edge ${tone(beforeColors[lane] === undefined ? lane : beforeColors[lane])}" d="M ${x} ${top} C ${x} ${top + 9}, ${currentX} ${middle - 9}, ${currentX} ${middle}"/>`);
+        paths.push(`<path class="graph-edge ${tone(beforeColors[lane] === undefined ? lane : beforeColors[lane])}" d="${laneCurve(x, top, currentX, middle)}"/>`);
       });
       layout.parentLanes.forEach((parentLane, parentIndex) => {
         const parentX = window.RepositoryHistoryGraph.laneX(parentLane);
         const edgeColor = layout.parentColors ? layout.parentColors[parentIndex] : parentIndex === 0 ? layout.lane : parentLane;
         paths.push(parentLane === layout.lane
           ? `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} V ${bottom}"/>`
-          : `<path class="graph-edge ${tone(edgeColor)}" d="M ${currentX} ${middle} C ${currentX} ${middle + 9}, ${parentX} ${bottom - 9}, ${parentX} ${bottom}"/>`);
+          : `<path class="graph-edge ${tone(edgeColor)}" d="${laneCurve(currentX, middle, parentX, bottom)}"/>`);
       });
 
       const decorated = (commit.refs || []).length > 0 || layout.isMerge;
@@ -1516,7 +1557,7 @@
       controls.push(`<g class="graph-node-control" data-action="toggleCommitCompareNode" data-commit="${escapeHtml(commit.hash)}" transform="translate(${currentX} ${middle})" role="button" tabindex="0" aria-label="Select commit ${escapeHtml(commit.shortHash)} for comparison" aria-pressed="false" data-marker=""><title>Select ${escapeHtml(commit.shortHash)} for comparison</title><circle class="graph-node-hit" r="12"/><circle class="graph-node-selection" r="10"/><text class="graph-node-marker" text-anchor="middle" dominant-baseline="central"></text></g>`);
       top = bottom;
     });
-    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}" preserveAspectRatio="none">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
+    return `<svg class="history-graph-overlay" width="${graphModel.width}" height="${top}" viewBox="0 0 ${graphModel.width} ${top}">${paths.join('')}${nodes.join('')}${controls.join('')}</svg>`;
   }
 
   function renderGraphCell() {
@@ -1956,6 +1997,7 @@
   // Event delegation - handle all clicks
   document.body.addEventListener('click', function (e) {
     if (!e.target.closest('#historyContextMenu')) hideHistoryContextMenu();
+    if (!e.target.closest('#reviewBranchMenu, #reviewBranchMenuButton')) hideReviewBranchMenu(false);
     let el = e.target;
 
     // Walk up the DOM tree to find element with data-action
@@ -1982,8 +2024,14 @@
   });
   window.addEventListener('scroll', hideHistoryContextMenu, true);
   window.addEventListener('blur', hideHistoryContextMenu);
+  // The menu is placed under its button once: scrolling or resizing would leave it behind.
+  window.addEventListener('scroll', () => hideReviewBranchMenu(false), true);
+  window.addEventListener('resize', () => hideReviewBranchMenu(false));
   document.body.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') hideHistoryContextMenu();
+    if (e.key === 'Escape') {
+      hideHistoryContextMenu();
+      hideReviewBranchMenu(true);
+    }
     if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && e.target.closest('.history-row')) {
       e.preventDefault();
       const rect = e.target.getBoundingClientRect();
@@ -3013,7 +3061,8 @@
         : reviewStatus.state === 'completed' && reviewStatus.blocking ? String(reviewStatus.blocking) : '';
       badge.classList.toggle('review-open-badge-blocking', reviewStatus.state === 'completed' && reviewStatus.blocking > 0);
     }
-    const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], [data-action="reviewLocal"], ' +
+    if (locked) hideReviewBranchMenu(false);
+    const lockable = '[data-action="reviewRelease"], [data-action="reviewSelection"], [data-action="reviewLocal"], #reviewBranchMenuButton, ' +
       '#historyContextMenu [data-action="contextReviewCommit"], #historyContextMenu [data-action="contextReviewSnapshot"]';
     document.querySelectorAll(lockable).forEach(element => {
       const nothingSelected = element.dataset.action === 'reviewSelection' && (!changeSummarySelection || changeSummarySelection.local);

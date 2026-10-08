@@ -5,9 +5,16 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.1] - Unreleased
+## [2.2.0] - Unreleased
+
+### Changed
+
+- **Review branch** is a split button: the button reviews the files the current branch changed since the default branch, as before, and its **▾** menu offers **Changed files** or **All files** (every file at the tip, formerly **Review all**). The choice is not remembered, so a review of every file, which sends far more code, is always chosen on purpose.
+- **Review commit** on a comparison reviews what Target adds since it left Base (their merge-base), as a pull request shows it: commits only on Base are no longer read as removed by Target. A comparison where Base is an ancestor of Target, or Target is behind Base, is reviewed as chosen.
 
 ### Fixed
+
+- Commit nodes in the history graph stay round when the graph column is narrower than the graph: the drawing is clipped instead of squeezed into ellipses. Lane changes turn as even S-curves at any row height.
 
 - The extension's repository, issues and homepage links, and the README's download link, point to eurus-labs/Repository-Manager, where the project now lives.
 

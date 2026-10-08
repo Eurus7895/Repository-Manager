@@ -479,8 +479,8 @@
       meta.textContent = '';
       status.textContent = '';
       body.innerHTML = hasHistory
-        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one with Review changes, Review commit, Review branch or Review all in the dashboard.</div>'
-        : '<div class="dashboard-empty">No review yet. Start one with Review changes, Review commit, Review branch or Review all in the dashboard; Review skills above sets what Copilot checks.</div>';
+        ? '<div class="dashboard-empty">No review is open. Open a past review, or start one with Review changes, Review commit or Review branch in the dashboard.</div>'
+        : '<div class="dashboard-empty">No review yet. Start one with Review changes, Review commit or Review branch in the dashboard; Review skills above sets what Copilot checks.</div>';
       return;
     }
     const running = reviewState.status === 'running';

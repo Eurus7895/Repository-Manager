@@ -279,27 +279,39 @@ async function main() {
     await untilRuns(runs, runsBefore + 1);
     assert.deepEqual([runs.at(-1).request.scope, runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], ['changes', head, topic]);
     assert.equal(of('reviewCompleted').at(-1).payload.context.baseLabel, 'main (merge-base)');
+    // A comparison of two branches that moved apart reviews what Target adds since it left Base:
+    // the commit only on main is not read as removed by topic.
+    const beforeCompare = runs.length;
+    await start(23, { baseRevision: 'main', targetRevision: 'topic', baseLabel: 'main', targetLabel: 'topic' });
+    await untilRuns(runs, beforeCompare + 1);
+    assert.deepEqual([runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], [head, topic]);
+    assert.equal(of('reviewCompleted').at(-1).payload.context.baseLabel, 'main (merge-base)');
+    // A backward comparison (Target behind Base) keeps the Base that was chosen.
+    await start(24, { baseRevision: 'topic', targetRevision: head, baseLabel: 'topic', targetLabel: 'old' });
+    await untilRuns(runs, beforeCompare + 2);
+    assert.deepEqual([runs.at(-1).request.baseSha, runs.at(-1).request.targetSha], [topic, head]);
+    assert.equal(of('reviewCompleted').at(-1).payload.context.baseLabel, 'topic');
     // A current-branch review names no revisions; one that does is ignored.
     const beforeNamed = posts.length;
     await start(22, { kind: 'release', baseRevision: 'main', targetRevision: undefined });
     assert.equal(posts.length, beforeNamed, 'a current-branch review accepted a base revision');
 
-    // Review all: every file at the tip of the current branch; with no shared history, Review branch fails.
+    // All files: every file at the tip of the current branch; with no shared history, Changed files fails.
     git('checkout', '-q', '--orphan', 'fresh');
     commit('other.js', 'x\n', 'fresh start');
     await start(12, current);
-    assert.match(failure(), /^fresh shares no history with main: use Review all instead\./);
+    assert.match(failure(), /^fresh shares no history with main: choose All files from the Review branch menu instead\./);
     await start(13, { kind: 'release', scope: 'branch', baseRevision: undefined, targetRevision: undefined });
     assert.deepEqual([of('reviewCompleted').at(-1).payload.context.kind, of('reviewCompleted').at(-1).payload.context.targetLabel], ['release', 'fresh']);
 
     // Every completed review was saved, newest first; deleting one relists the rest.
     const all = await list();
-    // Seven finished reviews plus the stopped one.
-    assert.equal(all.length, 8);
+    // Nine finished reviews plus the stopped one.
+    assert.equal(all.length, 10);
     assert.equal(all[0].targetLabel, 'fresh');
     await controller.handle({ type: 'deleteStoredReview', payload: { id: all[0].id, repositoryPath: '.', listId: 2 } });
     const afterDelete = of('reviewHistoryLoaded').at(-1).payload;
-    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 7]);
+    assert.deepEqual([afterDelete.listId, afterDelete.entries.length], [2, 9]);
     assert.ok(!afterDelete.entries.some(entry => entry.id === all[0].id));
 
     // Review changes: HEAD → a snapshot of the working tree (staged, unstaged, new files), taken now.
