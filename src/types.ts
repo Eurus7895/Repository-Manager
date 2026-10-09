@@ -215,6 +215,13 @@ export interface ReviewResult {
   partial?: { unitsDone: number; unitsTotal: number };
   /** The review skills each component was reviewed with; `omitted` ones matched but did not fit. */
   skillsApplied?: { component: string; skills: string[]; omitted?: string[] }[];
+  /**
+   * Lines the reviewed diff adds that speak to an AI reviewer, found by a pattern check after the
+   * review (absent: not checked). They may have kept the model from reporting something.
+   */
+  aiDirectedText?: Array<{ path: string; line: number; text: string }>;
+  /** More lines matched than `aiDirectedText` holds. */
+  aiDirectedTextTruncated?: boolean;
 }
 
 export interface PullRequestInfo {

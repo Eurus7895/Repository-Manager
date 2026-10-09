@@ -3,12 +3,15 @@
  * previous instructions"). Copilot reads it with the code it reviews, verifies and explains, and may
  * follow it, so the Review tab warns on a finding whose cited code holds such text.
  *
+ * Text that keeps the model from reporting a problem leaves no finding to warn on, so every line a
+ * review's diff adds is checked as well (`scanReviewedChanges`), and the review as a whole warns.
+ *
  * A plain pattern check, independent of the model: it cannot be talked out of a warning. It is a
  * tripwire, not a wall: it knows common English phrasings, and text written to evade it gets past.
  */
 
 import * as path from 'path';
-import { ReviewFinding } from '../types';
+import { ReviewFinding, ReviewRequest } from '../types';
 import { GitCommandService } from './gitCommandService';
 
 export interface AiDirectedText {
@@ -104,4 +107,54 @@ export async function markAiDirectedText(git: GitCommandService, root: string, f
     }
     if (found.length) { finding.aiDirectedText = found; }
   }
+}
+
+/** Lines kept for a whole review; past this the review says there are more. */
+export const MAX_AI_TEXT_PER_REVIEW = 50;
+const EMPTY_TREE: Record<string, string> = {
+  sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+  sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321'
+};
+
+/**
+ * Every line the reviewed diff adds that speaks to an AI: base → target for a review of changes,
+ * every line of every text file at the target for a review of all files. Streams `git diff`, so a
+ * large review is never held in memory, and stops at `limit` (`truncated`: there were more).
+ */
+export async function scanReviewedChanges(git: GitCommandService, root: string, request: ReviewRequest,
+  limit = MAX_AI_TEXT_PER_REVIEW): Promise<{ lines: AiDirectedText[]; truncated: boolean }> {
+  const format = await git.execGit(['rev-parse', '--show-object-format'], root, 5000).catch(() => 'sha1');
+  const base = request.scope === 'changes' && request.baseSha ? request.baseSha : EMPTY_TREE[format] || EMPTY_TREE.sha1;
+  if (!FULL_SHA.test(request.targetSha) || !FULL_SHA.test(base)) { return { lines: [], truncated: false }; }
+  const lines: AiDirectedText[] = [];
+  let truncated = false;
+  let file = '';
+  let inHunk = false;
+  let line = 0;
+  // Fixed prefixes and no colour, renames, external tools or text conversion, whatever the user's
+  // Git config says: the output is parsed.
+  await git.scanGitRecords(['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-textconv',
+    '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', base, request.targetSha], root, '\n', record => {
+    if (record.startsWith('diff --git ')) { inHunk = false; file = ''; return false; }
+    if (!inHunk) {
+      if (record.startsWith('+++ ')) {
+        // Git ends a name that has spaces with a tab, and quotes one with special characters.
+        const name = record.slice(4).replace(/\t$/, '').replace(/^"(.*)"$/, '$1');
+        file = name.startsWith('b/') ? name.slice(2) : '';
+        return false;
+      }
+      if (!record.startsWith('@@')) { return false; }
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(record);
+    if (hunk) { inHunk = true; line = Number(hunk[1]); return false; }
+    if (!record.startsWith('+')) { return false; }
+    const text = record.slice(1).replace(/\r$/, '');
+    if (file && isAiDirected(text)) {
+      if (lines.length >= limit) { truncated = true; return true; }
+      lines.push(...findAiDirectedText(file, [{ line, text }], 1));
+    }
+    line++;
+    return false;
+  }, 60000);
+  return { lines, truncated };
 }

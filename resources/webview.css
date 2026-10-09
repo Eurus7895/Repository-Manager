@@ -2806,6 +2806,8 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-ai-text-lines { margin: 4px 0 0; padding-left: 16px; }
 .review-ai-text-lines li { overflow-wrap: anywhere; }
 .review-ai-text-lines span { color: var(--text-secondary); font-family: var(--vscode-editor-font-family), monospace; }
+.review-ai-text-review { margin: 10px 0; }
+.review-ai-text-review .review-ai-text-lines { max-height: 220px; overflow: auto; }
 .review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
 .review-finding.triage-dismiss:not(.open) .review-finding-title { color: var(--text-secondary); font-weight: 400; text-decoration: line-through; text-decoration-color: var(--text-muted); }
 .review-finding.triage-fixed { border-left-color: var(--tone-ok); }

@@ -639,6 +639,12 @@
     const skillsUsed = (result.skillsApplied || []).length
       ? `<details class="review-skills-applied"><summary>Review skills used <span class="review-count">${[...new Set(result.skillsApplied.flatMap(item => item.skills))].length}</span></summary><ul>${result.skillsApplied.map(item =>
         `<li><code>${escapeHtml(item.component)}</code> ${item.skills.map(id => `<span class="review-skill-tag">${escapeHtml(id)}</span>`).join(' ')}${(item.omitted || []).length ? ` <small>left out (too long): ${escapeHtml(item.omitted.join(', '))}</small>` : ''}</li>`).join('')}</ul></details>` : '';
+    // Lines anywhere in the reviewed diff that speak to an AI: they may have kept a problem from being
+    // reported, where no finding is left to carry a warning.
+    const aiText = result.aiDirectedText || [];
+    const aiTextSection = aiText.length
+      ? `<section class="review-ai-text review-ai-text-review" role="note"><strong>⚠ The reviewed code speaks to an AI in ${aiText.length}${result.aiDirectedTextTruncated ? '+' : ''} place${aiText.length === 1 && !result.aiDirectedTextTruncated ? '' : 's'}.</strong> Text like this can keep Copilot from reporting a problem, so what this review did not find counts for less. Read these lines and check that code yourself.${aiTextLines(aiText)}${result.aiDirectedTextTruncated ? '<p class="review-explain-note">Only the first lines are listed.</p>' : ''}</section>`
+      : '';
     // Reviews read commits only; say so when there is work they did not see.
     const reviewedRepository = getRepository(reviewState.repositoryPath);
     const uncommitted = reviewState.kind === 'local'
@@ -646,6 +652,7 @@
       : reviewIsForActiveRepository() && reviewedRepository && reviewedRepository.hasChanges
         ? '<p class="review-uncommitted-note" role="note">This repository has uncommitted changes. Reviews read committed files only, so they were not reviewed: use Review changes in the dashboard to review them before committing.</p>' : '';
     body.innerHTML = `${uncommitted}<div class="review-readiness readiness-${escapeHtml(readiness.status)}" role="status"><strong>${escapeHtml(banner)}</strong></div>
+      ${aiTextSection}
       ${stopped}
       ${triageBar}
       ${renderFixPanel()}

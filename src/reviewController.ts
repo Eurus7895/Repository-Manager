@@ -11,7 +11,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { ExplainError, ReviewExplainService } from './services/reviewExplainService';
-import { markAiDirectedText } from './services/aiDirectedText';
+import { markAiDirectedText, scanReviewedChanges } from './services/aiDirectedText';
 import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
@@ -349,8 +349,9 @@ export class ReviewController {
       const result = await this.host.createRunner(workspaceRoot)
         .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
-      // Text in the cited code that speaks to an AI may have steered the model: the tab warns on it.
-      await markAiDirectedText(git, root, result.findings).catch(() => undefined);
+      // Text in the reviewed code that speaks to an AI may have steered the model: near a finding, and
+      // anywhere in the diff, where it may have kept a problem from being reported. The tab warns.
+      await this.checkAiDirectedText(git, root, result);
       if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
       const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
@@ -655,7 +656,7 @@ export class ReviewController {
     this.cancelExplanationQuietly();
     // Reviews saved before the check existed get it now, while their commits can still be read.
     const git = this.git(entry.workspaceRoot);
-    await markAiDirectedText(git, git.resolveRepositoryPath(entry.repositoryPath), entry.result.findings).catch(() => undefined);
+    await this.checkAiDirectedText(git, git.resolveRepositoryPath(entry.repositoryPath), entry.result);
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
@@ -669,6 +670,19 @@ export class ReviewController {
     // An open copy stays usable for this session, but no longer writes triage to the history.
     this.reviews.forEach(review => { if (review.historyId === id) { review.historyId = undefined; } });
     await this.listHistory(payload);
+  }
+
+  /**
+   * Marks findings whose cited code speaks to an AI, and lists every such line the reviewed diff
+   * adds (once: a result that has the list keeps it). Best effort: Git errors leave it unchecked.
+   */
+  private async checkAiDirectedText(git: GitCommandService, root: string, result: ReviewResult): Promise<void> {
+    await markAiDirectedText(git, root, result.findings).catch(() => undefined);
+    if (result.aiDirectedText) { return; }
+    const scanned = await scanReviewedChanges(git, root, result.request).catch(() => undefined);
+    if (!scanned) { return; }
+    result.aiDirectedText = scanned.lines;
+    if (scanned.truncated) { result.aiDirectedTextTruncated = true; }
   }
 
   private async openEvidence(payload: Record<string, unknown>): Promise<void> {
