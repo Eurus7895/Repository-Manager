@@ -167,6 +167,33 @@ async function main() {
     state.set('repositoryManager.reviewHistory', savedQuiet);
     await quietController.handle({ type: 'openStoredReview', payload: { requestId: 4, id: quietDone.historyId } });
     assert.equal(posts.filter(message => message.type === 'reviewCompleted').at(-1).payload.result.aiDirectedText.length, 2);
+    // A diff that cannot be checked (Git fails or times out) is a gap, not a clean result; opening the
+    // review again checks again, and a check that runs clears it.
+    const broken = { request: { ...quiet.request, targetSha: 'f'.repeat(40) }, findings: [], policyResults: [], policyStatus: 'not_configured',
+      limitations: [], coverage: { surveyed: 2, analyzed: 2, skipped: [], failed: [], complete: true } };
+    const brokenController = new ReviewController({
+      workspaceRoot: () => repo, post: async message => { posts.push(message); }, ask: async () => undefined,
+      alwaysConfirm: () => false, isConsentRemembered: () => true, rememberConsent: async () => {},
+      createRunner: () => ({ review: async () => JSON.parse(JSON.stringify(broken)) }),
+      createCancellation: () => ({ token: { isCancellationRequested: false }, cancel() {}, dispose() {} }),
+      copyText: async () => {}, saveText: async () => true, openText: async () => {}, notify: () => {},
+      createFixModel: () => ({ request: async () => ({ response: {} }) }), isDirtyInEditor: () => false, workingTreeChanged: () => {},
+      history
+    });
+    const beforeBroken = posts.length;
+    await brokenController.handle({ type: 'startReview', payload: { requestId: 5, repositoryPath: '.', scope: 'changes', baseRevision: base, targetRevision: target } });
+    const unchecked = posts.slice(beforeBroken).find(message => message.type === 'reviewCompleted').payload;
+    assert.equal(unchecked.result.aiDirectedText, undefined);
+    assert.ok(unchecked.result.aiDirectedTextError, 'a check that could not run left no trace');
+    assert.equal(unchecked.readiness.status, 'needs_attention', 'an unchecked review read as clean');
+    assert.ok(unchecked.readiness.gaps.some(item => item.title === 'Text addressed to an AI was not checked'));
+    const savedBroken = state.get('repositoryManager.reviewHistory');
+    savedBroken.find(entry => entry.id === unchecked.historyId).result.request.targetSha = target;
+    state.set('repositoryManager.reviewHistory', savedBroken);
+    await brokenController.handle({ type: 'openStoredReview', payload: { requestId: 6, id: unchecked.historyId } });
+    const rechecked = posts.filter(message => message.type === 'reviewCompleted').at(-1).payload;
+    assert.equal(rechecked.result.aiDirectedTextError, undefined, 'a check that ran kept the old error');
+    assert.equal(rechecked.result.aiDirectedText.length, 2);
     console.log('AI-directed text smoke passed');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

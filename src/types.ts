@@ -222,6 +222,8 @@ export interface ReviewResult {
   aiDirectedText?: Array<{ path: string; line: number; text: string }>;
   /** More lines matched than `aiDirectedText` holds. */
   aiDirectedTextTruncated?: boolean;
+  /** Why that check could not run (Git failed or timed out): it is a review gap until it runs. */
+  aiDirectedTextError?: string;
 }
 
 export interface PullRequestInfo {
