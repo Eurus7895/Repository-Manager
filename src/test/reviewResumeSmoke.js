@@ -127,7 +127,8 @@ async function main() {
     assert.deepEqual(prints(reworded), prints(resumed));
     assert.notDeepEqual(reworded.findings.map(finding => finding.id).sort(), resumed.findings.map(finding => finding.id).sort());
 
-    // 5. A component that failed a check is not saved, so it is asked again next time.
+    // 5. A component that failed a check is asked again next time, for the failed part only
+    //    (here: its findings with bad citations; see reviewRetrySmoke.js).
     model = makeModel('3');
     broken = 'gamma';
     asked.length = 0;

@@ -6,7 +6,7 @@ import { findingFingerprint, validatePolicyResult, validateReviewFinding } from 
 import { appliesToPath, component, ReviewPlan, ReviewSurveyService, ReviewWorkUnit } from './reviewSurveyService';
 import { consolidateLimitations, TRUNCATION_NOTE } from './reviewLimitations';
 import { PROMPT_VERSION, ReviewChatModel, SecurityReviewProvider } from './securityReviewProvider';
-import { ReviewUnitCacheLike, ReviewUnitOutcome, reviewUnitKey } from '../reviewUnitCache';
+import { ReviewUnitCacheLike, ReviewUnitOutcome, ReviewUnitRepair, reviewUnitKey } from '../reviewUnitCache';
 import { AppliedSkills, ReviewSkill, selectReviewSkills } from './reviewSkills';
 
 /** Steps kept in a result's log; a long review keeps its first ones. */
@@ -26,6 +26,22 @@ export function progressComponents(plan: ReviewPlan): ReviewProgressComponent[] 
     (step.skipped = step.skipped || []).push({ path: item.path, reason: item.reason });
   }
   return steps;
+}
+
+/** A component being reviewed: what its answers established so far, and what they said about coverage. */
+type UnitState = ReviewUnitRepair & Pick<ReviewUnitOutcome, 'skipped' | 'limitations' | 'analyzed'>;
+type FailedChecks = { path: string; reason: string }[];
+
+function unverifiedCount(repair: ReviewUnitRepair): number {
+  return repair.candidates.filter(candidate => !repair.verdicts[candidate.id]).length;
+}
+
+/** What Retry asks for again in a component, for the progress line and the log. */
+function describeRepair(repair: ReviewUnitRepair): string {
+  const unverified = unverifiedCount(repair);
+  return [unverified ? `${unverified} finding(s) without a verdict` : '',
+    repair.invalid.length ? `${repair.invalid.length} finding(s) whose citations did not check out` : '',
+    repair.recheckRules.length ? `policy rule(s) ${repair.recheckRules.join(', ')}` : ''].filter(Boolean).join(', ');
 }
 
 export interface ReviewProgressComponent {
@@ -98,7 +114,7 @@ export class SecurityReviewService {
       const applied = skillsFor(unit);
       const key = keyFor(unit, applied);
       let outcome = this.cache?.get(key);
-      if (outcome) {
+      if (outcome && !outcome.repair) {
         report(`Reusing the saved result for component ${index + 1}/${plan.units.length}: ${unit.component}`);
         // Saved before findings had fingerprints: add them, so decisions on them can carry over.
         for (const finding of outcome.findings) {
@@ -108,14 +124,27 @@ export class SecurityReviewService {
           }
         }
       } else {
-        report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
-        const failed: { path: string; reason: string }[] = [];
+        const failed: FailedChecks = [];
+        // Saved after a failed check: only what failed is asked again; what passed is kept as it was.
+        const saved = outcome;
+        let cacheable = true;
         try {
-          outcome = await this.reviewUnit(plan, unit, model, token, report, state, failed, applied);
+          if (saved?.repair) {
+            report(`Asking again for what failed in component ${index + 1}/${plan.units.length}: ${unit.component} (${describeRepair(saved.repair)})`);
+            outcome = await this.repairUnit(plan, unit, saved, model, token, report, state, failed, applied);
+          } else {
+            report(`Reviewing component ${index + 1}/${plan.units.length}: ${unit.component}`);
+            ({ outcome, cacheable } = await this.reviewUnit(plan, unit, model, token, report, state, failed, applied));
+          }
         } catch (error) {
           if (token.isCancellationRequested) { stopped = true; break; }
-          for (const path of unit.paths) {
-            failed.push({ path, reason: error instanceof Error ? error.message : 'Review failed' });
+          const reason = error instanceof Error ? error.message : 'Review failed';
+          if (saved) {
+            // What the saved answers established still holds; its gaps are asked for next time.
+            outcome = saved;
+            failed.push({ path: unit.component, reason });
+          } else {
+            for (const path of unit.paths) { failed.push({ path, reason }); }
           }
         }
         // One entry per file and reason: several bad findings from one component are one failed check.
@@ -127,8 +156,9 @@ export class SecurityReviewService {
           const files = failed.filter(item => item.reason === reason).length;
           report(`Component ${unit.component} failed${files > 1 ? ` (${files} files)` : ''}: ${reason}`);
         }
-        // Only a clean result is kept: anything that failed is asked again next time.
-        if (outcome && !failed.length) { await this.cache?.set(key, outcome).catch(() => undefined); }
+        // Kept with what it lacks, so the next run asks for that only. A component whose answer was
+        // unusable as a whole (a failed request, too many results) is not kept and is asked again in full.
+        if (outcome && cacheable) { await this.cache?.set(key, outcome).catch(() => undefined); }
       }
       if (outcome && (applied.skills.length || applied.omitted.length)) {
         skillsApplied.push({ component: unit.component, skills: applied.skills.map(skill => skill.id),
@@ -200,92 +230,182 @@ export class SecurityReviewService {
       ...(stopped ? { partial: { unitsDone, unitsTotal: plan.units.length } } : {}) };
   }
 
-  /** Analyzes and verifies one component. Problems that leave it incomplete go into `failed`. */
+  /**
+   * Analyzes and verifies one component. Problems that leave it incomplete go into `failed`; the
+   * outcome records what is missing (`repair`). `cacheable` is false when only a whole new answer
+   * can fix it.
+   */
   private async reviewUnit(plan: ReviewPlan, unit: ReviewWorkUnit, model: ReviewChatModel, token: vscode.CancellationToken,
-    report: (message: string) => void, state: ReviewProgressDetail, failed: { path: string; reason: string }[],
-    applied: AppliedSkills): Promise<ReviewUnitOutcome> {
+    report: (message: string) => void, state: ReviewProgressDetail, failed: FailedChecks,
+    applied: AppliedSkills): Promise<{ outcome: ReviewUnitOutcome; cacheable: boolean }> {
     const raw = await this.provider.analyze(plan, unit, model, token, report, applied.skills);
-    const candidates: ReviewFinding[] = [];
-    for (const item of raw.findings.slice(0, 20)) {
-      const finding = await validateReviewFinding(item, plan, unit);
-      if (finding) {
-        // Only a skill this component was given; the model may name one it was not. A finding from a
-        // clean code skill is a quality note whatever category the model gave it, so it cannot block.
-        const source = finding.skill ? applied.skills.find(skill => skill.id === finding.skill) : undefined;
-        if (finding.skill && !source) { delete finding.skill; }
-        if (source?.category === 'quality' && finding.category !== 'quality') {
-          finding.category = 'quality';
-          delete finding.ruleId;
-          if (finding.severity === 'critical' || finding.severity === 'high') { finding.severity = 'medium'; }
-        }
-        if (finding.category === 'compliance') {
-          finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
-        }
-        const fingerprint = await findingFingerprint(finding, plan);
-        if (fingerprint) { finding.fingerprint = fingerprint; }
-        candidates.push(finding);
-      }
-      else { failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' }); }
-    }
+    let cacheable = true;
     if (raw.findings.length > 20) {
       failed.push({ path: unit.component, reason: 'AI finding limit exceeded' });
+      cacheable = false;
     }
-    let verdicts = new Map<string, 'supported' | 'uncertain' | 'rejected'>();
-    if (candidates.length) {
-      state.phase = 'verifying';
-      try {
-        verdicts = await this.provider.verify(plan, candidates, model, token, report);
-        // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
-        const missing = candidates.filter(candidate => !verdicts.has(candidate.id)).length;
-        if (missing) {
-          failed.push({ path: unit.component, reason: `No verification verdict for ${missing} of ${candidates.length} finding(s)` });
-        }
-      } catch (error) {
-        if (token.isCancellationRequested) { throw error; }
-        failed.push({ path: unit.component, reason: `Finding verification failed: ${String(error)}` });
-      }
-    }
-    const kept: ReviewFinding[] = [];
-    for (const candidate of candidates) {
-      const verdict = verdicts.get(candidate.id);
-      if (verdict === 'rejected') { continue; }
-      // A rule the policy marks manual or static cannot be verified by an AI check.
-      const rule = candidate.category === 'compliance' ? unit.rules.find(item => item.id === candidate.ruleId) : undefined;
-      candidate.status = verdict === 'supported' && (!rule || rule.verification === 'ai') ? 'verified' : 'hypothesis';
-      kept.push(candidate);
-    }
-    const policyResults: PolicyRuleResult[] = [];
-    const seenRules = new Set<string>();
     if (raw.policyResults.length > 200) {
       failed.push({ path: unit.component, reason: 'AI policy result limit exceeded' });
-    }
-    for (const item of raw.policyResults.slice(0, 200)) {
-      const result = await validatePolicyResult(item, plan, unit);
-      if (!result || seenRules.has(result.ruleId)) {
-        failed.push({ path: unit.component, reason: 'Invalid or duplicate policy result' });
-        continue;
-      }
-      seenRules.add(result.ruleId);
-      if (result.status === 'violation' && !candidates.some(candidate =>
-        candidate.category === 'compliance' && candidate.ruleId === result.ruleId &&
-        verdicts.get(candidate.id) === 'supported')) {
-        result.status = 'insufficient_evidence';
-        result.reason = 'Violation has no corroborated compliance finding.';
-      }
-      policyResults.push(result);
-    }
-    for (const rule of unit.rules) {
-      if (!seenRules.has(rule.id)) {
-        policyResults.push({ ruleId: rule.id, status: 'insufficient_evidence',
-          reason: 'AI did not return a result for this scope.', evidence: [] });
-        failed.push({ path: unit.component, reason: `No policy result for ${rule.id}` });
-      }
+      cacheable = false;
     }
     const skipped = raw.partialPaths.map(file => ({ path: file.path, partial: true, reason: file.characters
       ? `Partly reviewed: the model saw the first ${file.characters.toLocaleString('en-US')} characters of line 1 (of ${file.total.toLocaleString('en-US')})`
       : `Partly reviewed: the model saw ${file.seen.toLocaleString('en-US')} of ${file.total.toLocaleString('en-US')} lines` }));
     const limitations = (Array.isArray(raw.limitations) ? raw.limitations.filter((item): item is string =>
       typeof item === 'string' && item.length <= 500) : []).slice(0, 10);
-    return { findings: kept, candidates: candidates.length, policyResults, skipped, limitations, analyzed: unit.paths.length };
+    const unitState: UnitState = { candidates: [], verdicts: {}, policyResults: [], invalid: [], recheckRules: [],
+      skipped, limitations, analyzed: unit.paths.length };
+    await this.collect(raw.findings.slice(0, 20), raw.policyResults.slice(0, 200), unit.rules.map(rule => rule.id),
+      plan, unit, applied, unitState, failed);
+    await this.verifyPending(plan, unit, unitState, model, token, report, state, failed);
+    return { outcome: this.finish(unit, unitState, failed), cacheable };
+  }
+
+  /**
+   * Completes a component saved with a failed check, asking only for what failed: findings whose
+   * citations did not check out (asked to cite real lines), rules with no usable result, and the
+   * second check for findings that have no verdict. Everything else is kept as it was.
+   */
+  private async repairUnit(plan: ReviewPlan, unit: ReviewWorkUnit, saved: ReviewUnitOutcome, model: ReviewChatModel,
+    token: vscode.CancellationToken, report: (message: string) => void, state: ReviewProgressDetail, failed: FailedChecks,
+    applied: AppliedSkills): Promise<ReviewUnitOutcome> {
+    const repair = JSON.parse(JSON.stringify(saved.repair)) as ReviewUnitRepair;
+    const unitState: UnitState = { ...repair, recheckRules: repair.recheckRules.filter(id => unit.rules.some(rule => rule.id === id)),
+      skipped: saved.skipped, limitations: saved.limitations, analyzed: saved.analyzed };
+    const requestFailed = (what: string, error: unknown) => {
+      if (token.isCancellationRequested) { throw error; }
+      failed.push({ path: unit.component, reason: `${what} failed: ${error instanceof Error ? error.message : String(error)}` });
+    };
+    if (unitState.invalid.length) {
+      const invalid = unitState.invalid;
+      unitState.invalid = [];
+      try {
+        const raw = await this.provider.analyze(plan, unit, model, token, report, applied.skills, { recite: invalid });
+        // Only the findings: a policy result here would answer rules nobody asked about again.
+        await this.collect(raw.findings.slice(0, 20), [], [], plan, unit, applied, unitState, failed);
+      } catch (error) {
+        unitState.invalid = invalid;
+        requestFailed('Asking again for findings with bad citations', error);
+      }
+    }
+    if (unitState.recheckRules.length) {
+      const rulesUnit = { ...unit, rules: unit.rules.filter(rule => unitState.recheckRules.includes(rule.id)) };
+      const rulesPlan: ReviewPlan = { ...plan, request: { ...plan.request, categories: ['compliance'] } };
+      try {
+        const raw = await this.provider.analyze(rulesPlan, rulesUnit, model, token, report, [], { rulesOnly: true });
+        const compliance = raw.findings.filter(item => Boolean(item) && typeof item === 'object' &&
+          (item as Record<string, unknown>).category === 'compliance').slice(0, 20);
+        await this.collect(compliance, raw.policyResults.slice(0, 200), rulesUnit.rules.map(rule => rule.id),
+          rulesPlan, rulesUnit, applied, unitState, failed);
+      } catch (error) {
+        requestFailed('Asking again for policy results', error);
+      }
+    }
+    await this.verifyPending(plan, unit, unitState, model, token, report, state, failed);
+    return this.finish(unit, unitState, failed);
+  }
+
+  /**
+   * Validates findings and policy results from one answer into the component's state. Findings
+   * that fail validation are kept as written, to be asked for again. `askedRules` are the rules this
+   * answer was asked about: those it gave no valid result for, or conflicting ones, are asked again.
+   */
+  private async collect(findings: unknown[], policyResults: unknown[], askedRules: string[], plan: ReviewPlan,
+    unit: ReviewWorkUnit, applied: AppliedSkills, unitState: UnitState, failed: FailedChecks): Promise<void> {
+    for (const item of findings) {
+      const finding = await validateReviewFinding(item, plan, unit);
+      if (!finding) {
+        unitState.invalid.push(item);
+        failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' });
+        continue;
+      }
+      // Only a skill this component was given; the model may name one it was not. A finding from a
+      // clean code skill is a quality note whatever category the model gave it, so it cannot block.
+      const source = finding.skill ? applied.skills.find(skill => skill.id === finding.skill) : undefined;
+      if (finding.skill && !source) { delete finding.skill; }
+      if (source?.category === 'quality' && finding.category !== 'quality') {
+        finding.category = 'quality';
+        delete finding.ruleId;
+        if (finding.severity === 'critical' || finding.severity === 'high') { finding.severity = 'medium'; }
+      }
+      if (finding.category === 'compliance') {
+        finding.severity = unit.rules.find(rule => rule.id === finding.ruleId)!.severity;
+      }
+      const fingerprint = await findingFingerprint(finding, plan);
+      if (fingerprint) { finding.fingerprint = fingerprint; }
+      if (!unitState.candidates.some(candidate => candidate.id === finding.id)) { unitState.candidates.push(finding); }
+    }
+    const answered = new Set<string>();
+    const contested = new Set<string>();
+    for (const item of policyResults) {
+      const result = await validatePolicyResult(item, plan, unit);
+      if (!result || answered.has(result.ruleId)) {
+        failed.push({ path: unit.component, reason: 'Invalid or duplicate policy result' });
+        const ruleId = result ? result.ruleId : item && typeof item === 'object' ? (item as Record<string, unknown>).ruleId : undefined;
+        if (typeof ruleId === 'string' && askedRules.includes(ruleId)) { contested.add(ruleId); }
+        continue;
+      }
+      answered.add(result.ruleId);
+      unitState.policyResults = unitState.policyResults.filter(existing => existing.ruleId !== result.ruleId).concat(result);
+    }
+    unitState.recheckRules = unitState.recheckRules.filter(id => !askedRules.includes(id))
+      .concat(askedRules.filter(id => contested.has(id) || !answered.has(id)));
+  }
+
+  /** The second check, for the findings that have no verdict yet. */
+  private async verifyPending(plan: ReviewPlan, unit: ReviewWorkUnit, unitState: UnitState, model: ReviewChatModel,
+    token: vscode.CancellationToken, report: (message: string) => void, state: ReviewProgressDetail, failed: FailedChecks): Promise<void> {
+    const pending = unitState.candidates.filter(candidate => !unitState.verdicts[candidate.id]);
+    if (!pending.length) { return; }
+    state.phase = 'verifying';
+    try {
+      const verdicts = await this.provider.verify(plan, pending, model, token, report);
+      verdicts.forEach((verdict, id) => { unitState.verdicts[id] = verdict; });
+    } catch (error) {
+      if (token.isCancellationRequested) { throw error; }
+      failed.push({ path: unit.component, reason: `Finding verification failed: ${String(error)}` });
+    }
+  }
+
+  /**
+   * The component's outcome from its state: findings kept after the second check with their status,
+   * policy results (a violation needs a supported finding), and, while anything is missing, `repair`.
+   * Every missing part is also a failed check, so a component never looks complete while it is not.
+   */
+  private finish(unit: ReviewWorkUnit, unitState: UnitState, failed: FailedChecks): ReviewUnitOutcome {
+    const supported = (id: string) => unitState.verdicts[id] === 'supported';
+    const findings: ReviewFinding[] = [];
+    for (const candidate of unitState.candidates) {
+      const verdict = unitState.verdicts[candidate.id];
+      if (verdict === 'rejected') { continue; }
+      // A rule the policy marks manual or static cannot be verified by an AI check.
+      const rule = candidate.category === 'compliance' ? unit.rules.find(item => item.id === candidate.ruleId) : undefined;
+      findings.push({ ...candidate, evidence: candidate.evidence.map(evidence => ({ ...evidence })),
+        status: verdict === 'supported' && (!rule || rule.verification === 'ai') ? 'verified' : 'hypothesis' });
+    }
+    const policyResults: PolicyRuleResult[] = unitState.policyResults.map(result =>
+      result.status === 'violation' && !unitState.candidates.some(candidate => candidate.category === 'compliance' &&
+        candidate.ruleId === result.ruleId && supported(candidate.id))
+        ? { ...result, status: 'insufficient_evidence', reason: 'Violation has no corroborated compliance finding.' }
+        : { ...result });
+    for (const rule of unit.rules) {
+      if (!unitState.policyResults.some(result => result.ruleId === rule.id)) {
+        policyResults.push({ ruleId: rule.id, status: 'insufficient_evidence', reason: 'AI did not return a result for this scope.', evidence: [] });
+        failed.push({ path: unit.component, reason: `No policy result for ${rule.id}` });
+      } else if (unitState.recheckRules.includes(rule.id)) {
+        failed.push({ path: unit.component, reason: 'Invalid or duplicate policy result' });
+      }
+    }
+    if (unitState.invalid.length) { failed.push({ path: unit.component, reason: 'AI finding had invalid or ungrounded evidence' }); }
+    // The second assessment must cover every candidate; a missing verdict is a gap, not a pass.
+    const unverified = unverifiedCount(unitState);
+    if (unverified && !failed.some(item => item.path === unit.component && item.reason.startsWith('Finding verification failed'))) {
+      failed.push({ path: unit.component, reason: `No verification verdict for ${unverified} of ${unitState.candidates.length} finding(s)` });
+    }
+    const pending = unverified > 0 || unitState.invalid.length > 0 || unitState.recheckRules.length > 0;
+    return { findings, candidates: unitState.candidates.length, policyResults, skipped: unitState.skipped,
+      limitations: unitState.limitations, analyzed: unitState.analyzed,
+      ...(pending ? { repair: { candidates: unitState.candidates, verdicts: unitState.verdicts, policyResults: unitState.policyResults,
+        invalid: unitState.invalid, recheckRules: unitState.recheckRules } } : {}) };
   }
 }

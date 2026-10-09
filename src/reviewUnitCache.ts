@@ -2,6 +2,9 @@
  * Component results of earlier reviews, so a review that stopped (cancelled, VS Code closed, the
  * model failed half-way) continues where it left off instead of asking the model again.
  *
+ * A component whose checks did not all pass is kept too, with what it still lacks (`repair`): running
+ * the review again (Retry failed) asks only for those parts, and keeps everything that passed.
+ *
  * A review reads pinned commits, so the same component at the same commits has the same content.
  * The key also holds the model, the prompt version and the instructions, so a result is reused only
  * when the model would have been asked exactly the same thing. Kept in workspace state (private to
@@ -16,6 +19,25 @@ const KEY = 'repositoryManager.reviewUnitCache';
 export const MAX_ENTRIES = 300;
 export const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
+export type ReviewVerdict = 'supported' | 'uncertain' | 'rejected';
+
+/**
+ * What a component still lacks after a failed check, and what the parts that passed were built
+ * from, so that asking for the missing parts gives the same result as a clean first answer.
+ */
+export interface ReviewUnitRepair {
+  /** Every finding that passed validation, before the second check; `findings` holds the kept ones. */
+  candidates: ReviewFinding[];
+  /** The second check's verdicts by finding id; a candidate with none is checked again. */
+  verdicts: Record<string, ReviewVerdict>;
+  /** Policy results as validated, before a violation is required to have a supported finding. */
+  policyResults: PolicyRuleResult[];
+  /** Findings that failed validation, as the model wrote them: asked for again with real citations. */
+  invalid: unknown[];
+  /** Rules with no valid result, or with conflicting ones: asked for again. */
+  recheckRules: string[];
+}
+
 /** What one component adds to a review, after validation and verification. */
 export interface ReviewUnitOutcome {
   /** Findings kept after the second assessment, with their status set. */
@@ -26,6 +48,8 @@ export interface ReviewUnitOutcome {
   skipped: { path: string; reason: string; partial?: boolean }[];
   limitations: string[];
   analyzed: number;
+  /** Set when a check failed in a way that asking again for part of it can fix. */
+  repair?: ReviewUnitRepair;
 }
 
 export interface ReviewUnitCacheLike {
