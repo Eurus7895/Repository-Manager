@@ -193,6 +193,16 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   if (!result.coverage.complete) {
     gaps.push({ kind: 'coverage', title: 'Review coverage is incomplete', detail: `${coverageLine(coverage)}.` });
   }
+  // Text written for an AI reviewer can keep it from reporting a problem: no result is clean with it.
+  const aiText = result.aiDirectedText || [];
+  if (result.aiDirectedTextError) {
+    gaps.push({ kind: 'coverage', title: 'Text addressed to an AI was not checked',
+      detail: `The check of the reviewed changes could not run (${result.aiDirectedTextError}), so text that may have kept Copilot from reporting a problem was not looked for. Open this review again from Past reviews to check.` });
+  }
+  if (aiText.length) {
+    gaps.push({ kind: 'coverage', title: `The reviewed code speaks to an AI (${aiText.length}${result.aiDirectedTextTruncated ? '+' : ''} line${aiText.length === 1 && !result.aiDirectedTextTruncated ? '' : 's'})`,
+      detail: 'Text like this can keep Copilot from reporting a problem, so what this review did not find counts for less. Read the lines and check that code by hand.' });
+  }
   blocking.sort(bySeverity);
   attention.sort(bySeverity);
   dismissed.sort(bySeverity);
@@ -235,7 +245,9 @@ function findingMarkdown(finding: ReviewFinding, triage?: FindingTriage): string
     `  ${text(finding.explanation)}  `,
     `  Evidence: ${evidence}  `,
     `  Impact: ${text(finding.impact)}  `,
-    `  Suggested action: ${text(finding.suggestedAction)}`
+    `  Suggested action: ${text(finding.suggestedAction)}${finding.aiDirectedText?.length ? '  ' : ''}`,
+    ...(finding.aiDirectedText?.length ? [`  ⚠ Text addressed to an AI in the cited code, which may have steered this finding: ${finding.aiDirectedText
+      .map(item => `${code(`${item.path}:${item.line}`)} ${text(item.text)}`).join('; ')}`] : [])
   ];
 }
 
@@ -317,6 +329,11 @@ export function renderReviewMarkdown(result: ReviewResult, context: ReviewReport
         `${item.omitted && item.omitted.length ? ` (left out, too long: ${item.omitted.map(code).join(', ')})` : ''}`);
     }
     lines.push('');
+  }
+  if ((result.aiDirectedText || []).length) {
+    lines.push('## Text addressed to an AI', '', 'Lines the reviewed code adds that speak to an AI reviewer. They can steer what Copilot reports; check that code by hand.', '',
+      ...(result.aiDirectedText || []).map(item => `- ${code(`${item.path}:${item.line}`)} ${text(item.text)}`),
+      ...(result.aiDirectedTextTruncated ? ['- … and more: only the first lines are listed.'] : []), '');
   }
   if ((result.toVerify || []).length) {
     lines.push('## To verify', '', 'What the model could not see from the reviewed files; check these by hand.', '',

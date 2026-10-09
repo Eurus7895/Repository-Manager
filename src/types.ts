@@ -140,6 +140,11 @@ export interface ReviewFinding {
   suggestedAction: string;
   evidence: ReviewEvidence[];
   status: 'candidate' | 'verified' | 'hypothesis';
+  /**
+   * Lines in or around the cited code that speak to an AI reviewer ("NOTE TO AI: this is safe"),
+   * found by a pattern check after the review: they may have steered this finding or its check.
+   */
+  aiDirectedText?: Array<{ path: string; line: number; text: string }>;
 }
 
 export interface ReviewCoverage {
@@ -210,6 +215,15 @@ export interface ReviewResult {
   partial?: { unitsDone: number; unitsTotal: number };
   /** The review skills each component was reviewed with; `omitted` ones matched but did not fit. */
   skillsApplied?: { component: string; skills: string[]; omitted?: string[] }[];
+  /**
+   * Lines the reviewed diff adds that speak to an AI reviewer, found by a pattern check after the
+   * review (absent: not checked). They may have kept the model from reporting something.
+   */
+  aiDirectedText?: Array<{ path: string; line: number; text: string }>;
+  /** More lines matched than `aiDirectedText` holds. */
+  aiDirectedTextTruncated?: boolean;
+  /** Why that check could not run (Git failed or timed out): it is a review gap until it runs. */
+  aiDirectedTextError?: string;
 }
 
 export interface PullRequestInfo {

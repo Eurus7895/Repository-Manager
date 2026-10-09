@@ -11,6 +11,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { ExplainError, ReviewExplainService } from './services/reviewExplainService';
+import { markAiDirectedText, scanReviewedChanges } from './services/aiDirectedText';
 import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
@@ -348,6 +349,10 @@ export class ReviewController {
       const result = await this.host.createRunner(workspaceRoot)
         .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
+      // Text in the reviewed code that speaks to an AI may have steered the model: near a finding, and
+      // anywhere in the diff, where it may have kept a problem from being reported. The tab warns.
+      await this.checkAiDirectedText(git, root, result, () => cancellation.token.isCancellationRequested);
+      if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
       const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
       // Saving is best effort: a full or failing workspace state must not lose the result on screen.
@@ -584,6 +589,8 @@ export class ReviewController {
       const service = new ReviewExplainService(this.git(stored.workspaceRoot));
       // The finding and its cited lines are read before asking, so a question is never wasted on a refusal.
       const prepared = await service.prepare({ repositoryPath: stored.result.request.repositoryPath, result: stored.result, findingId });
+      // Cancelled (or replaced) while the cited lines were read: neither ask nor send.
+      if (this.explaining !== job) { return; }
       if (this.host.alwaysConfirm() || !this.host.isConsentRemembered(prepared.root)) {
         await reply('reviewExplainProgress', { message: 'Waiting for confirmation…' });
         const actions = this.host.alwaysConfirm() ? [EXPLAIN] : [EXPLAIN, ALWAYS];
@@ -649,6 +656,12 @@ export class ReviewController {
     // Like starting a review: the dashboard leaves the previous one, so its auto-fix and explanation are dropped.
     this.cancelFixQuietly();
     this.cancelExplanationQuietly();
+    // Reviews saved before the check existed get it now, while their commits can still be read, and
+    // keep it: the commits may be gone by the next time.
+    const git = this.git(entry.workspaceRoot);
+    if (await this.checkAiDirectedText(git, git.resolveRepositoryPath(entry.repositoryPath), entry.result)) {
+      await this.host.history.setResult(id, entry.result).catch(() => undefined);
+    }
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,
@@ -662,6 +675,30 @@ export class ReviewController {
     // An open copy stays usable for this session, but no longer writes triage to the history.
     this.reviews.forEach(review => { if (review.historyId === id) { review.historyId = undefined; } });
     await this.listHistory(payload);
+  }
+
+  /**
+   * Marks findings whose cited code speaks to an AI, and lists every such line the reviewed diff
+   * adds (once: a result that has the list keeps it). Marking findings is best effort; a diff that
+   * cannot be checked, or a check stopped by Cancel, is recorded (`aiDirectedTextError`), so the
+   * review does not read as clean. Returns whether the result changed.
+   */
+  private async checkAiDirectedText(git: GitCommandService, root: string, result: ReviewResult,
+    isCancelled?: () => boolean): Promise<boolean> {
+    const marked = await markAiDirectedText(git, root, result.findings).catch(() => 0);
+    if (result.aiDirectedText) { return marked > 0; }
+    let scanned: Awaited<ReturnType<typeof scanReviewedChanges>>;
+    try {
+      scanned = await scanReviewedChanges(git, root, result.request, undefined, isCancelled);
+    } catch (error) {
+      // Not checked is not clean: the review shows it as a gap, and opening it again checks again.
+      result.aiDirectedTextError = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+      return true;
+    }
+    delete result.aiDirectedTextError;
+    result.aiDirectedText = scanned.lines;
+    if (scanned.truncated) { result.aiDirectedTextTruncated = true; }
+    return true;
   }
 
   private async openEvidence(payload: Record<string, unknown>): Promise<void> {

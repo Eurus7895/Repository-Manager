@@ -2798,6 +2798,16 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-explain-example { max-height: 240px; margin: 6px 0 0; padding: 6px 8px; overflow: auto; border-radius: 4px; color: var(--text-strong); background: var(--bg-raised); font-family: var(--vscode-editor-font-family), monospace; font-size: 12px; white-space: pre; }
 .review-finding .review-explain-example code { padding: 0; background: none; font-size: inherit; }
 .review-explain-note { color: var(--text-muted); font-size: 11px; }
+.review-explain-note.review-explain-steered { color: var(--tone-warn); }
+/* Code that speaks to an AI reviewer, in or around a finding's cited lines. */
+.review-ai-text-chip { flex: none; padding: 0 6px; border-radius: 3px; color: var(--tone-warn); background: rgba(229, 165, 71, .14); font-size: 10px; line-height: 16px; white-space: nowrap; }
+.review-ai-text { margin: 6px 0; padding: 6px 10px; border: 1px solid rgba(229, 165, 71, .45); border-radius: 4px; color: var(--text-primary); background: rgba(229, 165, 71, .06); font-size: 12px; }
+.review-ai-text strong { color: var(--tone-warn); }
+.review-ai-text-lines { margin: 4px 0 0; padding-left: 16px; }
+.review-ai-text-lines li { overflow-wrap: anywhere; }
+.review-ai-text-lines span { color: var(--text-secondary); font-family: var(--vscode-editor-font-family), monospace; }
+.review-ai-text-review { margin: 10px 0; }
+.review-ai-text-review .review-ai-text-lines { max-height: 220px; overflow: auto; }
 .review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
 .review-finding.triage-dismiss:not(.open) .review-finding-title { color: var(--text-secondary); font-weight: 400; text-decoration: line-through; text-decoration-color: var(--text-muted); }
 .review-finding.triage-fixed { border-left-color: var(--tone-ok); }
