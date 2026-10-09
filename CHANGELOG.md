@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Reviews, fixes, explanations, summaries and commit messages no longer ask before sending code to Copilot. The new `repositoryManager.copilot.askBeforeSending` setting (also in the ⚙ menu) brings the question back, once per repository or every time. It replaces `repositoryManager.review.confirmBeforeSending`, which still means "every time" while the new setting is not set.
+- **Retry failed** asks Copilot again only for what failed, instead of reviewing each failed component from the start: the second check for findings that got no verdict, findings whose cited lines did not check out, and missing policy results. Findings that passed stay exactly as they were, with their triage. Only a component whose request failed as a whole is reviewed again in full.
 
 ## [2.2.0] - 2026-10-08
 

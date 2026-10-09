@@ -614,9 +614,9 @@
     const failedCount = failedGroups.reduce((sum, group) => sum + group.paths.length, 0);
     const failedSection = failedGroups.length
       ? `<section class="review-failed"><h4>Failed checks <span class="review-count">${failedCount}</span></h4>
-        <p class="review-gaps-note">These parts were not reviewed, or their findings were not checked. They are not a pass. <strong>Retry failed</strong> asks Copilot again for them only; components that passed are reused.</p>
+        <p class="review-gaps-note">These parts were not reviewed, or their findings were not checked. They are not a pass. <strong>Retry failed</strong> asks Copilot again for what failed only: the second check for findings without a verdict, findings whose citations did not check out, missing policy results. Everything that passed is reused as it is.</p>
         <ul class="review-gaps">${failedGroups.map(group => `<li><strong>${escapeHtml(group.reason)}</strong> — ${group.paths.length === 1 ? `<code>${escapeHtml(group.paths[0])}</code>` : `${group.paths.length} entries: ${group.paths.slice(0, 6).map(path => `<code>${escapeHtml(path)}</code>`).join(', ')}${group.paths.length > 6 ? ', …' : ''}`}<br><span class="review-failed-hint">${escapeHtml(failureHint(group.reason))}</span></li>`).join('')}</ul>
-        ${result.partial ? '' : `<button type="button" class="btn" data-action="continueReview" title="Run this review again: components that passed are reused, only the failed ones are asked again">Retry failed</button>`}</section>` : '';
+        ${result.partial ? '' : `<button type="button" class="btn" data-action="continueReview" title="Ask again only for what failed; everything that passed is reused">Retry failed</button>`}</section>` : '';
     const logSection = (result.log || []).length
       ? `<details class="review-log"><summary>Review log <span class="review-count">${result.log.length}</span></summary><ol>${result.log.map(entry =>
         `<li class="${/\bfail|\berror/i.test(entry.message) ? 'review-log-failed' : ''}"><time>${escapeHtml(formatElapsed(entry.at))}</time> ${escapeHtml(entry.message)}</li>`).join('')}</ol></details>` : '';
