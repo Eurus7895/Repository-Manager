@@ -41,8 +41,11 @@ export interface DashboardReviewStatus {
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-/** The review messages a restored tab needs, in order (fix messages are not kept: see detach). */
-const REPLAYED = new Set(['reviewProgress', 'reviewCompleted', 'reviewFailed', 'reviewTriageUpdated']);
+/**
+ * The review messages a restored tab needs, in order: fix messages are not kept (see detach), and of
+ * explanations only the finished ones.
+ */
+const REPLAYED = new Set(['reviewProgress', 'reviewCompleted', 'reviewFailed', 'reviewTriageUpdated', 'reviewExplanation']);
 
 export class ReviewBridge {
   private view?: ReviewView;
@@ -64,11 +67,13 @@ export class ReviewBridge {
   /**
    * The review tab closed. A running review goes on (its result is kept for the next tab); an
    * auto-fix proposal lives only on screen, so it is cancelled rather than left to be applied blind.
+   * An explanation being written stops too; finished ones come back with the review.
    */
   detach(): void {
     this.view = undefined;
     this.ready = false;
     void this.deps.controller.handle({ type: 'cancelReviewFix', payload: {} });
+    void this.deps.controller.handle({ type: 'cancelReviewExplanation', payload: {} });
     if (this.current) {
       void this.deps.controller.handle({ type: 'discardReviewFix', payload: { requestId: this.current.start.requestId } });
     }

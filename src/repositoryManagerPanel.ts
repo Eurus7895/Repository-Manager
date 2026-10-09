@@ -176,6 +176,7 @@ export class RepositoryManagerPanel {
         return { request: (instructions, input, token, onText) =>
           provider.requestJson(instructions, input, modelId, token as vscode.CancellationToken, undefined, onText) };
       },
+      language: () => vscode.env.language,
       isDirtyInEditor: absolutePath => vscode.workspace.textDocuments.some(document =>
         document.isDirty && document.uri.scheme === 'file' && document.uri.fsPath === absolutePath),
       workingTreeChanged: () => { this.refresh(); },

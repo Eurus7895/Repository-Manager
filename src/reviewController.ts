@@ -10,6 +10,7 @@ import { ReviewProgressCallback, ReviewRequest, ReviewResult, ReviewTriage } fro
 import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
+import { ExplainError, ReviewExplainService } from './services/reviewExplainService';
 import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
@@ -39,8 +40,10 @@ export interface ReviewControllerHost {
   saveText(defaultFileName: string, text: string): Promise<boolean>;
   openText(content: string, revision: string, filePath: string, line: number): Promise<void>;
   notify(message: string, isError?: boolean): void;
-  /** The model that proposes auto-fixes (the same Copilot model the dashboard selected). */
+  /** The model for one request about a finished review: auto-fix proposals and explanations (the Copilot model the dashboard selected). */
   createFixModel(modelId?: string): FixModel;
+  /** The VS Code display language (for example `en` or `vi`): explanations are written in it. */
+  language?(): string;
   /** True when an open editor has unsaved changes for this file. */
   isDirtyInEditor(absolutePath: string): boolean;
   /** Files in the working tree changed (an auto-fix was applied); refresh the dashboard. */
@@ -55,9 +58,13 @@ export interface ReviewControllerHost {
 
 const REVIEW_MESSAGES = new Set(['startReview', 'cancelReview', 'exportReviewReport', 'openReviewEvidence', 'setFindingTriage',
   'proposeReviewFix', 'applyReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview',
-  'deleteStoredReview', 'listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill', 'setReviewQuality']);
+  'deleteStoredReview', 'listReviewSkills', 'setReviewSkillEnabled', 'importReviewSkill', 'removeReviewSkill', 'setReviewQuality',
+  'explainReviewFinding', 'cancelReviewExplanation']);
 const START = 'Start review';
+const EXPLAIN = 'Explain';
 const ALWAYS = 'Always allow for this repository';
+/** Progress while an explanation arrives is posted at most this often (ms): each post redraws the tab. */
+const EXPLAIN_PROGRESS_INTERVAL = 250;
 const CATEGORIES: Array<'security' | 'compliance'> = ['security', 'compliance'];
 type ReviewCategory = ReviewRequest['categories'][number];
 const MAX_OPEN_REVIEWS = 10;
@@ -89,6 +96,8 @@ export class ReviewController {
   /** At most one auto-fix: being proposed (`running`) or waiting for Apply/Discard (`proposal`). */
   private fix?: { requestId: number; workspaceRoot: string; findingIds: string[]; running?: { cancel(): void; dispose(): void };
     proposal?: FixProposal; applied?: string[] };
+  /** At most one explanation is being written: the finding it is for, and how to stop it. */
+  private explaining?: { requestId: number; findingId: string; cancellation: { cancel(): void; dispose(): void } };
 
   constructor(private readonly host: ReviewControllerHost) {}
 
@@ -116,6 +125,8 @@ export class ReviewController {
       case 'importReviewSkill': return this.importSkill();
       case 'removeReviewSkill': return this.removeSkill(payload);
       case 'setReviewQuality': return this.host.skills?.setIncludeQuality(payload.enabled === true);
+      case 'explainReviewFinding': return this.explain(payload);
+      case 'cancelReviewExplanation': return this.cancelExplanation();
     }
   }
 
@@ -154,6 +165,7 @@ export class ReviewController {
   /** Stop a running review, e.g. when the panel closes or the workspace folder changes. */
   cancel(): void {
     this.cancelFixQuietly();
+    this.cancelExplanationQuietly();
     this.generation++;
     this.running?.cancel();
     this.running?.dispose();
@@ -530,6 +542,84 @@ export class ReviewController {
     }
   }
 
+  private cancelExplanationQuietly(): void {
+    this.explaining?.cancellation.cancel();
+    this.explaining?.cancellation.dispose();
+    this.explaining = undefined;
+  }
+
+  /** Cancel in the tab: the finding goes back to what it showed before (an earlier explanation, or none). */
+  private async cancelExplanation(): Promise<void> {
+    const job = this.explaining;
+    this.cancelExplanationQuietly();
+    if (job) {
+      await this.host.post({ type: 'reviewExplainFailed', payload: { requestId: job.requestId, findingId: job.findingId,
+        cancelled: true, message: 'Explanation cancelled.' } });
+    }
+  }
+
+  /**
+   * Asks Copilot to explain one finding of an open review: its cause, risk, fix and how to confirm
+   * it. Reads the cited lines at the reviewed commits, so nothing needs to be checked out, and
+   * changes nothing. One explanation at a time: asking for another stops the one being written.
+   */
+  private async explain(payload: Record<string, unknown>): Promise<void> {
+    const requestId = payload.requestId;
+    const findingId = optionalString(payload.findingId);
+    if (typeof requestId !== 'number' || !findingId) { return; }
+    const stored = this.reviews.get(requestId);
+    await this.cancelExplanation();
+    if (!stored) {
+      await this.host.post({ type: 'reviewExplainFailed', payload: { requestId, findingId,
+        message: 'That review is no longer available. Run it again, or open it from Past reviews, to explain its findings.' } });
+      return;
+    }
+    const cancellation = this.host.createCancellation();
+    const job = { requestId, findingId, cancellation };
+    this.explaining = job;
+    const reply = async (type: string, extra: Record<string, unknown>) => {
+      if (this.explaining === job) { await this.host.post({ type, payload: { requestId, findingId, ...extra } }); }
+    };
+    try {
+      const service = new ReviewExplainService(this.git(stored.workspaceRoot));
+      // The finding and its cited lines are read before asking, so a question is never wasted on a refusal.
+      const prepared = await service.prepare({ repositoryPath: stored.result.request.repositoryPath, result: stored.result, findingId });
+      if (this.host.alwaysConfirm() || !this.host.isConsentRemembered(prepared.root)) {
+        await reply('reviewExplainProgress', { message: 'Waiting for confirmation…' });
+        const actions = this.host.alwaysConfirm() ? [EXPLAIN] : [EXPLAIN, ALWAYS];
+        const answer = await this.host.ask(`Ask Copilot to explain this finding in ${path.basename(prepared.root)}?`,
+          'The finding and the lines it cites, with a few lines around them, are sent to the selected Copilot model. ' +
+            'Nothing in the repository is changed, and the finding keeps its status and triage.' +
+            (actions.includes(ALWAYS) ? ' "Always allow" is shared with reviews of this repository.' : ''),
+          actions);
+        if (this.explaining !== job) { return; }
+        if (answer !== EXPLAIN && answer !== ALWAYS) {
+          await reply('reviewExplainFailed', { cancelled: true, message: 'Explanation cancelled.' });
+          return;
+        }
+        if (answer === ALWAYS) { await this.host.rememberConsent(prepared.root); }
+      }
+      await reply('reviewExplainProgress', { message: 'Asking Copilot…' });
+      let lastProgress = 0;
+      const explanation = await service.explain(prepared, { model: this.host.createFixModel(optionalString(payload.modelId)),
+        token: cancellation.token, language: this.host.language?.(),
+        onText: receivedCharacters => {
+          const now = Date.now();
+          if (now - lastProgress < EXPLAIN_PROGRESS_INTERVAL) { return; }
+          lastProgress = now;
+          void reply('reviewExplainProgress', { message: 'Receiving the explanation…', receivedCharacters });
+        } });
+      await reply('reviewExplanation', { explanation });
+    } catch (error) {
+      if (cancellation.token.isCancellationRequested) { return; }
+      await reply('reviewExplainFailed', { message: error instanceof ExplainError
+        ? error.message : `Could not explain the finding: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      if (this.explaining === job) { this.explaining = undefined; }
+      cancellation.dispose();
+    }
+  }
+
   private remember(requestId: number, review: StoredReview): void {
     this.reviews.delete(requestId);
     this.reviews.set(requestId, review);
@@ -556,8 +646,9 @@ export class ReviewController {
         message: 'That saved review no longer exists.' } });
       return;
     }
-    // Like starting a review: the dashboard leaves the previous one, so its auto-fix is dropped.
+    // Like starting a review: the dashboard leaves the previous one, so its auto-fix and explanation are dropped.
     this.cancelFixQuietly();
+    this.cancelExplanationQuietly();
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,

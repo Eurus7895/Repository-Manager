@@ -10,7 +10,7 @@ A VS Code extension for Git workflows across a parent repository and its linked 
 - **Everyday Git:** checkout, fetch, pull, push, open a pull request, rebase, reset or drop commits (with a backup branch), and align linked repositories to their recorded commits.
 - **AI review with Copilot:**
   - **Review changes** (your uncommitted work, before you commit), **Review commit**, **Review branch** (the files changed since the default branch, or every file from its **▾** menu);
-  - findings cite exact lines and can be triaged and fixed with Copilot;
+  - findings cite exact lines and can be triaged; Copilot explains any of them (cause, risk, fix, how to confirm it) and fixes the ones you mark;
   - **Write with Copilot** drafts a commit message that follows the repository's commit convention (or Conventional Commits);
   - results open in their own **Repository Review** tab, and a review keeps running when you close it;
   - stopped reviews continue where they left off, and past reviews are saved;

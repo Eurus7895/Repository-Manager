@@ -133,7 +133,7 @@ function startServer(workspace, otherFolder) {
   // The review runs through the real ReviewController with a scripted runner instead of Copilot.
   // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
   const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set(),
-    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [], messagePrompts: [],
+    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [], messagePrompts: [], explainResponse: null, explainRequests: [],
     messageReply: async () => ({ text: 'feat(app): add the partly file\n\nIt holds the staged line.', model: 'scripted:1' }) };
   // Saved reviews outlive a page (a reopened dashboard), like VS Code's workspace state.
   const historyState = new Map();
@@ -204,6 +204,13 @@ function startServer(workspace, otherFolder) {
       openText: async (content, revision, filePath, line) => { reviewProbe.opened = { revision, filePath, line }; },
       notify: () => {},
       createFixModel: () => ({ request: async (instructions, input, token, onText) => {
+        // Explanations use the same one-request model as fixes.
+        if (/^You explain one finding/.test(instructions)) {
+          reviewProbe.explainRequests.push({ instructions, input });
+          if (onText) onText(1536);
+          if (reviewProbe.explainGate) await reviewProbe.explainGate;
+          return { modelId: 'scripted-explain:1', response: reviewProbe.explainResponse };
+        }
         reviewProbe.fixRequests++;
         // A test can hold the reply half-way, to see the progress while it arrives.
         if (onText) onText(1536);
@@ -829,6 +836,40 @@ async function main() {
     });
     for (const [name, value] of Object.entries(findingContrast)) assert.ok(value >= 4.5, `finding ${name} has contrast ${value}`);
 
+    // Explain with Copilot, in the finding: the cause, the risk, a fix and how to confirm it. It reads
+    // the reviewed commit (here the review's evidence) and changes nothing; model text stays text.
+    reviewProbe.explainResponse = { cause: 'Line 3 passes `input` to `eval` <img src=x onerror="window.__explainInjected = 1">.',
+      risk: 'A crafted request runs code in the extension host.', fix: 'Parse the value instead of evaluating it.',
+      example: 'const value = JSON.parse(input);', verify: 'Check whether `input` can come from a request.' };
+    let releaseExplain;
+    reviewProbe.explainGate = new Promise(resolve => { releaseExplain = resolve; });
+    assert.equal(await rv.textContent(`${finding('high-verified')} [data-action="explainFinding"]`), 'Explain with Copilot');
+    await rv.click(`${finding('high-verified')} [data-action="explainFinding"]`);
+    await rv.waitForFunction(() => /Copilot is explaining… 1\.5 KB received/.test((document.querySelector('.review-explain-progress') || {}).textContent || ''));
+    // One at a time: the other findings wait, and the running one offers Cancel instead.
+    assert.equal(await rv.isDisabled(`${finding('critical-hypothesis')} [data-action="explainFinding"]`), true, 'two explanations ran at once');
+    assert.equal(await rv.locator(`${finding('high-verified')} [data-action="explainFinding"]`).count(), 0);
+    assert.equal(await rv.locator(`${finding('high-verified')} [data-action="cancelExplanation"]`).count(), 1);
+    reviewProbe.explainGate = null;
+    releaseExplain();
+    await rv.locator(`${finding('high-verified')} .review-explain`).waitFor();
+    assert.deepEqual(await rv.locator(`${finding('high-verified')} .review-explain dt`).allTextContents(),
+      ['What the code does', 'Why it matters', 'How to fix it', 'How to confirm it']);
+    assert.equal(await rv.locator('.review-explain img').count(), 0, 'the model\'s text was rendered as HTML');
+    assert.equal(await rv.evaluate(() => window.__explainInjected), undefined);
+    assert.match(await rv.textContent(`${finding('high-verified')} .review-explain dd`), /<img src=x/);
+    assert.equal(await rv.textContent(`${finding('high-verified')} .review-explain-example`), 'const value = JSON.parse(input);');
+    assert.equal(await rv.textContent(`${finding('high-verified')} [data-action="explainFinding"]`), 'Explain again');
+    assert.equal(await rv.isDisabled(`${finding('critical-hypothesis')} [data-action="explainFinding"]`), false);
+    // What was sent: the finding and its cited line with the lines around it, at the reviewed commit.
+    assert.equal(reviewProbe.explainRequests.length, 1);
+    const explainInput = reviewProbe.explainRequests[0].input;
+    assert.deepEqual(explainInput.excerpts.map(item => [item.path, item.citedLines, item.revision]),
+      [['src/app.txt', '3', git(parent, 'rev-parse', 'feature/dashboard').trim()]]);
+    assert.match(explainInput.excerpts[0].code, /^3: line 3 changed$/m);
+    assert.equal(explainInput.language, 'en');
+    await snap(rv, '10d-review-explanation');
+
     // Triage: a finding stays where it was found. Dismissed or fixed, it folds to one line with
     // its state and an Undo, instead of moving to the end of the list.
     assert.match(await rv.textContent('.review-triage-summary'), /0 to fix.*0 dismissed.*2 not triaged/);
@@ -1202,13 +1243,25 @@ async function main() {
     await page.waitForFunction(() => document.getElementById('reviewTabBadge').textContent === '1');
     await page.click('#openReviewTabButton');
     const reopenedTab = await page.reviewTab();
-    await reopenedTab.locator('.review-finding[data-finding-id="background"]').waitFor();
+    const background = '.review-finding[data-finding-id="background"]';
+    await reopenedTab.locator(background).waitFor();
     assert.match(await reopenedTab.textContent('.review-readiness strong'), /^Blocked: 1 blocking item/);
+    // A finished explanation comes back with the review when the tab opens again.
+    await reopenedTab.click(`${background} [data-action="toggleFinding"]`);
+    await reopenedTab.click(`${background} [data-action="explainFinding"]`);
+    await reopenedTab.locator(`${background} .review-explain`).waitFor();
+    await page.closeReviewTab();
+    await page.click('#openReviewTabButton');
+    const explainedTab = await page.reviewTab();
+    await explainedTab.locator(background).waitFor();
+    await explainedTab.click(`${background} [data-action="toggleFinding"]`);
+    assert.match(await explainedTab.textContent(`${background} .review-explain`), /What the code does.*Line 3 passes/s);
+    assert.equal(await explainedTab.textContent(`${background} [data-action="explainFinding"]`), 'Explain again');
     // A saved review opened in the tab comes back as it was when the tab opens again: a diff, with its labels.
-    await reopenedTab.locator('#reviewHistory > summary').click();
-    await reopenedTab.locator('.review-history-item', { hasText: '1.0.0 → feature/dashboard' }).last().locator('[data-action="openStoredReview"]').click();
-    await reopenedTab.waitForFunction(() => /^Diff: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
-    const savedMeta = await reopenedTab.textContent('#reviewMeta');
+    await explainedTab.locator('#reviewHistory > summary').click();
+    await explainedTab.locator('.review-history-item', { hasText: '1.0.0 → feature/dashboard' }).last().locator('[data-action="openStoredReview"]').click();
+    await explainedTab.waitForFunction(() => /^Diff: 1\.0\.0 → feature\/dashboard/.test(document.getElementById('reviewMeta').textContent) && document.querySelector('.review-readiness'));
+    const savedMeta = await explainedTab.textContent('#reviewMeta');
     await page.closeReviewTab();
     await page.click('#openReviewTabButton');
     const savedTab = await page.reviewTab();

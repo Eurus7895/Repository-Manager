@@ -333,6 +333,44 @@
 
   const TRIAGE_LABELS = { fix: 'Needs fix', dismiss: 'Dismissed', fixed: 'Fixed' };
 
+  // The finding Copilot is explaining now, if any: one at a time.
+  function explainingFindingId() {
+    const explanations = (reviewState && reviewState.explanations) || {};
+    return Object.keys(explanations).find(id => explanations[id].status === 'running') || null;
+  }
+
+  function explainProgressText(entry) {
+    return entry.receivedCharacters ? `Copilot is explaining… ${formatSize(entry.receivedCharacters)} received` : entry.progress || 'Asking Copilot…';
+  }
+
+  const EXPLANATION_SECTIONS = [['cause', 'What the code does'], ['risk', 'Why it matters'], ['fix', 'How to fix it'], ['verify', 'How to confirm it']];
+
+  // Copilot's explanation of one finding, asked for on demand: the cause, the risk, a fix and how to
+  // confirm it. It is shown in the finding and comes back with the tab, but is not saved with the review.
+  function renderExplanation(finding) {
+    const entry = (reviewState.explanations || {})[finding.id] || {};
+    const id = escapeHtml(finding.id);
+    const running = entry.status === 'running';
+    const busy = explainingFindingId();
+    const explanation = entry.explanation;
+    const label = explanation ? 'Explain again' : entry.status === 'failed' ? 'Try again' : 'Explain with Copilot';
+    const button = running ? '' : `<button type="button" class="review-explain-action" data-action="explainFinding" data-finding-id="${id}"${busy
+      ? ' disabled title="Copilot is explaining another finding"'
+      : ' title="Copilot explains this finding for this code: the cause, the risk, a fix and how to confirm it. Nothing is changed."'}>${label}</button>`;
+    const status = running
+      ? `<p class="review-explain-status" aria-live="polite"><span class="review-explain-progress" data-finding-id="${id}">${escapeHtml(explainProgressText(entry))}</span><button type="button" class="review-explain-action" data-action="cancelExplanation">Cancel</button></p>`
+      : entry.status === 'failed' ? `<div class="dashboard-error" role="alert">${escapeHtml(entry.message || 'Could not explain this finding.')}</div>` : '';
+    const sections = explanation ? EXPLANATION_SECTIONS.filter(([key]) => explanation[key]).map(([key, title]) =>
+      `<dt>${title}</dt><dd>${richText(explanation[key])}${key === 'fix' && explanation.example
+        ? `<pre class="review-explain-example"><code>${escapeHtml(explanation.example)}</code></pre>` : ''}</dd>`).join('') : '';
+    const unread = explanation && (explanation.unread || []).length
+      ? `<p class="review-explain-note">Copilot did not see all of the cited code: ${explanation.unread.map(item => escapeHtml(item)).join('; ')}.</p>` : '';
+    const body = explanation
+      ? `<section class="review-explain${running ? ' review-explain-stale' : ''}" aria-label="Explanation by Copilot"><h5${explanation.modelId ? ` title="${escapeHtml(explanation.modelId)}"` : ''}>Explained by Copilot</h5>
+        <dl>${sections}</dl>${unread}<p class="review-explain-note">An AI explanation: check it against the code before you act on it.</p></section>` : '';
+    return `<div class="review-explain-block">${button}${status}${body}</div>`;
+  }
+
   // What to do about a failed check, from its reason (see SecurityReviewService).
   function failureHint(reason) {
     if (/cannot fit|context/i.test(reason)) return 'The files did not fit in the model\'s context. Choose a model with a larger context in Model, or review fewer files with Review commit.';
@@ -380,6 +418,7 @@
         <p class="review-finding-explanation">${richText(finding.explanation)}</p>
         <dl><dt>Impact</dt><dd>${richText(finding.impact)}</dd><dt>Suggested action</dt><dd>${richText(finding.suggestedAction)}</dd></dl>
         <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>
+        ${renderExplanation(finding)}
         ${renderTriageControls(finding)}
       </div>
     </li>`;
@@ -717,6 +756,16 @@
       renderReviewPanel();
     },
     cancelReviewFix: () => postMessage('cancelReviewFix', {}),
+    // Explain one finding; an earlier explanation stays on screen until the new one arrives.
+    explainFinding: (el) => {
+      const id = el.dataset.findingId;
+      if (!id || !reviewState || reviewState.status !== 'completed' || explainingFindingId()) return;
+      const explanations = reviewState.explanations || (reviewState.explanations = {});
+      explanations[id] = { status: 'running', explanation: (explanations[id] || {}).explanation };
+      renderReviewPanel();
+      postMessage('explainReviewFinding', { requestId: reviewState.requestId, findingId: id, modelId: context.modelId || undefined });
+    },
+    cancelExplanation: () => postMessage('cancelReviewExplanation', {}),
     triageFinding: (el) => {
       if (!reviewState || reviewState.status !== 'completed') return;
       const current = (reviewState.triage || {})[el.dataset.findingId];
@@ -772,7 +821,7 @@
       if (payload.targetLabel) Object.assign(reviewState, { baseLabel: payload.baseLabel || '', targetLabel: payload.targetLabel });
     } else if (type === 'reviewCompleted') {
       Object.assign(reviewState, { status: 'completed', result: payload.result, readiness: payload.readiness, context: payload.context,
-        layout: payload.layout || null, triage: payload.triage || {}, historyId: payload.historyId || null });
+        layout: payload.layout || null, triage: payload.triage || {}, historyId: payload.historyId || null, explanations: {} });
       if (payload.context) Object.assign(reviewState, { baseLabel: payload.context.baseLabel || '', targetLabel: payload.context.targetLabel });
     } else if (type === 'reviewFailed') {
       Object.assign(reviewState, { status: payload.cancelled ? 'cancelled' : 'failed', cancelled: Boolean(payload.cancelled), message: payload.message });
@@ -783,6 +832,21 @@
         if (['dismiss', 'fixed'].includes(item.decision) && (!before[id] || before[id].decision !== item.decision)) openFindings.delete(id);
       });
       Object.assign(reviewState, { triage: payload.triage || {}, readiness: payload.readiness, layout: payload.layout || reviewState.layout });
+    } else if (['reviewExplainProgress', 'reviewExplanation', 'reviewExplainFailed'].includes(type) && payload.findingId) {
+      const explanations = reviewState.explanations || (reviewState.explanations = {});
+      const entry = explanations[payload.findingId] || {};
+      if (type === 'reviewExplainProgress') {
+        explanations[payload.findingId] = Object.assign({}, entry, { status: 'running', progress: payload.message,
+          receivedCharacters: payload.receivedCharacters || entry.receivedCharacters });
+      } else if (type === 'reviewExplanation') {
+        explanations[payload.findingId] = { status: 'done', explanation: payload.explanation };
+      } else if (payload.cancelled) {
+        // Cancelled: back to the earlier explanation, or to none.
+        if (entry.explanation) explanations[payload.findingId] = { status: 'done', explanation: entry.explanation };
+        else delete explanations[payload.findingId];
+      } else {
+        explanations[payload.findingId] = { status: 'failed', message: payload.message, explanation: entry.explanation };
+      }
     }
   }
 
@@ -837,6 +901,19 @@
         if (message.type === 'reviewCompleted' || (message.type === 'reviewTriageUpdated' && reviewState.historyId)) requestReviewHistory();
         renderReviewPanel();
         break;
+      case 'reviewExplainProgress':
+      case 'reviewExplanation':
+      case 'reviewExplainFailed': {
+        if (!reviewState || payload.requestId !== reviewState.requestId || reviewState.status !== 'completed') break;
+        const wasRunning = ((reviewState.explanations || {})[payload.findingId] || {}).status === 'running';
+        applyReviewMessage(message.type, payload);
+        // Progress while the reply arrives updates its own line, rather than redrawing every finding.
+        const line = message.type === 'reviewExplainProgress' && wasRunning
+          ? [...document.querySelectorAll('.review-explain-progress')].find(item => item.dataset.findingId === payload.findingId) : null;
+        if (line) line.textContent = explainProgressText(reviewState.explanations[payload.findingId]);
+        else renderReviewPanel();
+        break;
+      }
       case 'reviewFixProgress':
       case 'reviewFixProposed':
       case 'reviewFixFailed':

@@ -45,7 +45,12 @@ async function main() {
   bridge.detach();
   assert.ok(handled.some(message => message.type === 'cancelReviewFix'), 'an auto-fix outlived its tab');
   assert.ok(handled.some(message => message.type === 'discardReviewFix' && message.payload.requestId === 7));
+  assert.ok(handled.some(message => message.type === 'cancelReviewExplanation'), 'an explanation being written outlived its tab');
   await bridge.toReview({ type: 'reviewCompleted', payload: { requestId: 7, readiness: { blocking: [{}, {}], attention: [] }, result: {} } });
+  // A finished explanation comes back with the review; its progress and failures do not.
+  await bridge.toReview({ type: 'reviewExplainProgress', payload: { requestId: 7, findingId: 'f1', message: 'Asking Copilot…' } });
+  await bridge.toReview({ type: 'reviewExplanation', payload: { requestId: 7, findingId: 'f1', explanation: { cause: 'Why' } } });
+  await bridge.toReview({ type: 'reviewExplainFailed', payload: { requestId: 7, findingId: 'f2', message: 'rate limited' } });
   assert.deepEqual(status(), { state: 'completed', blocking: 2, repositoryPath: '.' }, 'the button did not show the finished review');
   // A message for another request (superseded) is neither replayed nor counted.
   await bridge.toReview({ type: 'reviewCompleted', payload: { requestId: 3, readiness: { blocking: [] } } });
@@ -57,7 +62,8 @@ async function main() {
   await bridge.fromReview({ type: 'reviewReady' });
   const restore = second.posted.find(message => message.type === 'reviewRestore');
   assert.equal(restore.payload.start.requestId, 7);
-  assert.deepEqual(restore.payload.messages.map(message => message.type), ['reviewProgress', 'reviewCompleted']);
+  assert.deepEqual(restore.payload.messages.map(message => message.type), ['reviewProgress', 'reviewCompleted', 'reviewExplanation']);
+  assert.equal(status().blocking, 2, 'an explanation changed the button\'s count');
   // Triage changes keep the count current.
   await bridge.toReview({ type: 'reviewTriageUpdated', payload: { requestId: 7, readiness: { blocking: [{}] } } });
   assert.equal(status().blocking, 1);

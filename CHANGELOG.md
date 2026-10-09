@@ -5,6 +5,12 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - Unreleased
+
+### Added
+
+- **Explain with Copilot** on each finding in the Repository Review tab: Copilot explains it for your code, in the language VS Code is set to, under **What the code does**, **Why it matters**, **How to fix it** (with a code sketch) and **How to confirm it**, so you can decide whether it needs a fix or is a false positive. Only the finding and the lines it cites, with a few lines around them, are sent, after the same consent as a review; nothing is changed, and it works for any open review without checking anything out. Explanations come back when the tab is reopened, but are not saved with the review.
+
 ## [2.2.0] - 2026-10-08
 
 ### Changed
