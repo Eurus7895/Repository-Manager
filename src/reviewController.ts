@@ -680,13 +680,21 @@ export class ReviewController {
 
   /**
    * Marks findings whose cited code speaks to an AI, and lists every such line the reviewed diff
-   * adds (once: a result that has the list keeps it). Best effort: Git errors leave it unchecked.
+   * adds (once: a result that has the list keeps it). Marking findings is best effort; a diff that
+   * cannot be checked is recorded (`aiDirectedTextError`), so the review does not read as clean.
    */
   private async checkAiDirectedText(git: GitCommandService, root: string, result: ReviewResult): Promise<void> {
     await markAiDirectedText(git, root, result.findings).catch(() => undefined);
     if (result.aiDirectedText) { return; }
-    const scanned = await scanReviewedChanges(git, root, result.request).catch(() => undefined);
-    if (!scanned) { return; }
+    let scanned: Awaited<ReturnType<typeof scanReviewedChanges>>;
+    try {
+      scanned = await scanReviewedChanges(git, root, result.request);
+    } catch (error) {
+      // Not checked is not clean: the review shows it as a gap, and opening it again checks again.
+      result.aiDirectedTextError = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+      return;
+    }
+    delete result.aiDirectedTextError;
     result.aiDirectedText = scanned.lines;
     if (scanned.truncated) { result.aiDirectedTextTruncated = true; }
   }

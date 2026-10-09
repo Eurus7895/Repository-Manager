@@ -195,6 +195,10 @@ export function assessReadiness(result: ReviewResult, triage: ReviewTriage = {})
   }
   // Text written for an AI reviewer can keep it from reporting a problem: no result is clean with it.
   const aiText = result.aiDirectedText || [];
+  if (result.aiDirectedTextError) {
+    gaps.push({ kind: 'coverage', title: 'Text addressed to an AI was not checked',
+      detail: `The check of the reviewed changes could not run (${result.aiDirectedTextError}), so text that may have kept Copilot from reporting a problem was not looked for. Open this review again from Past reviews to check.` });
+  }
   if (aiText.length) {
     gaps.push({ kind: 'coverage', title: `The reviewed code speaks to an AI (${aiText.length}${result.aiDirectedTextTruncated ? '+' : ''} line${aiText.length === 1 && !result.aiDirectedTextTruncated ? '' : 's'})`,
       detail: 'Text like this can keep Copilot from reporting a problem, so what this review did not find counts for less. Read the lines and check that code by hand.' });
