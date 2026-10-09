@@ -128,7 +128,7 @@ export class GitCommandService {
    * as it has enough matches instead of reading a whole history.
    */
   scanGitRecords(args: string[], cwd: string, separator: string, onRecord: (record: string) => boolean, timeoutMs = 30000,
-    signal?: AbortSignal): Promise<void> {
+    signal?: AbortSignal, maxRecordChars = 0): Promise<void> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(new SupersededError()); return; }
       const child = spawn('git', args, { cwd, windowsHide: true });
@@ -149,10 +149,19 @@ export class GitCommandService {
       const handle = (record: string): boolean => {
         try { return onRecord(record); } catch (error) { child.kill(); finish(error instanceof Error ? error : new Error(String(error))); return true; }
       };
+      // With maxRecordChars, a record longer than that (a minified file's only line) is handed over
+      // cut to that length, and the rest of it is skipped instead of held in memory.
+      let skipping = false;
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
         if (done) { return; }
         pending += chunk;
+        if (skipping) {
+          const end = pending.indexOf(separator);
+          if (end < 0) { pending = ''; return; }
+          pending = pending.slice(end + separator.length);
+          skipping = false;
+        }
         let index = pending.indexOf(separator);
         while (index >= 0) {
           const record = pending.slice(0, index);
@@ -160,11 +169,16 @@ export class GitCommandService {
           if (handle(record)) { child.kill(); finish(); return; }
           index = pending.indexOf(separator);
         }
+        if (maxRecordChars > 0 && pending.length > maxRecordChars) {
+          if (handle(pending.slice(0, maxRecordChars))) { child.kill(); finish(); return; }
+          pending = '';
+          skipping = true;
+        }
       });
       child.stderr.on('data', data => { stderr += data.toString(); });
       child.on('error', error => finish(error));
       child.on('close', code => {
-        if (!done && code === 0 && pending.trim()) { handle(pending); }
+        if (!done && code === 0 && !skipping && pending.trim()) { handle(pending); }
         finish(code === 0 ? undefined : new Error(stderr.trim() || `Git command failed with code ${code}`));
       });
     });

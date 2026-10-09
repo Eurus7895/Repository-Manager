@@ -78,39 +78,52 @@ function safeRelativePath(filePath: string): boolean {
 
 /**
  * Marks the findings whose cited lines, or the lines around them, speak to an AI reviewer
- * (`aiDirectedText`). Reads each cited file once, at the revision the finding cites. Best effort:
- * a file that cannot be read (a pruned snapshot) is skipped, and a finding already marked keeps it.
+ * (`aiDirectedText`), and returns how many marks it added or changed. Reads each cited file once,
+ * at the revision the finding cites. Best effort: a file that cannot be read (a pruned snapshot) is
+ * skipped, and a finding already marked keeps it.
  */
-export async function markAiDirectedText(git: GitCommandService, root: string, findings: ReviewFinding[]): Promise<void> {
-  const files = new Map<string, Promise<string[] | undefined>>();
-  const read = (revision: string, filePath: string) => {
-    const key = `${revision}:${filePath}`;
-    if (!files.has(key)) {
-      files.set(key, git.execGitRaw(['show', key], root, 10000)
-        .then(content => content.replace(/\r?\n$/, '').split(/\r?\n/), () => undefined));
-    }
-    return files.get(key)!;
-  };
+export async function markAiDirectedText(git: GitCommandService, root: string, findings: ReviewFinding[]): Promise<number> {
+  // Grouped by file, so each file is read once and let go before the next one: a review's findings
+  // can cite many large files.
+  const byFile = new Map<string, Array<{ finding: ReviewFinding; evidence: ReviewFinding['evidence'][number] }>>();
   for (const finding of findings) {
-    const found: AiDirectedText[] = [];
     for (const evidence of finding.evidence) {
       if (!FULL_SHA.test(evidence.revision) || !safeRelativePath(evidence.path)) { continue; }
-      const lines = await read(evidence.revision, evidence.path);
-      if (!lines) { continue; }
+      const key = `${evidence.revision}:${evidence.path}`;
+      byFile.set(key, [...(byFile.get(key) || []), { finding, evidence }]);
+    }
+  }
+  const found = new Map<ReviewFinding, AiDirectedText[]>();
+  for (const [key, cited] of byFile) {
+    const lines = await git.execGitRaw(['show', key], root, 10000)
+      .then(content => content.replace(/\r?\n$/, '').split(/\r?\n/), () => undefined);
+    if (!lines) { continue; }
+    for (const { finding, evidence } of cited) {
+      const list = found.get(finding) || [];
       const start = Math.max(1, evidence.startLine - AI_TEXT_CONTEXT_LINES);
       const end = Math.min(lines.length, evidence.endLine + AI_TEXT_CONTEXT_LINES);
       const window = [];
       for (let line = start; line <= end; line++) { window.push({ line, text: lines[line - 1] }); }
-      for (const item of findAiDirectedText(evidence.path, window, MAX_AI_TEXT_PER_FINDING - found.length)) {
-        if (!found.some(other => other.path === item.path && other.line === item.line)) { found.push(item); }
+      for (const item of findAiDirectedText(evidence.path, window, MAX_AI_TEXT_PER_FINDING - list.length)) {
+        if (!list.some(other => other.path === item.path && other.line === item.line)) { list.push(item); }
       }
+      found.set(finding, list);
     }
-    if (found.length) { finding.aiDirectedText = found; }
   }
+  let marked = 0;
+  for (const [finding, list] of found) {
+    if (list.length && JSON.stringify(list) !== JSON.stringify(finding.aiDirectedText)) {
+      finding.aiDirectedText = list;
+      marked++;
+    }
+  }
+  return marked;
 }
 
 /** Lines kept for a whole review; past this the review says there are more. */
 export const MAX_AI_TEXT_PER_REVIEW = 50;
+/** Of a longer line (generated or minified code) only this much is read and checked. */
+export const MAX_SCANNED_LINE_CHARS = 200000;
 const EMPTY_TREE: Record<string, string> = {
   sha1: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
   sha256: '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321'
@@ -119,10 +132,11 @@ const EMPTY_TREE: Record<string, string> = {
 /**
  * Every line the reviewed diff adds that speaks to an AI: base → target for a review of changes,
  * every line of every text file at the target for a review of all files. Streams `git diff`, so a
- * large review is never held in memory, and stops at `limit` (`truncated`: there were more).
+ * large review is never held in memory (of a very long line, the first MAX_SCANNED_LINE_CHARS),
+ * and stops at `limit` (`truncated`: there were more). Throws when stopped by `isCancelled`.
  */
 export async function scanReviewedChanges(git: GitCommandService, root: string, request: ReviewRequest,
-  limit = MAX_AI_TEXT_PER_REVIEW): Promise<{ lines: AiDirectedText[]; truncated: boolean }> {
+  limit = MAX_AI_TEXT_PER_REVIEW, isCancelled: () => boolean = () => false): Promise<{ lines: AiDirectedText[]; truncated: boolean }> {
   const format = await git.execGit(['rev-parse', '--show-object-format'], root, 5000).catch(() => 'sha1');
   const base = request.scope === 'changes' && request.baseSha ? request.baseSha : EMPTY_TREE[format] || EMPTY_TREE.sha1;
   if (!FULL_SHA.test(request.targetSha) || !FULL_SHA.test(base)) { return { lines: [], truncated: false }; }
@@ -131,10 +145,12 @@ export async function scanReviewedChanges(git: GitCommandService, root: string, 
   let file = '';
   let inHunk = false;
   let line = 0;
+  let stopped = false;
   // Fixed prefixes and no colour, renames, external tools or text conversion, whatever the user's
   // Git config says: the output is parsed.
   await git.scanGitRecords(['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-ext-diff', '--no-textconv',
     '--no-renames', '--src-prefix=a/', '--dst-prefix=b/', base, request.targetSha], root, '\n', record => {
+    if (isCancelled()) { stopped = true; return true; }
     if (record.startsWith('diff --git ')) { inHunk = false; file = ''; return false; }
     if (!inHunk) {
       if (record.startsWith('+++ ')) {
@@ -155,6 +171,7 @@ export async function scanReviewedChanges(git: GitCommandService, root: string, 
     }
     line++;
     return false;
-  }, 60000);
+  }, 60000, undefined, MAX_SCANNED_LINE_CHARS);
+  if (stopped) { throw new Error('Stopped before the check finished'); }
   return { lines, truncated };
 }
