@@ -138,6 +138,16 @@ export class ReviewHistoryStore {
     await this.write(entries);
   }
 
+  /** Replaces a saved review's result (e.g. checks added to it later); its triage is kept. */
+  async setResult(id: string, result: ReviewResult): Promise<void> {
+    const entries = this.all();
+    const entry = entries.find(item => item.id === id);
+    if (!entry) { return; }
+    entry.result = compactResult(result);
+    entry.triage = normalizeTriage(entry.result, entry.triage);
+    await this.write(entries);
+  }
+
   async remove(id: string): Promise<boolean> {
     const entries = this.all();
     const next = entries.filter(entry => entry.id !== id);

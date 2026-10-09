@@ -74,14 +74,17 @@ async function main() {
           // Re-cited where the code is, unless the script keeps them wrong.
           answer.findings = packet.earlierFindings.map(item => ({ ...item, evidence: cite(file, script.reciteLine || 1) }));
         } else if (kind === 'rules') {
-          answer.findings = [finding(file, 1, 'Policy: command from input', { category: 'compliance', ruleId: 'TEAM-EXEC' })];
+          answer.findings = [finding(file, 1, script.rewordRules ? 'Policy, again: command built from input' : 'Policy: command from input',
+            { category: 'compliance', ruleId: 'TEAM-EXEC' })];
           answer.policyResults = [{ ruleId: 'TEAM-EXEC', status: 'violation', reason: 'exec of argv', evidence: cite(file, 1) }];
         } else {
           answer.findings = [finding(file, 1, 'Command injection')];
           // Line 9 does not exist: the citation does not check out.
           if ((script.badCitation || []).includes(component)) answer.findings.push(finding(file, 9, 'Second injection'));
-          if (packet.rules.length && !script.noPolicyResult) {
+          if (packet.rules.length && (!script.noPolicyResult || script.keepComplianceFinding)) {
             answer.findings.push(finding(file, 1, 'Policy: command from input', { category: 'compliance', ruleId: 'TEAM-EXEC' }));
+          }
+          if (packet.rules.length && !script.noPolicyResult) {
             answer.policyResults = [{ ruleId: 'TEAM-EXEC', status: 'violation', reason: 'exec of argv', evidence: cite(file, 1) }];
           }
         }
@@ -156,6 +159,21 @@ async function main() {
     // The violation stands: its compliance finding passed the second check.
     assert.equal(answered.policyResults.find(item => item.ruleId === 'TEAM-EXEC').status, 'violation');
     assert.ok(answered.findings.some(item => item.category === 'compliance' && item.status === 'verified'));
+
+    // 3b. The rule's finding came in the first answer, only its result was missing: asking again for
+    //     the rule does not add the model's new wording of the same finding as a second one.
+    model = makeModel('3b');
+    script = { noPolicyResult: true, keepComplianceFinding: true };
+    const findingOnly = await review();
+    assert.deepEqual(failures(findingOnly), ['gamma: No policy result for TEAM-EXEC']);
+    const compliance = result => result.findings.filter(item => item.category === 'compliance');
+    assert.equal(compliance(findingOnly).length, 1);
+    script = { rewordRules: true };
+    const ruleAnswered = await review();
+    assert.deepEqual(kinds(), ['rules:gamma'], 'the finding that passed was checked again');
+    assert.deepEqual(compliance(ruleAnswered).map(item => item.id), compliance(findingOnly).map(item => item.id), 'a second finding for one violation');
+    assert.equal(ruleAnswered.policyResults.find(item => item.ruleId === 'TEAM-EXEC').status, 'violation');
+    assert.deepEqual(failures(ruleAnswered), []);
 
     // 4. The second check failed as a whole: one failed check (not two), and Retry runs only it.
     model = makeModel('4');

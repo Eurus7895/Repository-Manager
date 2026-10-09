@@ -293,8 +293,11 @@ export class SecurityReviewService {
       const rulesPlan: ReviewPlan = { ...plan, request: { ...plan.request, categories: ['compliance'] } };
       try {
         const raw = await this.provider.analyze(rulesPlan, rulesUnit, model, token, report, [], { rulesOnly: true });
+        // A rule that already has a compliance finding keeps it: the model's new wording of the same
+        // violation would be a second finding, untriaged, for one issue.
+        const covered = new Set(unitState.candidates.filter(candidate => candidate.category === 'compliance').map(candidate => candidate.ruleId));
         const compliance = raw.findings.filter(item => Boolean(item) && typeof item === 'object' &&
-          (item as Record<string, unknown>).category === 'compliance').slice(0, 20);
+          (item as Record<string, unknown>).category === 'compliance' && !covered.has(String((item as Record<string, unknown>).ruleId))).slice(0, 20);
         await this.collect(compliance, raw.policyResults.slice(0, 200), rulesUnit.rules.map(rule => rule.id),
           rulesPlan, rulesUnit, applied, unitState, failed);
       } catch (error) {
