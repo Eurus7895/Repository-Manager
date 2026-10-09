@@ -24,6 +24,7 @@ import { RepositoryManagerLauncher } from './repositoryManagerLauncher';
 import { CommitMessageController } from './commitMessageController';
 import { LiveChanges } from './liveChanges';
 import { ignoredPaths } from './services/ignoredPaths';
+import { ASK_BEFORE_SENDING, ASK_BEFORE_SENDING_KEY, AskBeforeSending, askBeforeSending, askBeforeSendingTarget, consentHooks } from './copilotSettings';
 
 /** Read-only documents for opening review evidence at the reviewed revision. */
 const REVIEW_EVIDENCE_SCHEME = 'repository-manager-review';
@@ -39,6 +40,8 @@ const READ_ONLY_MESSAGES = new Set([
   'proposeReviewFix', 'discardReviewFix', 'cancelReviewFix', 'listReviewHistory', 'openStoredReview', 'deleteStoredReview',
   // Writing a commit message reads the working tree's diff; nothing is committed.
   'generateCommitMessage', 'cancelCommitMessage',
+  // The Copilot settings menu: VS Code settings only, no Git.
+  'getCopilotSettings', 'setCopilotSettings', 'openExtensionSettings',
   // The Side Bar's copy of the repository list; no Git.
   'sidebarSnapshot'
 ]);
@@ -60,6 +63,8 @@ export class RepositoryManagerPanel {
   private readonly _reviewBridge: ReviewBridge;
   private _reviewPanel?: vscode.WebviewPanel;
   private readonly _skills: ReviewSkillStore;
+  /** "Always allow for this repository", when the setting asks once per repository. */
+  private readonly _consent: ReviewConsentStore;
   private readonly _evidenceDocuments = new Map<string, string>();
   private _summaryToken?: vscode.CancellationTokenSource;
   private _summaryRequest = 0;
@@ -120,6 +125,9 @@ export class RepositoryManagerPanel {
     this._prManager = new PRManager(workspaceRoot);
 
     const consent = new ReviewConsentStore(workspaceState);
+    this._consent = consent;
+    // Whether to ask before code goes to Copilot (repositoryManager.copilot.askBeforeSending): by default never.
+    const consentFor = consentHooks(() => this._askBeforeSending(), root => consent.has(root));
     // Finished components of earlier reviews: a stopped review continues instead of starting over.
     const unitCache = new ReviewUnitCache(workspaceState);
     const skills = new ReviewSkillStore(path.join(extensionUri.fsPath, 'resources', 'review-skills'), RepositoryManagerPanel.globalState);
@@ -135,8 +143,8 @@ export class RepositoryManagerPanel {
       workspaceRoot: () => this._workspaceRoot,
       post: message => Promise.resolve(this._panel.webview.postMessage(message)),
       ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
-      alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
-      isConsentRemembered: root => consent.has(root),
+      alwaysConfirm: consentFor.alwaysConfirm,
+      isConsentRemembered: consentFor.isConsentRemembered,
       rememberConsent: root => consent.allow(root),
       complete: (prompt, modelId, token) => this._summaryProvider.complete(prompt, modelId, token as vscode.CancellationToken),
       createCancellation: () => new vscode.CancellationTokenSource()
@@ -145,8 +153,8 @@ export class RepositoryManagerPanel {
       workspaceRoot: () => this._workspaceRoot,
       post: message => this._reviewBridge.toReview(message),
       ask: (message, detail, actions) => Promise.resolve(vscode.window.showInformationMessage(message, { modal: true, detail }, ...actions)),
-      alwaysConfirm: () => vscode.workspace.getConfiguration('repositoryManager').get<boolean>('review.confirmBeforeSending', false),
-      isConsentRemembered: root => consent.has(root),
+      alwaysConfirm: consentFor.alwaysConfirm,
+      isConsentRemembered: consentFor.isConsentRemembered,
       rememberConsent: root => consent.allow(root),
       createRunner: root => new SecurityReviewService(new GitCommandService(root), undefined, unitCache, () => skills.snapshot()) as unknown as ReviewRunner,
       createCancellation: () => new vscode.CancellationTokenSource(),
@@ -231,6 +239,9 @@ export class RepositoryManagerPanel {
     watchFiles();
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('repositoryManager.liveChanges')) { watchFiles(); }
+      // The settings menu shows the choice made anywhere, also in the Settings editor.
+      if (event.affectsConfiguration(`repositoryManager.${ASK_BEFORE_SENDING_KEY}`) ||
+          event.affectsConfiguration('repositoryManager.review.confirmBeforeSending')) { void this._postCopilotSettings(); }
     }, null, this._disposables);
     this._disposables.push({ dispose: () => { this._fileWatcher?.dispose(); this._liveChanges.dispose(); } });
     vscode.workspace.onDidChangeConfiguration(event => {
@@ -435,6 +446,24 @@ export class RepositoryManagerPanel {
         await this._commitMessages.handle(message);
         return;
       }
+      if (message.type === 'getCopilotSettings') {
+        await this._postCopilotSettings();
+        return;
+      }
+      if (message.type === 'setCopilotSettings') {
+        const value = (message.payload as { askBeforeSending?: unknown } | undefined)?.askBeforeSending;
+        if (ASK_BEFORE_SENDING.includes(value as AskBeforeSending)) {
+          const config = vscode.workspace.getConfiguration('repositoryManager');
+          await config.update(ASK_BEFORE_SENDING_KEY, value, askBeforeSendingTarget(config) === 'workspace'
+            ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+        }
+        await this._postCopilotSettings();
+        return;
+      }
+      if (message.type === 'openExtensionSettings') {
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:repository-manager.repository-manager');
+        return;
+      }
       if (message.type === 'sidebarSnapshot') {
         const html = (message.payload as { html?: unknown } | undefined)?.html;
         if (typeof html === 'string') { RepositoryManagerLauncher.current?.update(html); }
@@ -572,6 +601,14 @@ export class RepositoryManagerPanel {
     this._summaryToken = undefined;
   }
 
+  private _askBeforeSending(): AskBeforeSending {
+    return askBeforeSending(vscode.workspace.getConfiguration('repositoryManager'));
+  }
+
+  private async _postCopilotSettings(): Promise<void> {
+    await this._panel.webview.postMessage({ type: 'copilotSettingsLoaded', payload: { askBeforeSending: this._askBeforeSending() } });
+  }
+
   private async _summarizeChanges(payload: unknown): Promise<void> {
     if (!payload || typeof payload !== 'object') {
       return;
@@ -614,16 +651,23 @@ export class RepositoryManagerPanel {
       if (generation !== this._summaryRequest || controller.token.isCancellationRequested) {
         return;
       }
-      const decision = await vscode.window.showInformationMessage(
-        `Summarize ${context.coverage.totalFiles} changed files with Copilot?`,
-        { modal: true, detail: `${context.repositoryPath}\n${range.label || `${context.baseSha} → ${context.targetSha}`}\n` +
-          `${context.patches.length} patches (up to ${Math.round(MAX_PATCH_BYTES / 1000)} KB total) may be sent across multiple model requests. ` +
-          `${context.coverage.omitted.length} items have no patch. Review changed files in the dashboard first.` },
-        'Summarize'
-      );
-      if (decision !== 'Summarize' || generation !== this._summaryRequest || controller.token.isCancellationRequested) {
-        await send('changeSummaryError', { message: 'Summary cancelled.' });
-        return;
+      // Asked only when the setting says so, like reviews: by default the summary starts at once.
+      const ask = this._askBeforeSending();
+      const repositoryRoot = git.resolveRepositoryPath(repositoryPath);
+      if (ask === 'always' || (ask === 'oncePerRepository' && !this._consent.has(repositoryRoot))) {
+        const always = 'Always allow for this repository';
+        const decision = await vscode.window.showInformationMessage(
+          `Summarize ${context.coverage.totalFiles} changed files with Copilot?`,
+          { modal: true, detail: `${context.repositoryPath}\n${range.label || `${context.baseSha} → ${context.targetSha}`}\n` +
+            `${context.patches.length} patches (up to ${Math.round(MAX_PATCH_BYTES / 1000)} KB total) may be sent across multiple model requests. ` +
+            `${context.coverage.omitted.length} items have no patch. Review changed files in the dashboard first.` },
+          ...(ask === 'always' ? ['Summarize'] : ['Summarize', always])
+        );
+        if ((decision !== 'Summarize' && decision !== always) || generation !== this._summaryRequest || controller.token.isCancellationRequested) {
+          await send('changeSummaryError', { message: 'Summary cancelled.' });
+          return;
+        }
+        if (decision === always) { await this._consent.allow(repositoryRoot); }
       }
       await send('changeSummaryProgress', { status: 'Summarizing…' });
       const result = await this._summaryProvider.summarize(context, controller.token, status => {

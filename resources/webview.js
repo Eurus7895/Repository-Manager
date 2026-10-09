@@ -108,6 +108,38 @@
     menu.querySelector('button').focus();
   }
 
+  // The ⚙ menu next to Model: when to ask before code is sent to Copilot (a VS Code setting the
+  // extension owns and reports), and a way to all the extension's settings.
+  function hideCopilotSettingsMenu(restoreFocus) {
+    const menu = document.getElementById('copilotSettingsMenu');
+    const toggle = document.getElementById('copilotSettingsButton');
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) toggle.focus();
+    }
+  }
+
+  function showCopilotSettingsMenu() {
+    const menu = document.getElementById('copilotSettingsMenu');
+    const toggle = document.getElementById('copilotSettingsButton');
+    if (!menu || !toggle) return;
+    menu.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    const anchor = toggle.getBoundingClientRect();
+    const width = window.innerWidth || document.documentElement.clientWidth;
+    menu.style.left = `${Math.max(0, Math.min(anchor.left, width - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${anchor.bottom + 2}px`;
+    (menu.querySelector('[aria-checked="true"]') || menu.querySelector('button')).focus();
+  }
+
+  function renderCopilotSettings(settings) {
+    document.querySelectorAll('#copilotSettingsMenu [data-action="setAskBeforeSending"]').forEach(item => {
+      item.setAttribute('aria-checked', String(item.dataset.value === settings.askBeforeSending));
+    });
+  }
+
   // Operation paused in each repository ('rebase', 'merge', ...), as last reported by the extension.
   const pendingOperations = {};
   let historyContextMenuPoint = null;
@@ -787,6 +819,21 @@
     reviewRelease: (el) => {
       hideReviewBranchMenu(false);
       startReview({ kind: 'release', scope: el.dataset.scope === 'changes' ? 'changes' : 'branch' });
+    },
+    toggleCopilotSettingsMenu: () => {
+      const menu = document.getElementById('copilotSettingsMenu');
+      if (!menu) return;
+      if (menu.hidden) showCopilotSettingsMenu(); else hideCopilotSettingsMenu(true);
+    },
+    // The choice is shown at once; the extension saves it and reports the setting back.
+    setAskBeforeSending: (el) => {
+      renderCopilotSettings({ askBeforeSending: el.dataset.value });
+      hideCopilotSettingsMenu(true);
+      postMessage('setCopilotSettings', { askBeforeSending: el.dataset.value });
+    },
+    openExtensionSettings: () => {
+      hideCopilotSettingsMenu(false);
+      postMessage('openExtensionSettings', {});
     },
     toggleReviewBranchMenu: () => {
       const menu = document.getElementById('reviewBranchMenu');
@@ -1998,6 +2045,7 @@
   document.body.addEventListener('click', function (e) {
     if (!e.target.closest('#historyContextMenu')) hideHistoryContextMenu();
     if (!e.target.closest('#reviewBranchMenu, #reviewBranchMenuButton')) hideReviewBranchMenu(false);
+    if (!e.target.closest('#copilotSettingsMenu, #copilotSettingsButton')) hideCopilotSettingsMenu(false);
     let el = e.target;
 
     // Walk up the DOM tree to find element with data-action
@@ -2025,12 +2073,13 @@
   window.addEventListener('scroll', hideHistoryContextMenu, true);
   window.addEventListener('blur', hideHistoryContextMenu);
   // The menu is placed under its button once: scrolling or resizing would leave it behind.
-  window.addEventListener('scroll', () => hideReviewBranchMenu(false), true);
-  window.addEventListener('resize', () => hideReviewBranchMenu(false));
+  window.addEventListener('scroll', () => { hideReviewBranchMenu(false); hideCopilotSettingsMenu(false); }, true);
+  window.addEventListener('resize', () => { hideReviewBranchMenu(false); hideCopilotSettingsMenu(false); });
   document.body.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       hideHistoryContextMenu();
       hideReviewBranchMenu(true);
+      hideCopilotSettingsMenu(true);
     }
     if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && e.target.closest('.history-row')) {
       e.preventDefault();
@@ -2389,6 +2438,10 @@
 
         case 'dashboardError':
           renderDashboardError(message.payload);
+          break;
+
+        case 'copilotSettingsLoaded':
+          if (message.payload) renderCopilotSettings(message.payload);
           break;
 
         case 'reviewQualityLoaded':
@@ -3177,6 +3230,7 @@
   }
   // The Clean code choice and the review tab's status live in the extension; the tab follows here.
   postMessage('getReviewQuality', {});
+  postMessage('getCopilotSettings', {});
   postMessage('getReviewStatus', {});
   publishReviewContext();
   applyReviewLock();

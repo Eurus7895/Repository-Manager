@@ -33,7 +33,7 @@ Open it from the Activity Bar icon, the command **Repository Manager: Open Repos
 | `repositoryManager.defaultBranch` | `main` | Default branch for branch workflows |
 | `repositoryManager.autoFetch` | `true` | Fetch in the background while the dashboard is visible; never prunes and never prompts for credentials |
 | `repositoryManager.autoFetchInterval` | `5` | Minutes between background fetches |
-| `repositoryManager.review.confirmBeforeSending` | `false` | Ask before every review sends code to Copilot |
+| `repositoryManager.copilot.askBeforeSending` | `never` | When to ask before code is sent to Copilot (reviews, fixes, explanations, summaries, commit messages): `never`, `oncePerRepository` or `always`; also in the ⚙ menu next to **Model** |
 | `repositoryManager.showNotifications` | `true` | Show notifications for Git operations |
 | `repositoryManager.githubToken` | `""` | Optional GitHub token for pull request operations |
 

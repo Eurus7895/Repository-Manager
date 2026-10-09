@@ -169,10 +169,31 @@
           "default": true,
           "description": "Keep local changes current while you edit: saving, creating or deleting files (and staging with Git) refreshes the dashboard's uncommitted changes and change counts about a second later. Turn off in very large repositories where git status is slow; Refresh still updates them."
         },
+        "repositoryManager.copilot.askBeforeSending": {
+          "type": "string",
+          "enum": [
+            "never",
+            "oncePerRepository",
+            "always"
+          ],
+          "enumItemLabels": [
+            "Never ask",
+            "Ask once per repository",
+            "Ask every time"
+          ],
+          "enumDescriptions": [
+            "Send code to the selected Copilot model without asking.",
+            "Ask the first time in each repository; \"Always allow for this repository\" stops asking there, until \"Repository Manager: Forget Review Permissions\".",
+            "Ask before every request that sends code to Copilot."
+          ],
+          "default": "never",
+          "markdownDescription": "When to ask before code is sent to the selected Copilot model: reviews, auto-fixes, explanations of findings, summaries and commit messages. Also in the dashboard's ⚙ menu next to **Model**. VS Code itself may ask once whether Repository Manager may use language models."
+        },
         "repositoryManager.review.confirmBeforeSending": {
           "type": "boolean",
           "default": false,
-          "description": "Ask before every security and compliance review sends code to Copilot, even in repositories where you chose \"Always allow for this repository\". When off, you are asked once per repository; run \"Repository Manager: Forget Review Permissions\" to be asked again in chosen repositories."
+          "description": "Ask before every request that sends code to Copilot.",
+          "markdownDeprecationMessage": "Use `#repositoryManager.copilot.askBeforeSending#` instead. While that setting is not set, `true` here still means **Ask every time**."
         },
         "repositoryManager.showNotifications": {
           "type": "boolean",

@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Explain with Copilot** on each finding in the Repository Review tab: Copilot explains it for your code, in the language VS Code is set to, under **What the code does**, **Why it matters**, **How to fix it** (with a code sketch) and **How to confirm it**, so you can decide whether it needs a fix or is a false positive. Only the finding and the lines it cites, with a few lines around them, are sent, after the same consent as a review; nothing is changed, and it works for any open review without checking anything out. Explanations come back when the tab is reopened, but are not saved with the review.
+- **Explain with Copilot** on each finding in the Repository Review tab: Copilot explains it for your code, in the language VS Code is set to, under **What the code does**, **Why it matters**, **How to fix it** (with a code sketch) and **How to confirm it**, so you can decide whether it needs a fix or is a false positive. Only the finding and the lines it cites, with a few lines around them, are sent; nothing is changed, and it works for any open review without checking anything out. Explanations come back when the tab is reopened, but are not saved with the review.
+- A ⚙ menu next to **Model** in the dashboard: choose when to ask before code is sent to Copilot, or open all Repository Manager settings.
+
+### Changed
+
+- Reviews, fixes, explanations, summaries and commit messages no longer ask before sending code to Copilot. The new `repositoryManager.copilot.askBeforeSending` setting (also in the ⚙ menu) brings the question back, once per repository or every time. It replaces `repositoryManager.review.confirmBeforeSending`, which still means "every time" while the new setting is not set.
 
 ## [2.2.0] - 2026-10-08
 
