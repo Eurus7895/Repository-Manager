@@ -16,7 +16,7 @@ export interface ForgetPermissionsUi {
 export async function forgetReviewPermissions(store: ReviewConsentStore, workspaceRoot: string, ui: ForgetPermissionsUi): Promise<void> {
   const roots = store.list();
   if (!roots.length) {
-    ui.notify('No repository skips the review question. Reviews already ask before sending code to Copilot.');
+    ui.notify('No repository skips the review question. The question is asked only when repositoryManager.copilot.askBeforeSending is "Once per repository" or "Every time".');
     return;
   }
   const items = roots.map(root => ({
@@ -28,7 +28,7 @@ export async function forgetReviewPermissions(store: ReviewConsentStore, workspa
   if (!chosen || !chosen.length) { return; }
   await store.forget(chosen);
   const names = chosen.map(root => path.basename(root)).join(', ');
-  ui.notify(`Reviews in ${names} will ask before sending code to Copilot again.`);
+  ui.notify(`Reviews in ${names} will ask before sending code to Copilot again, while repositoryManager.copilot.askBeforeSending is "Once per repository".`);
 }
 
 export function registerReviewCommands(context: vscode.ExtensionContext, workspaceRoot: string): void {

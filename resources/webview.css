@@ -2722,6 +2722,15 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 /* Review branch's split part: a narrow ▾ that opens the Changed files / All files menu. */
 .review-entry .review-split-toggle { padding: 0 5px; }
 .review-branch-menu { min-width: 150px; }
+/* ⚙ next to Model: when to ask before code goes to Copilot, and all settings. */
+.history-controls .toolbar-settings { flex: none; width: 30px; height: 30px; margin-left: -4px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-secondary); background: var(--bg-tertiary); font-size: 14px; line-height: 1; cursor: pointer; }
+.history-controls .toolbar-settings:hover, .history-controls .toolbar-settings[aria-expanded="true"] { color: var(--text-primary); background: var(--vscode-toolbar-hoverBackground, var(--bg-secondary)); }
+.history-controls .toolbar-settings:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.copilot-settings-menu { min-width: 220px; }
+.copilot-settings-menu .menu-heading { padding: 4px 10px 6px; color: var(--text-muted); font-size: 11px; }
+.copilot-settings-menu button[role="menuitemradio"] { padding-left: 26px; position: relative; }
+.copilot-settings-menu button[aria-checked="true"]::before { content: "✓"; position: absolute; left: 9px; }
+.copilot-settings-menu .menu-separator { height: 1px; margin: 5px 0; background: var(--vscode-menu-separatorBackground, var(--border)); }
 /* Compact: "◈ | Changes | Whole"; the buttons' titles still say what each one reviews. */
 @media (max-width: 1100px) {
   .review-entry-word { display: none; }

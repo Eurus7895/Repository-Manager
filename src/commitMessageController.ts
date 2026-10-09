@@ -3,8 +3,8 @@
  * repository's commit convention (see services/commitMessage.ts). The message goes into the dialog
  * for the user to read and edit; nothing is committed here.
  *
- * Sending code to Copilot asks first, as a review does, and shares the review's per-repository
- * "Always allow" and the repositoryManager.review.confirmBeforeSending setting.
+ * Sending code to Copilot asks first only when repositoryManager.copilot.askBeforeSending says so,
+ * as a review does, and shares the review's per-repository "Always allow".
  * Nothing here depends on VS Code, so it is tested with a scripted model.
  */
 

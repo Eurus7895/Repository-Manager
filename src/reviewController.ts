@@ -28,9 +28,9 @@ export interface ReviewControllerHost {
   post(message: { type: string; payload: unknown }): Promise<void>;
   /** Modal question; resolves the chosen action, or undefined when dismissed. */
   ask(message: string, detail: string, actions: string[]): Promise<string | undefined>;
-  /** The repositoryManager.review.confirmBeforeSending setting: ask before every review. */
+  /** Ask before every request that sends code (repositoryManager.copilot.askBeforeSending is `always`). */
   alwaysConfirm(): boolean;
-  /** Repositories (absolute paths) whose reviews may start without asking. */
+  /** Repositories (absolute paths) whose reviews may start without asking: all of them when the setting never asks. */
   isConsentRemembered(repositoryRoot: string): boolean;
   rememberConsent(repositoryRoot: string): Promise<void>;
   createRunner(workspaceRoot: string): ReviewRunner;

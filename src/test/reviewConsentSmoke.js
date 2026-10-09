@@ -16,6 +16,17 @@ Module._load = originalLoad;
 const { ReviewConsentStore } = require('../../out/reviewConsent.js');
 const { ReviewController } = require('../../out/reviewController.js');
 const { ReviewHistoryStore } = require('../../out/reviewHistory.js');
+const { askBeforeSending, askBeforeSendingTarget, consentHooks } = require('../../out/copilotSettings.js');
+
+// A `repositoryManager` configuration with values set at each level, as VS Code reports them.
+function configuration(levels) {
+  return {
+    get: key => ['workspaceFolder', 'workspace', 'global'].map(level => (levels[level] || {})[key]).find(value => value !== undefined) ??
+      { 'copilot.askBeforeSending': 'never', 'review.confirmBeforeSending': false }[key],
+    inspect: key => ({ globalValue: (levels.global || {})[key], workspaceValue: (levels.workspace || {})[key],
+      workspaceFolderValue: (levels.workspaceFolder || {})[key] })
+  };
+}
 
 class Memento {
   constructor() { this.values = new Map(); }
@@ -59,7 +70,7 @@ async function main() {
     picks = [[libA]];
     await forgetReviewPermissions(fresh, workspace, ui);
     assert.deepEqual(fresh.list(), [workspace]);
-    assert.equal(notices.at(-1), 'Reviews in lib-a will ask before sending code to Copilot again.');
+    assert.match(notices.at(-1), /^Reviews in lib-a will ask before sending code to Copilot again, while .*"Once per repository"\.$/);
 
     // Round trip through the controller: "Always allow", then forget, then asked again.
     const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -100,6 +111,44 @@ async function main() {
     answer = undefined;
     await review(3);
     assert.equal(questions.length, 2, 'not asked again after Forget Review Permissions');
+
+    // When to ask: never by default; the old "ask every time" still counts until the new setting is set.
+    assert.equal(askBeforeSending(configuration({})), 'never');
+    assert.equal(askBeforeSending(configuration({ global: { 'review.confirmBeforeSending': true } })), 'always');
+    assert.equal(askBeforeSending(configuration({ global: { 'review.confirmBeforeSending': false } })), 'never');
+    assert.equal(askBeforeSending(configuration({ global: { 'review.confirmBeforeSending': true, 'copilot.askBeforeSending': 'oncePerRepository' } })), 'oncePerRepository');
+    assert.equal(askBeforeSending(configuration({ global: { 'copilot.askBeforeSending': 'always' }, workspace: { 'copilot.askBeforeSending': 'never' } })), 'never');
+    assert.equal(askBeforeSending(configuration({ global: { 'copilot.askBeforeSending': 'sometimes' } })), 'never', 'an unknown value was used');
+    // The menu writes where the value applies: the workspace when it sets one, else the user settings.
+    assert.equal(askBeforeSendingTarget(configuration({})), 'global');
+    assert.equal(askBeforeSendingTarget(configuration({ workspace: { 'copilot.askBeforeSending': 'always' } })), 'workspace');
+    let mode = 'never';
+    const hooks = consentHooks(() => mode, root => root === repo);
+    assert.deepEqual([hooks.alwaysConfirm(), hooks.isConsentRemembered('/elsewhere')], [false, true]);
+    mode = 'oncePerRepository';
+    assert.deepEqual([hooks.alwaysConfirm(), hooks.isConsentRemembered('/elsewhere'), hooks.isConsentRemembered(repo)], [false, false, true]);
+    mode = 'always';
+    assert.deepEqual([hooks.alwaysConfirm(), hooks.isConsentRemembered(repo)], [true, true]);
+    // Never asking: a review in a repository nobody allowed starts without a question.
+    const silent = new ReviewConsentStore(new Memento());
+    const silentHooks = consentHooks(() => 'never', root => silent.has(root));
+    const asked = [];
+    let ran = 0;
+    const unasked = new ReviewController({
+      workspaceRoot: () => repo,
+      post: async () => {},
+      ask: async message => { asked.push(message); return undefined; },
+      alwaysConfirm: silentHooks.alwaysConfirm,
+      isConsentRemembered: silentHooks.isConsentRemembered,
+      rememberConsent: root => silent.allow(root),
+      createRunner: () => ({ review: async request => { ran++; return { request, findings: [], policyResults: [], policyStatus: 'not_configured',
+        limitations: [], coverage: { surveyed: 1, analyzed: 1, skipped: [], failed: [], complete: true } }; } }),
+      createCancellation: () => ({ token: { isCancellationRequested: false }, cancel() {}, dispose() {} }),
+      copyText: async () => {}, saveText: async () => true, openText: async () => {}, notify: () => {},
+      history: new ReviewHistoryStore(new Memento())
+    });
+    await unasked.handle({ type: 'startReview', payload: { requestId: 1, repositoryPath: '.', scope: 'branch', targetRevision: 'main' } });
+    assert.deepEqual([asked, ran, silent.list()], [[], 1, []], 'asked, or remembered a permission nobody gave');
     console.log('Review consent smoke passed');
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });

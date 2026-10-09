@@ -321,6 +321,7 @@ function renderDashboard(repositories: RepositoryInfo[], workspaceFolders: Works
             <label class="remote-toggle"><input id="dashboardIncludeRemotes" type="checkbox" checked> Include remotes</label>
             <button class="compare-branches-button" type="button" data-action="openBranchCompareModal">⇄ Compare branches</button>
             <label class="toolbar-model" for="summaryModelSelect" title="The Copilot model for reviews, summaries, commit messages and fixes; the list loads when you open it"><span>Model</span><select id="summaryModelSelect" aria-label="Copilot model"><option value="">Default</option></select></label>
+            <button type="button" class="toolbar-settings" data-action="toggleCopilotSettingsMenu" id="copilotSettingsButton" aria-haspopup="menu" aria-expanded="false" aria-controls="copilotSettingsMenu" aria-label="Copilot settings" title="Copilot settings: whether to ask before code is sent, and all Repository Manager settings">⚙</button>
             <div class="review-entry review-current-group" role="group" aria-label="Review with Copilot">
               <button type="button" data-action="reviewLocal" id="reviewLocalChangesButton" title="Review your local changes before committing: staged and unstaged changes and new files (not those .gitignore excludes), as they are now. Nothing is committed or staged"><span class="review-entry-word">Review </span>changes</button>
               <button type="button" data-action="reviewSelection" id="reviewSelectionChangesButton" title="Review the selected commit against its parent, or the loaded comparison (Base/Target or a branch comparison). Committed changes only: use Review changes for uncommitted work"><span class="review-entry-word">Review </span>commit</button>
@@ -479,6 +480,15 @@ export function getHtmlForWebview(repositories: RepositoryInfo[], resourceUris: 
     <div class="history-context-separator" role="separator"></div>
     <button type="button" role="menuitem" data-action="contextReviewCommit" title="Review what this commit changed against its parent (committed content only)">Review changes in this commit</button>
     <button type="button" role="menuitem" data-action="contextReviewSnapshot" title="Review every file as committed at this commit; uncommitted changes are not included">Review branch at this commit</button>
+  </div>
+
+  <div class="history-context-menu copilot-settings-menu" id="copilotSettingsMenu" role="menu" aria-label="Copilot settings" hidden>
+    <div class="menu-heading" role="presentation">Ask before sending code to Copilot</div>
+    <button type="button" role="menuitemradio" aria-checked="true" data-action="setAskBeforeSending" data-value="never" title="Reviews, fixes, explanations, summaries and commit messages start at once">Never ask</button>
+    <button type="button" role="menuitemradio" aria-checked="false" data-action="setAskBeforeSending" data-value="oncePerRepository" title="Ask the first time in each repository; Always allow stops asking there">Once per repository</button>
+    <button type="button" role="menuitemradio" aria-checked="false" data-action="setAskBeforeSending" data-value="always" title="Ask before every request that sends code to Copilot">Every time</button>
+    <div class="menu-separator" role="separator"></div>
+    <button type="button" role="menuitem" data-action="openExtensionSettings" title="Open the Settings editor at Repository Manager's settings">All settings…</button>
   </div>
 
   <div class="history-context-menu review-branch-menu" id="reviewBranchMenu" role="menu" aria-label="Review branch" hidden>

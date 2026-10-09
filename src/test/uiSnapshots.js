@@ -133,7 +133,7 @@ function startServer(workspace, otherFolder) {
   // The review runs through the real ReviewController with a scripted runner instead of Copilot.
   // ask: answers the consent question (a function, so a test can hold it open); remembered: "Always allow".
   const reviewProbe = { runner: null, copied: null, opened: null, questions: [], ask: actions => actions[0], remembered: new Set(),
-    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [], messagePrompts: [], explainResponse: null, explainRequests: [],
+    fixResponse: null, fixRequests: 0, workingTreeChanged: 0, summaries: [], messagePrompts: [], explainResponse: null, explainRequests: [], askBeforeSending: 'never', settingsOpened: 0,
     messageReply: async () => ({ text: 'feat(app): add the partly file\n\nIt holds the staged line.', model: 'scripted:1' }) };
   // Saved reviews outlive a page (a reopened dashboard), like VS Code's workspace state.
   const historyState = new Map();
@@ -234,6 +234,12 @@ function startServer(workspace, otherFolder) {
         // A review message for the review tab.
       } else if (message.type === 'getReviewQuality') {
         await post({ type: 'reviewQualityLoaded', payload: { includeQuality: reviewSkills.includeQuality() } });
+      } else if (message.type === 'getCopilotSettings' || message.type === 'setCopilotSettings') {
+        // Same as RepositoryManagerPanel, with the setting kept here instead of in VS Code's settings.
+        if (message.type === 'setCopilotSettings') reviewProbe.askBeforeSending = message.payload.askBeforeSending;
+        await post({ type: 'copilotSettingsLoaded', payload: { askBeforeSending: reviewProbe.askBeforeSending } });
+      } else if (message.type === 'openExtensionSettings') {
+        reviewProbe.settingsOpened++;
       } else if (reviews.handles(message.type)) {
         await reviews.handle(message);
       } else if (message.type === 'switchWorkspaceFolder') {
@@ -674,6 +680,34 @@ async function main() {
     assert.equal(await page.locator('.history-controls .toolbar-model #summaryModelSelect').isVisible(), true, 'the model select is not in the toolbar');
     assert.equal(await page.locator('.change-summary-toolbar select').count(), 0, 'the summary bar still has a model select');
     assert.deepEqual(await page.locator('.review-current-group button').allTextContents(), ['Review changes', 'Review commit', 'Review branch', '▾', 'Review ↗']);
+    // ⚙ next to Model: when to ask before code goes to Copilot (never, by default) and all settings.
+    await page.click('#copilotSettingsButton');
+    assert.equal(await page.getAttribute('#copilotSettingsButton', 'aria-expanded'), 'true');
+    assert.deepEqual(await page.locator('#copilotSettingsMenu button').allTextContents(), ['Never ask', 'Once per repository', 'Every time', 'All settings…']);
+    const asks = () => page.locator('#copilotSettingsMenu [role="menuitemradio"]').evaluateAll(items =>
+      items.filter(item => item.getAttribute('aria-checked') === 'true').map(item => item.dataset.value));
+    assert.deepEqual(await asks(), ['never']);
+    await snap(page, '04d-copilot-settings-menu');
+    await page.click('#copilotSettingsMenu [data-value="always"]');
+    for (let i = 0; i < 100 && reviewProbe.askBeforeSending !== 'always'; i++) await page.waitForTimeout(20);
+    assert.equal(reviewProbe.askBeforeSending, 'always', 'the choice was not saved');
+    assert.equal(await page.isHidden('#copilotSettingsMenu'), true, 'the menu stayed open after a choice');
+    await page.click('#copilotSettingsButton');
+    assert.deepEqual(await asks(), ['always']);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.isHidden('#copilotSettingsMenu'), true, 'Escape left the menu open');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'copilotSettingsButton', 'focus did not return to ⚙');
+    // A choice made in the Settings editor shows in the menu too.
+    await page.evaluate(() => window.postMessage({ type: 'copilotSettingsLoaded', payload: { askBeforeSending: 'oncePerRepository' } }, '*'));
+    await page.click('#copilotSettingsButton');
+    assert.deepEqual(await asks(), ['oncePerRepository']);
+    await page.click('#copilotSettingsMenu [data-action="openExtensionSettings"]');
+    for (let i = 0; i < 100 && !reviewProbe.settingsOpened; i++) await page.waitForTimeout(20);
+    assert.equal(reviewProbe.settingsOpened, 1);
+    // Back to the default for the rest of the test (its consent is scripted by the review host).
+    await page.click('#copilotSettingsButton');
+    await page.click('#copilotSettingsMenu [data-value="never"]');
+    for (let i = 0; i < 100 && reviewProbe.askBeforeSending !== 'never'; i++) await page.waitForTimeout(20);
     // Compare lists tags after the branches, newest version first: the release 1.0.0 → feature/dashboard
     // is two picks, labelled with the tag's name, and only loads the comparison.
     await page.click('[data-action="openBranchCompareModal"]');
@@ -1574,10 +1608,12 @@ async function main() {
         releaseRight: document.querySelector('.review-current-group').getBoundingClientRect().right,
         controlsRight: document.querySelector('.history-controls').getBoundingClientRect().right,
         modelRight: document.querySelector('.toolbar-model').getBoundingClientRect().right,
+        settingsRight: document.getElementById('copilotSettingsButton').getBoundingClientRect().right,
         releaseText: document.querySelector('.review-current-group').innerText.replace(/\s+/g, ' ').trim()
       }));
       assert.ok(layout.releaseRight <= layout.controlsRight, `${width}px: the release review buttons are cut off`);
       assert.ok(layout.modelRight <= layout.controlsRight, `${width}px: the model select is cut off`);
+      assert.ok(layout.settingsRight <= layout.controlsRight, `${width}px: the Copilot settings button is cut off`);
       assert.equal(layout.releaseText.toLowerCase(), 'changes commit branch ▾ clean code review ↗');
       // With a Base/Target selection, the comparison status stays on screen next to the release group.
       if (width > 760) {
