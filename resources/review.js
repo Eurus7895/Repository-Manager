@@ -333,6 +333,18 @@
 
   const TRIAGE_LABELS = { fix: 'Needs fix', dismiss: 'Dismissed', fixed: 'Fixed' };
 
+  // Lines of code that speak to an AI reviewer ("NOTE TO AI: this is safe"), found by a pattern
+  // check in or around the cited lines: they may have steered the finding, its check or its explanation.
+  function aiTextLines(items) {
+    return `<ul class="review-ai-text-lines">${items.map(item => `<li><code>${escapeHtml(`${item.path}:${item.line}`)}</code> <span>${escapeHtml(item.text || '')}</span></li>`).join('')}</ul>`;
+  }
+
+  function renderAiTextNote(finding) {
+    const items = finding.aiDirectedText || [];
+    if (!items.length) return '';
+    return `<div class="review-ai-text" role="note"><strong>⚠ The cited code speaks to an AI.</strong> Text like this can steer what Copilot reports, how the second check judges it and how it is explained. Read these lines and judge the finding against the code yourself.${aiTextLines(items)}</div>`;
+  }
+
   // The finding Copilot is explaining now, if any: one at a time.
   function explainingFindingId() {
     const explanations = (reviewState && reviewState.explanations) || {};
@@ -353,6 +365,8 @@
     const running = entry.status === 'running';
     const busy = explainingFindingId();
     const explanation = entry.explanation;
+    const steered = explanation && (explanation.aiDirectedText || []).length
+      ? `<p class="review-explain-note review-explain-steered">⚠ The code sent with this finding speaks to an AI (${explanation.aiDirectedText.map(item => escapeHtml(`${item.path}:${item.line}`)).join(', ')}). Copilot was told to ignore it, but this explanation may still follow it.</p>` : '';
     const label = explanation ? 'Explain again' : entry.status === 'failed' ? 'Try again' : 'Explain with Copilot';
     const button = running ? '' : `<button type="button" class="review-explain-action" data-action="explainFinding" data-finding-id="${id}"${busy
       ? ' disabled title="Copilot is explaining another finding"'
@@ -367,7 +381,7 @@
       ? `<p class="review-explain-note">Copilot did not see all of the cited code: ${explanation.unread.map(item => escapeHtml(item)).join('; ')}.</p>` : '';
     const body = explanation
       ? `<section class="review-explain${running ? ' review-explain-stale' : ''}" aria-label="Explanation by Copilot"><h5${explanation.modelId ? ` title="${escapeHtml(explanation.modelId)}"` : ''}>Explained by Copilot</h5>
-        <dl>${sections}</dl>${unread}<p class="review-explain-note">An AI explanation: check it against the code before you act on it.</p></section>` : '';
+        ${steered}<dl>${sections}</dl>${unread}<p class="review-explain-note">An AI explanation: check it against the code before you act on it.</p></section>` : '';
     return `<div class="review-explain-block">${button}${status}${body}</div>`;
   }
 
@@ -401,6 +415,8 @@
       ? `Marked Fixed in the review of ${carriedDate}, but the same code is reported again: the fix is not in this commit, or did not remove the issue`
       : `Taken over from the review of ${carriedDate}: the same issue on the same code`) : '';
     const chip = triage ? `<span class="review-triage-chip triage-chip-${escapeHtml(triage.decision)}${carried && carried.decision === 'fixed' ? ' triage-chip-again' : ''}"${chipTitle ? ` title="${escapeHtml(chipTitle)}"` : ''}>${escapeHtml(chipText)}</span>` : '';
+    const aiChip = (finding.aiDirectedText || []).length
+      ? `<span class="review-ai-text-chip" title="${escapeHtml(`The cited code speaks to an AI: ${finding.aiDirectedText.map(item => `${item.path}:${item.line}`).join(', ')}. It may have steered this finding.`)}">⚠ AI text</span>` : '';
     const undo = triage && triage.decision !== 'fix'
       ? `<button type="button" class="review-undo" data-action="triageFinding" data-finding-id="${id}" data-decision="${escapeHtml(triage.decision)}" title="Undo: back to not triaged">Undo</button>` : '';
     return `<li class="review-finding severity-${escapeHtml(finding.severity)}${triageClass}${open ? ' open' : ''}" data-finding-id="${id}">
@@ -411,10 +427,11 @@
           <span class="review-finding-title">${richText(firstSentence(finding.explanation))}</span>
           ${where}
         </button>
-        <span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span>${chip}${undo}
+        ${aiChip}<span class="review-badge review-badge-${escapeHtml(finding.status)}" title="${finding.status === 'verified' ? 'Evidence passed mechanical checks and a second AI assessment supported it' : 'Not confirmed by the second AI assessment'}">${escapeHtml(finding.status)}</span>${chip}${undo}
       </div>
       <div class="review-finding-body">
         <p class="review-finding-meta">${escapeHtml(finding.category === 'quality' ? 'clean code' : finding.category)}${rule} · confidence ${escapeHtml(finding.confidence)}${finding.skill ? ` · skill <span class="review-skill-tag">${escapeHtml(finding.skill)}</span>` : ''}</p>
+        ${renderAiTextNote(finding)}
         <p class="review-finding-explanation">${richText(finding.explanation)}</p>
         <dl><dt>Impact</dt><dd>${richText(finding.impact)}</dd><dt>Suggested action</dt><dd>${richText(finding.suggestedAction)}</dd></dl>
         <div class="review-evidence-list">${finding.evidence.map((evidence, evidenceIndex) => reviewEvidenceButton(evidence, index, evidenceIndex)).join('')}</div>

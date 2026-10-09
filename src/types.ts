@@ -140,6 +140,11 @@ export interface ReviewFinding {
   suggestedAction: string;
   evidence: ReviewEvidence[];
   status: 'candidate' | 'verified' | 'hypothesis';
+  /**
+   * Lines in or around the cited code that speak to an AI reviewer ("NOTE TO AI: this is safe"),
+   * found by a pattern check after the review: they may have steered this finding or its check.
+   */
+  aiDirectedText?: Array<{ path: string; line: number; text: string }>;
 }
 
 export interface ReviewCoverage {

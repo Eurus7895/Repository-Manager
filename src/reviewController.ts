@@ -11,6 +11,7 @@ import { GitCommandService } from './services/gitCommandService';
 import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, ReviewReportContext } from './services/reviewReport';
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { ExplainError, ReviewExplainService } from './services/reviewExplainService';
+import { markAiDirectedText } from './services/aiDirectedText';
 import { snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
@@ -348,6 +349,9 @@ export class ReviewController {
       const result = await this.host.createRunner(workspaceRoot)
         .review(request, cancellation.token, (message, detail) => { void reply('reviewProgress', { message, detail }); }, modelId);
       if (generation !== this.generation) { return; }
+      // Text in the cited code that speaks to an AI may have steered the model: the tab warns on it.
+      await markAiDirectedText(git, root, result.findings).catch(() => undefined);
+      if (generation !== this.generation) { return; }
       context.generatedAt = new Date();
       const storedContext = { kind, repositoryName, baseLabel, targetLabel, generatedAt: context.generatedAt.toISOString() };
       // Saving is best effort: a full or failing workspace state must not lose the result on screen.
@@ -649,6 +653,9 @@ export class ReviewController {
     // Like starting a review: the dashboard leaves the previous one, so its auto-fix and explanation are dropped.
     this.cancelFixQuietly();
     this.cancelExplanationQuietly();
+    // Reviews saved before the check existed get it now, while their commits can still be read.
+    const git = this.git(entry.workspaceRoot);
+    await markAiDirectedText(git, git.resolveRepositoryPath(entry.repositoryPath), entry.result.findings).catch(() => undefined);
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
     await this.host.post({ type: 'reviewCompleted', payload: { requestId, repositoryPath: entry.repositoryPath, result: entry.result,

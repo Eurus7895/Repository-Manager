@@ -235,7 +235,9 @@ function findingMarkdown(finding: ReviewFinding, triage?: FindingTriage): string
     `  ${text(finding.explanation)}  `,
     `  Evidence: ${evidence}  `,
     `  Impact: ${text(finding.impact)}  `,
-    `  Suggested action: ${text(finding.suggestedAction)}`
+    `  Suggested action: ${text(finding.suggestedAction)}${finding.aiDirectedText?.length ? '  ' : ''}`,
+    ...(finding.aiDirectedText?.length ? [`  ⚠ Text addressed to an AI in the cited code, which may have steered this finding: ${finding.aiDirectedText
+      .map(item => `${code(`${item.path}:${item.line}`)} ${text(item.text)}`).join('; ')}`] : [])
   ];
 }
 
