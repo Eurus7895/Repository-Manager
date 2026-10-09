@@ -243,7 +243,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "simple-git": "^4.0.1"
+    "simple-git": "^4.0.2"
   },
   "repository": {
     "type": "git",
