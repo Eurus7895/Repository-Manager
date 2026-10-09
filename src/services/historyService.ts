@@ -7,6 +7,7 @@ import { GitCommandService } from './gitCommandService';
 /** The search scanning each repository: a newer history request stops it (typing a query). */
 const activeSearches = new Map<string, AbortController>();
 import { GitRefLabel, GitRefKind, HistoryCommit, HistoryPage, HistoryQuery } from '../types';
+import { SNAPSHOT_REF_PREFIX } from './localChangesSnapshot';
 
 const FIELD_SEPARATOR = '\x1f';
 const RECORD_SEPARATOR = '\x1e';
@@ -102,7 +103,8 @@ export class HistoryService {
     if (query.branch) {
       args.push(await this.gitCmd.resolveRevision(query.repositoryPath, query.branch));
     } else if (query.includeRemotes) {
-      args.push('--all');
+      // Every ref but the snapshots kept for saved reviews of local changes, which are not history.
+      args.push(`--exclude=${SNAPSHOT_REF_PREFIX}*`, '--all');
     } else {
       args.push('HEAD');
     }
