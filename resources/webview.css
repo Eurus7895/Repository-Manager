@@ -2773,6 +2773,22 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 .review-triage button:hover { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
 .review-triage button[data-decision="fix"][aria-pressed="true"] { border-color: var(--warning); color: var(--tone-warn); background: rgba(229, 165, 71, .14); }
 .review-triage button[data-decision="dismiss"][aria-pressed="true"] { border-color: var(--text-muted); color: var(--text-primary); background: var(--bg-tertiary); }
+.review-explain-block { margin-top: 8px; }
+.review-explain-action { padding: 2px 10px; border: 1px solid var(--border); border-radius: 4px; color: var(--tone-info); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.review-explain-action:hover:not(:disabled) { color: var(--text-primary); background: var(--vscode-list-hoverBackground); }
+.review-explain-action:disabled { color: var(--text-muted); cursor: default; }
+.review-explain-action:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.review-explain-status { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--text-secondary); font-size: 12px; }
+.review-explain { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-left: 3px solid var(--tone-info); border-radius: 4px; background: var(--bg-sunken); }
+.review-explain-stale { opacity: .6; }
+.review-explain h5 { margin: 0 0 4px; color: var(--text-secondary); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.review-finding .review-explain dl { display: block; margin: 0; line-height: 1.45; }
+.review-finding .review-explain dt { margin-top: 6px; }
+.review-finding .review-explain dt:first-child { margin-top: 0; }
+.review-finding .review-explain dd { min-width: 0; margin: 0; white-space: pre-line; }
+.review-explain-example { max-height: 240px; margin: 6px 0 0; padding: 6px 8px; overflow: auto; border-radius: 4px; color: var(--text-strong); background: var(--bg-raised); font-family: var(--vscode-editor-font-family), monospace; font-size: 12px; white-space: pre; }
+.review-finding .review-explain-example code { padding: 0; background: none; font-size: inherit; }
+.review-explain-note { color: var(--text-muted); font-size: 11px; }
 .review-dismiss-reason { height: 24px; border: 1px solid var(--vscode-dropdown-border, var(--border)); border-radius: 4px; color: var(--vscode-dropdown-foreground, var(--text-primary)); background: var(--vscode-dropdown-background, var(--bg-tertiary)); font: inherit; font-size: 12px; }
 .review-finding.triage-dismiss:not(.open) .review-finding-title { color: var(--text-secondary); font-weight: 400; text-decoration: line-through; text-decoration-color: var(--text-muted); }
 .review-finding.triage-fixed { border-left-color: var(--tone-ok); }
