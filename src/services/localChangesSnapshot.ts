@@ -4,8 +4,9 @@
  *
  * The snapshot is built in a temporary index copied from the real one, then `git add -A` (staged and
  * unstaged changes, and new files that .gitignore does not exclude), and written with `commit-tree`.
- * HEAD, branches, the real index and the working tree are not touched; no ref points to the commit,
- * so Git removes it in a later garbage collection, like any unreachable object.
+ * HEAD, branches, the real index and the working tree are not touched. While a saved review reads a
+ * snapshot, a ref under SNAPSHOT_REF_PREFIX keeps it (`keepSnapshots`); without one, Git removes the
+ * commit in a later garbage collection, like any unreachable object.
  *
  * The commit's author, committer and dates are fixed (HEAD's date), so the same changes on the same
  * HEAD give the same commit: running the review again reuses its saved components and decisions.
@@ -48,5 +49,31 @@ export async function snapshotLocalChanges(git: GitCommandService, root: string)
     return { headSha, snapshotSha };
   } finally {
     rmSync(temporaryIndex, { force: true });
+  }
+}
+
+/**
+ * Where the snapshots of saved reviews are kept: outside branches, tags and remotes, so `git branch`,
+ * `git tag` and a plain push leave them out, and the dashboard's history leaves them out too.
+ */
+export const SNAPSHOT_REF_PREFIX = 'refs/repository-manager/snapshots/';
+const FULL_SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/**
+ * Keeps exactly the snapshots in `keep` from garbage collection: a ref under SNAPSHOT_REF_PREFIX for
+ * each one that still exists, and none for any other. Only refs under that prefix are touched.
+ */
+export async function keepSnapshots(git: GitCommandService, root: string, keep: string[]): Promise<void> {
+  const wanted = new Set(keep.filter(sha => FULL_SHA.test(sha)));
+  const existing = (await git.execGit(['for-each-ref', '--format=%(refname)', SNAPSHOT_REF_PREFIX], root, 10000))
+    .split('\n').filter(Boolean);
+  for (const ref of existing) {
+    if (!wanted.has(ref.slice(SNAPSHOT_REF_PREFIX.length))) { await git.execGit(['update-ref', '-d', ref], root, 10000); }
+  }
+  for (const sha of wanted) {
+    if (existing.includes(`${SNAPSHOT_REF_PREFIX}${sha}`)) { continue; }
+    // Removed already (before it was kept, or by a gc elsewhere): there is nothing left to keep.
+    const exists = await git.execGit(['cat-file', '-e', `${sha}^{commit}`], root, 10000).then(() => true, () => false);
+    if (exists) { await git.execGit(['update-ref', `${SNAPSHOT_REF_PREFIX}${sha}`, sha], root, 10000); }
   }
 }

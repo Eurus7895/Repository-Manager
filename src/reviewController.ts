@@ -12,7 +12,7 @@ import { assessReadiness, normalizeTriage, renderReviewMarkdown, ReviewKind, Rev
 import { FixError, FixModel, FixProposal, FixStep, ReviewFixService } from './services/reviewFixService';
 import { ExplainError, ReviewExplainService } from './services/reviewExplainService';
 import { markAiDirectedText, scanReviewedChanges } from './services/aiDirectedText';
-import { snapshotLocalChanges } from './services/localChangesSnapshot';
+import { keepSnapshots, snapshotLocalChanges } from './services/localChangesSnapshot';
 import { resolveDefaultBranch, resolveReleaseRange } from './services/releaseRange';
 import { ReviewSkillStore } from './reviewSkillStore';
 import { carryTriage } from './reviewTriageCarry';
@@ -361,6 +361,8 @@ export class ReviewController {
         .map(entry => ({ generatedAt: entry.context.generatedAt, findings: entry.result.findings, triage: entry.triage })));
       const historyId = await this.host.history.add({ repositoryRoot: root, workspaceRoot, repositoryPath, context: storedContext, result, triage })
         .then(entry => entry.id, () => undefined);
+      // A saved review of local changes keeps its snapshot; one the history let go (it keeps the newest) does not.
+      if (historyId) { await this.keepSnapshots(git, root); }
       this.remember(requestId, { result, context, triage, workspaceRoot, historyId });
       await reply('reviewCompleted', { result, readiness: assessReadiness(result, triage), layout: assessReadiness(result), context: storedContext, triage, historyId });
     } catch (error) {
@@ -654,8 +656,10 @@ export class ReviewController {
     // Like starting a review: the dashboard leaves the previous one, so its auto-fix and explanation are dropped.
     this.cancelFixQuietly();
     this.cancelExplanationQuietly();
-    // Reviews saved before the check existed get it now, while their commits can still be read.
     const git = this.git(entry.workspaceRoot);
+    // Kept again if its ref went missing (another workspace let it go), as long as Git still has it.
+    if (entry.context.kind === 'local') { await this.keepSnapshots(git, entry.repositoryRoot); }
+    // Reviews saved before the check existed get it now, while their commits can still be read.
     await this.checkAiDirectedText(git, git.resolveRepositoryPath(entry.repositoryPath), entry.result);
     const context: ReviewReportContext = { ...entry.context, generatedAt: new Date(entry.context.generatedAt) };
     this.remember(requestId, { result: entry.result, context, triage: entry.triage, workspaceRoot: entry.workspaceRoot, historyId: id });
@@ -666,7 +670,9 @@ export class ReviewController {
   private async deleteStored(payload: Record<string, unknown>): Promise<void> {
     const id = optionalString(payload.id);
     if (!id) { return; }
+    const entry = this.host.history.get(id);
     await this.host.history.remove(id);
+    if (entry) { await this.keepSnapshots(this.git(entry.workspaceRoot), entry.repositoryRoot); }
     // An open copy stays usable for this session, but no longer writes triage to the history.
     this.reviews.forEach(review => { if (review.historyId === id) { review.historyId = undefined; } });
     await this.listHistory(payload);
@@ -683,6 +689,16 @@ export class ReviewController {
     if (!scanned) { return; }
     result.aiDirectedText = scanned.lines;
     if (scanned.truncated) { result.aiDirectedTextTruncated = true; }
+  }
+
+  /**
+   * The snapshots this repository's saved reviews of local changes read are kept from garbage
+   * collection while the reviews are saved, so their evidence and explanations still open later.
+   * Best effort: a repository that refuses the ref only loses that guarantee.
+   */
+  private async keepSnapshots(git: GitCommandService, root: string): Promise<void> {
+    const snapshots = this.host.history.list(root).filter(entry => entry.context.kind === 'local').map(entry => entry.result.request.targetSha);
+    await keepSnapshots(git, root, snapshots).catch(() => undefined);
   }
 
   private async openEvidence(payload: Record<string, unknown>): Promise<void> {
