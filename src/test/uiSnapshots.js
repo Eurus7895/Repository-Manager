@@ -19,7 +19,9 @@ const root = path.resolve(__dirname, '../..');
 // The extension's real message handlers run against a minimal fake `vscode` module.
 const fakeVscode = {
   window: { showInformationMessage() {}, showWarningMessage() {}, showErrorMessage() {} },
-  workspace: { getConfiguration: () => ({ get: (_key, fallback) => fallback }) },
+  // The Trash is not available here: a discarded new file is deleted.
+  workspace: { getConfiguration: () => ({ get: (_key, fallback) => fallback }),
+    fs: { delete: async uri => fs.rmSync(uri.fsPath, { force: true }) } },
   commands: { executeCommand: async () => undefined },
   env: { clipboard: { writeText: async () => undefined } },
   Uri: { file: fsPath => ({ fsPath }) }
@@ -430,7 +432,7 @@ async function main() {
     assert.match(await page.textContent('#dashboardCommitSummary .commit-summary-copy span'), /^1 modified · on feature\/dashboard · HEAD [0-9a-f]{7,8} → working tree$/);
     assert.equal(await page.textContent('#dashboardCommitSummary > code'), '*');
     assert.equal(await page.isVisible('#changeSummary'), true, 'the summary bar is hidden for uncommitted changes');
-    assert.deepEqual(await page.locator('.change-summary-toolbar button:visible').allTextContents(), ['Commit…', 'Review changes', 'Summarize changes']);
+    assert.deepEqual(await page.locator('.change-summary-toolbar button:visible').allTextContents(), ['Commit…', 'Review changes', 'Summarize changes', 'Discard all…']);
     assert.equal(await page.getAttribute('#reviewSelectionChangesButton', 'aria-disabled'), 'true');
     const summariesBeforeLocal = reviewProbe.summaries.length;
     await page.selectOption('#summaryModelSelect', '');
@@ -468,13 +470,48 @@ async function main() {
     assert.equal(await page.isDisabled('#workingDiffModes [data-mode="unstaged"]'), true);
     await page.click('#dashboardChangedFiles .changed-file-item[data-path="live-new.txt"]');
     await page.waitForFunction(() => /\+new/.test(document.getElementById('dashboardDiff').textContent));
+    // Each file has a discard action (shown on hover: the pointer is on live-new.txt), but the linked
+    // repository lib-b, which discards in its own view.
+    assert.deepEqual(await page.locator('#dashboardChangedFiles .changed-file-discard').evaluateAll(buttons => buttons.map(button => button.dataset.path)),
+      ['src/app.txt', 'live-new.txt']);
+    assert.equal(await page.getAttribute('.changed-file-discard[data-path="live-new.txt"]', 'aria-label'), 'Move live-new.txt to the Trash');
     await snap(page, '01c-uncommitted-changes');
-    // Clean again: the row goes, and the newest commit is shown.
-    git(parent, 'reset', '-q', '--', 'src/app.txt');
-    git(parent, 'checkout', '--', 'src/app.txt');
-    fs.rmSync(path.join(parent, 'live-new.txt'));
-    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'updateSubmodules', payload: { submodules: window.__initialRepositories } } })));
-    await page.waitForFunction(() => /^Uncommitted changes\s*1 modified/.test(document.getElementById('uncommittedRow').textContent.trim()));
+    // Discard asks the host, which asks with a modal; while it waits, the Discard buttons wait too.
+    const questions = [];
+    let release;
+    const showWarningMessage = fakeVscode.window.showWarningMessage;
+    fakeVscode.window.showWarningMessage = async (message, options, ...items) => {
+      if (!options || !options.modal) return undefined;
+      questions.push({ message, detail: options.detail });
+      await new Promise(resolve => { release = resolve; });
+      return items[0];
+    };
+    try {
+      await page.hover('#dashboardChangedFiles .changed-file-item[data-path="live-new.txt"]');
+      await page.click('.changed-file-discard[data-path="live-new.txt"]');
+      await page.waitForFunction(() => document.getElementById('discardAllChangesButton').disabled);
+      for (let i = 0; i < 100 && !release; i++) await page.waitForTimeout(20);
+      assert.deepEqual(questions.map(question => question.message), ['Move live-new.txt to the Trash?']);
+      release();
+      await page.waitForFunction(() => /^Uncommitted changes\s*1 staged · 1 modified\s*Now/.test(document.getElementById('uncommittedRow').textContent.trim()));
+      assert.equal(fs.existsSync(path.join(parent, 'live-new.txt')), false);
+      assert.equal(await page.isDisabled('#discardAllChangesButton'), false);
+      // Discard all: the staged edit goes back to HEAD; the linked repository is left for its own view.
+      release = undefined;
+      await page.click('#discardAllChangesButton');
+      for (let i = 0; i < 100 && !release; i++) await page.waitForTimeout(20);
+      assert.match(questions[1].message, /^Discard all uncommitted changes in .+\?$/);
+      assert.match(questions[1].detail, /^1 changed file goes back to the last commit/);
+      assert.match(questions[1].detail, /Left as they are:\nlib-b \(linked repository: discard inside it\)/);
+      release();
+      // Clean again but for lib-b: the backup is a stash, dropped to keep the fixture as it was.
+      await page.waitForFunction(() => /^Uncommitted changes\s*1 modified\s*Now/.test(document.getElementById('uncommittedRow').textContent.trim()));
+      assert.equal(git(parent, 'diff', 'HEAD', '--', 'src/app.txt').trim(), '');
+      assert.match(git(parent, 'stash', 'list'), /Repository Manager: discarded src\/app\.txt/);
+      git(parent, 'stash', 'drop', '-q');
+    } finally {
+      fakeVscode.window.showWarningMessage = showWarningMessage;
+    }
     // A commit made outside the dashboard (a terminal): HEAD moves, so the history reloads with it.
     fs.writeFileSync(path.join(parent, 'terminal.txt'), 'from a terminal\n');
     git(parent, 'add', 'terminal.txt');

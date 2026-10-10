@@ -19,6 +19,7 @@ import {
 } from './services';
 import { HistoryAction, HistoryActionService } from './services/historyActionService';
 import { HistoryRewriteAction, HistoryRewritePreview, HistoryRewriteService, ResetMode } from './services/historyRewriteService';
+import { DiscardOutcome, DiscardPlan, DiscardService, Remover } from './services/discardService';
 
 import {
   SubmoduleInfo,
@@ -47,6 +48,7 @@ export class GitOperations {
   private referenceService: ReferenceService;
   private historyActionService: HistoryActionService;
   private historyRewriteService: HistoryRewriteService;
+  private discardService: DiscardService;
 
   constructor(workspaceRoot: string) {
     this.gitCmd = new GitCommandService(workspaceRoot);
@@ -58,6 +60,7 @@ export class GitOperations {
     this.referenceService = new ReferenceService(this.gitCmd, this.branchService, this.commitService);
     this.historyActionService = new HistoryActionService(this.gitCmd);
     this.historyRewriteService = new HistoryRewriteService(this.gitCmd);
+    this.discardService = new DiscardService(this.gitCmd, this.commitService, this.historyActionService);
   }
 
   // ==================== Git Command Methods ====================
@@ -279,6 +282,20 @@ export class GitOperations {
 
   async commitFiles(repositoryPath: string, filePaths: string[], message: string, partial?: PartialStagedChoice): Promise<CommandResult> {
     return this.commitService.commitFiles(repositoryPath, filePaths, message, partial);
+  }
+
+  /** What discarding every uncommitted change, or only `filePaths`, would do. */
+  async planDiscard(repositoryPath: string, filePaths?: string[]): Promise<DiscardPlan> {
+    return this.discardService.plan(repositoryPath, filePaths);
+  }
+
+  /** Discards a confirmed plan: tracked files back to HEAD (kept as a stash first), new files to `moveToTrash`. */
+  async discardChanges(plan: DiscardPlan, moveToTrash: Remover): Promise<DiscardOutcome> {
+    return this.discardService.discard(plan, moveToTrash);
+  }
+
+  async deleteUntrackedFiles(repositoryPath: string, filePaths: string[], deletePermanently: Remover): Promise<DiscardOutcome> {
+    return this.discardService.deleteUntracked(repositoryPath, filePaths, deletePermanently);
   }
 
   /**

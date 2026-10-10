@@ -5,6 +5,12 @@ All notable changes to Repository Manager will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - Unreleased
+
+### Added
+
+- **Discard all…** in the Uncommitted changes bar, and a discard button (↺) on each changed file: after a confirmation that says what will happen, changed files go back to the last commit (staged and unstaged changes alike) and new files go to the Trash. The discarded changes are kept as a stash first, listed under Stashes, so **Git: Apply Stash** brings them back. Conflicted files, linked repositories and nested Git repositories are left as they are, ignored files are never touched, and changed files are not discarded during a merge, rebase, cherry-pick or revert.
+
 ## [2.3.0] - 2026-10-09
 
 ### Added

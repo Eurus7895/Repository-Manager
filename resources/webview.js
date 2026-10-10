@@ -61,6 +61,8 @@
   let workingPreviewRequestId = 1000000;
   let workingDiffMode = null;
   let uncommittedRowRendered = false;
+  // The repository a discard is running in (the host is asking or discarding): its buttons wait.
+  let discardInFlight = null;
   // The active repository's branch and commit at the last repository list, to notice HEAD moving.
   let activeHeadSignature = { repositoryPath: null, head: '' };
   let workingTreePreviewRequestId = 0;
@@ -225,9 +227,12 @@
   }
 
   function restoreChangeSummary() {
-    // Commit… and Review changes sit in the summary bar for uncommitted changes, before Summarize.
+    // Commit… and Review changes sit in the summary bar for uncommitted changes, before Summarize;
+    // Discard all… sits apart at its end.
     const workingActions = document.getElementById('workingTreeActions');
     if (workingActions) workingActions.hidden = !(changeSummarySelection && changeSummarySelection.local);
+    const discardAll = document.getElementById('discardAllChangesButton');
+    if (discardAll) discardAll.hidden = !(changeSummarySelection && changeSummarySelection.local);
     if (!changeSummarySelection) return;
     const record = changeSummaries.get(changeSummaryKey(changeSummarySelection));
     document.getElementById('changeSummary').hidden = false;
@@ -600,6 +605,13 @@
 
     previewWorkingTreeMode: (el) => {
       requestWorkingTreePreview(el.dataset.mode);
+    },
+
+    // The host asks first (a modal says what happens to each file), then discards.
+    discardAllChanges: () => requestDiscard({ repositoryPath: activeDashboardRepository, all: true }),
+
+    discardFileChange: (el) => {
+      if (el.dataset.path) requestDiscard({ repositoryPath: activeDashboardRepository, paths: [el.dataset.path] });
     },
 
     openCommitChangesModal: () => {
@@ -1836,8 +1848,15 @@
       const status = change.conflicted ? 'unmerged' : change.untracked ? 'added' : change.originalPath ? 'renamed'
         : (change.indexStatus === 'D' || change.workTreeStatus === 'D') ? 'deleted' : (change.indexStatus === 'A') ? 'added' : 'modified';
       const state = change.conflicted ? 'conflict' : change.untracked ? 'new' : change.staged && change.unstaged ? 'staged + modified' : change.staged ? 'staged' : 'modified';
-      return `<button class="changed-file-item status-${escapeHtml(status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(change.path)}" title="${escapeHtml(state)}"><span class="file-status-glyph">${changedFileGlyph(status)}</span><span class="file-path"><strong>${escapeHtml(change.path.split('/').pop())}</strong><small>${escapeHtml(change.originalPath ? `${change.originalPath} → ${change.path}` : change.path)} · ${escapeHtml(state)}</small></span><span>›</span></button>`;
+      const item = `<button class="changed-file-item status-${escapeHtml(status)}" type="button" data-action="selectChangedFile" data-path="${escapeHtml(change.path)}" title="${escapeHtml(state)}"><span class="file-status-glyph">${changedFileGlyph(status)}</span><span class="file-path"><strong>${escapeHtml(change.path.split('/').pop())}</strong><small>${escapeHtml(change.originalPath ? `${change.originalPath} → ${change.path}` : change.path)} · ${escapeHtml(state)}</small></span><span>›</span></button>`;
+      // Not discarded from here (the host would refuse): a conflicted file is resolved in Source
+      // Control, a linked repository discards in its own view, a nested repository is never deleted.
+      const linkedPath = activeDashboardRepository === '.' ? change.path : `${activeDashboardRepository}/${change.path}`;
+      if (change.conflicted || change.path.endsWith('/') || getRepository(linkedPath)) return `<div class="changed-file-row">${item}</div>`;
+      const label = change.untracked ? `Move ${change.path} to the Trash` : `Discard changes to ${change.path}`;
+      return `<div class="changed-file-row">${item}<button class="changed-file-discard" type="button" data-action="discardFileChange" data-path="${escapeHtml(change.path)}" title="${escapeHtml(change.untracked ? `${label}…` : `${label}: back to the last commit…`)}" aria-label="${escapeHtml(label)}">↺</button></div>`;
     }).join('');
+    updateDiscardButtons();
     const kept = selectedDashboardFile && Array.from(files.querySelectorAll('.changed-file-item')).find(item => item.dataset.path === selectedDashboardFile);
     const first = kept || files.querySelector('.changed-file-item');
     if (first) actions.selectChangedFile(first);
@@ -1863,6 +1882,19 @@
     postMessage('getWorkingTreePreview', { repositoryPath: activeDashboardRepository, path: change.path, mode: workingDiffMode, requestId: ++workingPreviewRequestId });
   }
 
+
+  function requestDiscard(payload) {
+    if (!payload.repositoryPath || discardInFlight) return;
+    discardInFlight = payload.repositoryPath;
+    updateDiscardButtons();
+    postMessage('discardChanges', payload);
+  }
+
+  // While a discard asks or runs, a second one would ask again about the same files.
+  function updateDiscardButtons() {
+    const busy = Boolean(discardInFlight);
+    document.querySelectorAll('#discardAllChangesButton, .changed-file-discard').forEach(button => { button.disabled = busy; });
+  }
 
   function renderRepositoryRefs(payload) {
     if (!payload || payload.repositoryPath !== activeDashboardRepository) return;
@@ -2285,6 +2317,13 @@
             (previousCommitMessage !== null ? ' <button type="button" class="link-button" data-action="undoCommitMessage">Undo</button>' : ''), true);
           break;
         }
+
+        case 'discardChangesResult':
+          if (message.payload && message.payload.repositoryPath === discardInFlight) {
+            discardInFlight = null;
+            updateDiscardButtons();
+          }
+          break;
 
         case 'commitFilesResult': {
           const repositoryPath = document.getElementById('commitChangesRepositoryPath');

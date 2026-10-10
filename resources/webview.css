@@ -1873,6 +1873,36 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 }
 
 .file-path strong { color: var(--text-strong); font-weight: 500; }
+
+/* Uncommitted changes: each file has a discard action, shown on hover or focus like a branch's. */
+.changed-file-row { position: relative; }
+.changed-file-discard {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.changed-file-row:hover .changed-file-discard,
+.changed-file-row:focus-within .changed-file-discard { opacity: 1; pointer-events: auto; }
+.changed-file-discard:not(:disabled):hover,
+.changed-file-discard:focus-visible { outline: 0; color: var(--error); background: rgba(240, 113, 120, .12); }
+.changed-file-row:hover .changed-file-discard:disabled,
+.changed-file-row:focus-within .changed-file-discard:disabled { cursor: default; opacity: .4; }
+@media (pointer: coarse) {
+  .changed-file-discard { opacity: 1; pointer-events: auto; }
+}
 .file-path small { color: var(--text-muted); font-size: 10px; }
 
 .diff-viewer {
@@ -2457,6 +2487,11 @@ body.vscode-high-contrast .graph-node-control[data-marker="T"] .graph-node-hit {
 /* Reviews of the same selection, set apart from the summary and its Cancel. */
 #reviewLocalChangesButton { position: relative; margin-left: 11px; }
 #reviewLocalChangesButton::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: -11px; border-left: 1px solid var(--border); }
+/* Discarding is set apart from the actions that keep the changes. */
+.btn-discard { margin-left: auto; }
+.btn-discard[hidden] { display: none; }
+.btn-discard:not(:disabled):hover,
+.btn-discard:focus-visible { border-color: color-mix(in srgb, var(--error) 60%, transparent); color: var(--error); }
 .change-summary-result { font-size: 12px; line-height: 1.5; }
 .change-summary-result section { margin-top: 12px; }
 .change-summary-result h4 { margin: 0 0 4px; }

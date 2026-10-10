@@ -11,6 +11,7 @@ import { HistoryQuery } from '../types';
 import { GitCommandService } from '../services/gitCommandService';
 import { HistoryAction } from '../services/historyActionService';
 import { HistoryRewriteAction, ResetMode } from '../services/historyRewriteService';
+import { DiscardPlan } from '../services/discardService';
 
 export interface MessageHandlerContext {
   panel: vscode.WebviewPanel;
@@ -246,6 +247,101 @@ export async function handleCommitFiles(ctx: MessageHandlerContext, payload: unk
   });
 
   if (result.success) {
+    await ctx.reloadDashboardHistory([repositoryPath]);
+    await ctx.refresh();
+  }
+}
+
+const moveToTrash = async (file: string) => { await vscode.workspace.fs.delete(vscode.Uri.file(file), { useTrash: true }); };
+const deletePermanently = async (file: string) => { await vscode.workspace.fs.delete(vscode.Uri.file(file), { useTrash: false }); };
+const count = (value: number, word: string) => `${value} ${word}${value === 1 ? '' : 's'}`;
+
+/** The confirmation for a discard: what happens to changed files, new files, and what is left alone. */
+function discardConfirmation(plan: DiscardPlan, where: string, all: boolean): { title: string; detail: string; confirm: string } {
+  const backup = 'A backup is kept as a stash (under Stashes; Git: Apply Stash brings it back).';
+  if (!all && plan.tracked.length + plan.untracked.length === 1 && !plan.skipped.length) {
+    const file = plan.tracked[0]?.path || plan.untracked[0];
+    const name = path.posix.basename(file);
+    // Staged as new, the file is not in the last commit: going back to it removes the file.
+    const what = plan.tracked[0]?.indexStatus === 'A'
+      ? 'is staged as a new file, not in the last commit: it is removed from the index and from the disk.'
+      : 'goes back to the last commit: its staged and unstaged changes are discarded.';
+    return plan.tracked.length
+      ? { title: `Discard changes to ${name}?`, confirm: 'Discard Changes', detail: `${file} in ${where} ${what}\n\n${backup}` }
+      : { title: `Move ${name} to the Trash?`, confirm: 'Move to Trash',
+        detail: `${file} in ${where} is a new file. Git has no copy of it, so it is moved to the Trash.` };
+  }
+  const skipped = plan.skipped.slice(0, 5).map(item => `${item.path} (${item.reason})`).join('\n') +
+    (plan.skipped.length > 5 ? `\n… and ${plan.skipped.length - 5} more` : '');
+  const detail = [
+    plan.tracked.length ? `${count(plan.tracked.length, 'changed file')} ${plan.tracked.length === 1 ? 'goes' : 'go'} back to the last commit: staged and unstaged changes are discarded. ${backup}` : '',
+    plan.untracked.length ? `${count(plan.untracked.length, 'new file')} ${plan.untracked.length === 1 ? 'is' : 'are'} moved to the Trash.` : '',
+    plan.skipped.length ? `Left as they are:\n${skipped}` : '',
+    'Files Git ignores are not touched.'
+  ].filter(Boolean).join('\n\n');
+  return all
+    ? { title: `Discard all uncommitted changes in ${where}?`, detail, confirm: 'Discard All' }
+    : { title: `Discard changes to ${count(plan.tracked.length + plan.untracked.length, 'file')} in ${where}?`, detail, confirm: 'Discard Changes' };
+}
+
+/**
+ * Discards uncommitted changes, every one (`all`) or the files in `paths`, once a modal says what
+ * happens to them: changed files go back to HEAD and are kept as a stash first, new files go to the
+ * Trash. Where the Trash refuses (a remote file system may have none), deleting them for good takes
+ * a second yes.
+ */
+export async function handleDiscardChanges(ctx: MessageHandlerContext, payload: unknown): Promise<void> {
+  const request = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const repositoryPath = typeof request.repositoryPath === 'string' ? request.repositoryPath : '';
+  const paths = request.all === true
+    ? undefined
+    : Array.isArray(request.paths) ? request.paths.filter((file): file is string => typeof file === 'string' && file.length > 0) : [];
+  let changed = false;
+  try {
+    requireString(request, 'repositoryPath');
+    if (paths && paths.length === 0) {
+      throw new Error('Choose a changed file to discard.');
+    }
+    const where = repositoryPath === '.' ? path.basename(ctx.workspaceRoot) : repositoryPath;
+    const plan = await ctx.gitOps.planDiscard(repositoryPath, paths);
+    if (!plan.tracked.length && !plan.untracked.length) {
+      throw new Error(plan.skipped.length
+        ? `Nothing to discard: ${plan.skipped.slice(0, 3).map(item => `${item.path} (${item.reason})`).join(', ')}${plan.skipped.length > 3 ? '…' : ''}.`
+        : `There are no uncommitted changes in ${where}.`);
+    }
+    const { title, detail, confirm } = discardConfirmation(plan, where, !paths);
+    if (await vscode.window.showWarningMessage(title, { modal: true, detail }, confirm) !== confirm) {
+      return;
+    }
+
+    const outcome = await ctx.gitOps.discardChanges(plan, moveToTrash);
+    changed = Boolean(outcome.stash || outcome.removed.length);
+    if (outcome.success || !changed) {
+      showResult(outcome.success, outcome.message);
+    } else {
+      vscode.window.showWarningMessage(outcome.message);
+    }
+    if (outcome.notRemoved.length) {
+      const DELETE = 'Delete Permanently';
+      const names = outcome.notRemoved.slice(0, 5).map(item => item.path).join('\n') +
+        (outcome.notRemoved.length > 5 ? `\n… and ${outcome.notRemoved.length - 5} more` : '');
+      const choice = await vscode.window.showWarningMessage(
+        `${count(outcome.notRemoved.length, 'new file')} could not be moved to the Trash. Delete ${outcome.notRemoved.length === 1 ? 'it' : 'them'} permanently?`,
+        { modal: true, detail: `${names}\n\n${outcome.notRemoved[0].reason}\n\nGit has no copy of new files: this cannot be undone.` }, DELETE);
+      if (choice === DELETE) {
+        const deleted = await ctx.gitOps.deleteUntrackedFiles(repositoryPath, outcome.notRemoved.map(item => item.path), deletePermanently);
+        changed = changed || deleted.removed.length > 0;
+        showResult(deleted.success, deleted.message);
+      }
+    }
+  } catch (error) {
+    showResult(false, error instanceof Error ? error.message : String(error));
+  } finally {
+    // The dashboard's Discard buttons wait for this, whatever happened.
+    await sendToWebview(ctx, { type: 'discardChangesResult', payload: { repositoryPath, changed } });
+  }
+  if (changed) {
+    // The backup is a new stash: reload refs as well as the working tree.
     await ctx.reloadDashboardHistory([repositoryPath]);
     await ctx.refresh();
   }
@@ -1041,6 +1137,7 @@ export const messageHandlers: Record<string, (ctx: MessageHandlerContext, payloa
   'getWorkingTreeChanges': (ctx, payload) => handleGetWorkingTreeChanges(ctx, payload),
   'getWorkingTreePreview': (ctx, payload) => handleGetWorkingTreePreview(ctx, payload),
   'commitFiles': (ctx, payload) => handleCommitFiles(ctx, payload),
+  'discardChanges': (ctx, payload) => handleDiscardChanges(ctx, payload),
   'initSubmodules': (ctx) => handleInitSubmodules(ctx),
   'updateSubmodules': (ctx) => handleUpdateSubmodules(ctx),
   'createBranch': (ctx, payload) => handleCreateBranch(ctx, payload as { submodules: string[]; branchName: string; baseBranch: string }),
